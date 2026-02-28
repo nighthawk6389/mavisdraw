@@ -633,7 +633,7 @@ export class CanvasRenderer {
 
     // Compute vertical starting position based on verticalAlign
     const totalTextHeight = lines.length * lineHeightPx;
-    let startY = 0;
+    let startY: number;
     switch (element.verticalAlign) {
       case 'middle':
         startY = (height - totalTextHeight) / 2;

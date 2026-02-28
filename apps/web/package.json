@@ -8,12 +8,13 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src"
   },
   "dependencies": {
-    "@mavisdraw/types": "workspace:*",
     "@mavisdraw/math": "workspace:*",
+    "@mavisdraw/types": "workspace:*",
     "nanoid": "^5.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -21,10 +22,14 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.56.1",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.4.0",
     "autoprefixer": "^10.4.0",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "jsdom": "^28.1.0",
     "postcss": "^8.5.0",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.7.0",
