@@ -20,11 +20,23 @@ const TOOLS: ToolConfig[] = [
   { tool: 'arrow', icon: '\u2192', label: 'Arrow', shortcut: 'A' },
   { tool: 'freedraw', icon: '\u270E', label: 'Freedraw', shortcut: 'P' },
   { tool: 'text', icon: 'T', label: 'Text', shortcut: 'T' },
+  { tool: 'portal', icon: '\u29C9', label: 'Portal', shortcut: 'O' },
 ];
 
 export default function Toolbar() {
   const { activeTool, isToolLocked, setTool, toggleToolLock } = useToolStore();
-  const { renderMode, setRenderMode, showGrid, toggleGrid } = useUIStore();
+  const {
+    renderMode,
+    setRenderMode,
+    showGrid,
+    toggleGrid,
+    showStylePanel,
+    toggleStylePanel,
+    showLayerPanel,
+    toggleLayerPanel,
+    showDiagramTree,
+    toggleDiagramTree,
+  } = useUIStore();
 
   return (
     <aside className="w-12 bg-white border-r border-gray-200 flex flex-col items-center py-2 gap-1 z-10">
@@ -75,6 +87,57 @@ export default function Toolbar() {
         <span className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-xs rounded
           opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50">
           Toggle grid
+        </span>
+      </button>
+
+      {/* Diagram tree toggle */}
+      <button
+        className={`w-10 h-10 flex items-center justify-center rounded-lg text-xs
+          transition-colors duration-150 group relative
+          ${showDiagramTree ? 'text-purple-700 bg-purple-100' : 'text-gray-400'}
+        `}
+        onClick={toggleDiagramTree}
+        title={`Diagram tree: ${showDiagramTree ? 'on' : 'off'}`}
+      >
+        {'\u2263'}
+        <span className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-xs rounded
+          opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50">
+          Diagram tree
+        </span>
+      </button>
+
+      {/* Divider */}
+      <div className="w-8 h-px bg-gray-200 my-1" />
+
+      {/* Style panel toggle */}
+      <button
+        className={`w-10 h-10 flex items-center justify-center rounded-lg text-xs
+          transition-colors duration-150 group relative
+          ${showStylePanel ? 'text-purple-700 bg-purple-50' : 'text-gray-400'}
+        `}
+        onClick={toggleStylePanel}
+        title={`Style panel: ${showStylePanel ? 'on' : 'off'}`}
+      >
+        S
+        <span className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-xs rounded
+          opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50">
+          Toggle style panel
+        </span>
+      </button>
+
+      {/* Layer panel toggle */}
+      <button
+        className={`w-10 h-10 flex items-center justify-center rounded-lg text-xs
+          transition-colors duration-150 group relative
+          ${showLayerPanel ? 'text-green-700 bg-green-50' : 'text-gray-400'}
+        `}
+        onClick={toggleLayerPanel}
+        title={`Layer panel: ${showLayerPanel ? 'on' : 'off'}`}
+      >
+        L
+        <span className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-xs rounded
+          opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50">
+          Toggle layer panel
         </span>
       </button>
 

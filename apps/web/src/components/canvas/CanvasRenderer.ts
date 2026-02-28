@@ -3,16 +3,28 @@ import type { RoughCanvas } from 'roughjs/bin/canvas';
 import type {
   MavisElement,
   RenderMode,
-  Viewport,
   Bounds,
   RectangleElement,
-  EllipseElement,
-  DiamondElement,
   LinearElement,
   TextElement,
+  ImageElement,
+  PortalElement,
+  Point,
 } from '@mavisdraw/types';
 import { ViewportManager } from './ViewportManager';
 import { GridRenderer } from './GridRenderer';
+import { renderPortalSketchy, renderPortalClean } from '../elements/PortalRenderer';
+import { getCubicControlPoints } from '@mavisdraw/math';
+
+/**
+ * Smart guide line data for rendering alignment guides.
+ */
+export interface SmartGuide {
+  type: 'horizontal' | 'vertical';
+  position: number; // x for vertical, y for horizontal
+  start: number; // start of the line extent
+  end: number; // end of the line extent
+}
 
 /**
  * Describes the current interactive/UI state needed for rendering.
@@ -26,6 +38,8 @@ export interface RenderState {
   creatingElement: MavisElement | null;
   showGrid: boolean;
   gridSize: number;
+  smartGuides?: SmartGuide[];
+  boundTextElements?: Map<string, TextElement>;
 }
 
 /**
@@ -51,11 +65,15 @@ export class CanvasRenderer {
   private animationFrameId: number | null = null;
   private needsStaticRedraw = true;
 
+  // Image cache to prevent re-decoding
+  private imageCache: Map<string, HTMLImageElement> = new Map();
+
   // Selection / handle visual constants
   private static readonly SELECTION_COLOR = '#4a90d9';
   private static readonly HOVER_COLOR = '#4a90d9';
   private static readonly HANDLE_SIZE = 8;
   private static readonly HANDLE_FILL = '#ffffff';
+  private static readonly SMART_GUIDE_COLOR = '#e74c3c';
 
   constructor(
     staticCanvas: HTMLCanvasElement,
@@ -83,6 +101,11 @@ export class CanvasRenderer {
 
   getViewport(): ViewportManager {
     return this.viewport;
+  }
+
+  /** Expose the rough canvas for portal rendering on arbitrary contexts. */
+  getRoughCanvas(): RoughCanvas {
+    return this.roughCanvas;
   }
 
   /** Flag the static layer for a full redraw on the next frame. */
@@ -150,6 +173,7 @@ export class CanvasRenderer {
   /** Clean up resources and stop the render loop. */
   destroy(): void {
     this.stopRenderLoop();
+    this.imageCache.clear();
   }
 
   // ---------------------------------------------------------------------------
@@ -177,6 +201,18 @@ export class CanvasRenderer {
     // Draw each committed element
     for (const element of elements) {
       this.renderElement(ctx, element, state.renderMode);
+
+      // Render bound text for shape elements
+      if (state.boundTextElements && element.boundElements) {
+        for (const bound of element.boundElements) {
+          if (bound.type === 'text') {
+            const textEl = state.boundTextElements.get(bound.id);
+            if (textEl && !textEl.isDeleted) {
+              this.renderElement(ctx, textEl, state.renderMode);
+            }
+          }
+        }
+      }
     }
 
     ctx.restore();
@@ -225,6 +261,11 @@ export class CanvasRenderer {
     // Element being created (live preview)
     if (state.creatingElement) {
       this.renderElement(ctx, state.creatingElement, state.renderMode);
+    }
+
+    // Smart guides
+    if (state.smartGuides && state.smartGuides.length > 0) {
+      this.renderSmartGuides(ctx, state.smartGuides);
     }
 
     ctx.restore();
@@ -277,12 +318,14 @@ export class CanvasRenderer {
         this.renderText(ctx, element as TextElement);
         break;
       case 'portal':
-        // Portal is rendered as a rectangle with distinct styling (Stage 3)
-        this.renderRectangle(ctx, element as unknown as RectangleElement, renderMode);
+        if (renderMode === 'sketchy') {
+          renderPortalSketchy(ctx, this.roughCanvas, element as PortalElement);
+        } else {
+          renderPortalClean(ctx, element as PortalElement);
+        }
         break;
       case 'image':
-        // Image rendering is a placeholder rectangle (Stage 3)
-        this.renderRectangle(ctx, element as unknown as RectangleElement, renderMode);
+        this.renderImage(ctx, element as ImageElement);
         break;
       default:
         this.renderRectangle(ctx, element as unknown as RectangleElement, renderMode);
@@ -301,7 +344,7 @@ export class CanvasRenderer {
     element: MavisElement,
     renderMode: RenderMode,
   ): void {
-    const { width, height, strokeColor, backgroundColor, fillStyle, strokeWidth, roughness, strokeStyle } = element;
+    const { width, height, strokeColor, backgroundColor, fillStyle, strokeWidth, strokeStyle } = element;
     const roundness = (element as RectangleElement).roundness ?? 0;
 
     if (renderMode === 'sketchy') {
@@ -449,19 +492,176 @@ export class CanvasRenderer {
     element: LinearElement,
     renderMode: RenderMode,
   ): void {
-    const { points, strokeColor, strokeWidth, strokeStyle, type } = element;
+    const { points, strokeColor, strokeWidth, strokeStyle, type, routingMode } = element;
 
     if (!points || points.length < 2) return;
+
+    // Choose rendering based on routing mode
+    if (type === 'freedraw') {
+      this.renderFreedraw(ctx, element, renderMode);
+    } else if (routingMode === 'curved') {
+      this.renderCurvedLine(ctx, element, renderMode);
+    } else if (routingMode === 'elbow') {
+      this.renderElbowLine(ctx, element, renderMode);
+    } else {
+      this.renderStraightLine(ctx, element, renderMode);
+    }
+
+    // Draw arrowheads for arrow elements
+    if (type === 'arrow') {
+      this.renderArrowheads(ctx, element, renderMode);
+    }
+  }
+
+  private renderStraightLine(
+    ctx: CanvasRenderingContext2D,
+    element: LinearElement,
+    renderMode: RenderMode,
+  ): void {
+    const { points, strokeColor, strokeWidth, strokeStyle } = element;
 
     if (renderMode === 'sketchy') {
       this.drawRoughShape(ctx, () => {
         const options = this.buildRoughOptions(element);
-        // Don't fill linear elements
+        delete options.fill;
+        delete options.fillStyle;
+        return this.roughCanvas.generator.linearPath(
+          points as [number, number][],
+          options,
+        );
+      });
+    } else {
+      this.applyCleanStroke(ctx, strokeColor, strokeWidth, strokeStyle);
+
+      ctx.beginPath();
+      ctx.moveTo(points[0][0], points[0][1]);
+      for (let i = 1; i < points.length; i++) {
+        ctx.lineTo(points[i][0], points[i][1]);
+      }
+      ctx.stroke();
+    }
+  }
+
+  private renderCurvedLine(
+    ctx: CanvasRenderingContext2D,
+    element: LinearElement,
+    renderMode: RenderMode,
+  ): void {
+    const { points, strokeColor, strokeWidth, strokeStyle } = element;
+
+    if (points.length < 2) return;
+
+    const start: Point = { x: points[0][0], y: points[0][1] };
+    const end: Point = { x: points[points.length - 1][0], y: points[points.length - 1][1] };
+
+    // Generate cubic bezier control points
+    const [, cp1, cp2] = getCubicControlPoints(start, end, 0.5);
+
+    if (renderMode === 'sketchy') {
+      this.drawRoughShape(ctx, () => {
+        const options = this.buildRoughOptions(element);
+        delete options.fill;
+        delete options.fillStyle;
+        // Use curve for sketchy mode
+        const curvePoints: [number, number][] = [
+          [start.x, start.y],
+          [cp1.x, cp1.y],
+          [cp2.x, cp2.y],
+          [end.x, end.y],
+        ];
+        return this.roughCanvas.generator.curve(curvePoints, options);
+      });
+    } else {
+      this.applyCleanStroke(ctx, strokeColor, strokeWidth, strokeStyle);
+
+      ctx.beginPath();
+      ctx.moveTo(start.x, start.y);
+      ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, end.x, end.y);
+      ctx.stroke();
+    }
+  }
+
+  private renderElbowLine(
+    ctx: CanvasRenderingContext2D,
+    element: LinearElement,
+    renderMode: RenderMode,
+  ): void {
+    const { points, strokeColor, strokeWidth, strokeStyle } = element;
+
+    if (points.length < 2) return;
+
+    const start = points[0];
+    const end = points[points.length - 1];
+
+    // Calculate elbow routing intermediate points
+    const elbowPoints = this.calculateElbowPoints(start, end);
+
+    if (renderMode === 'sketchy') {
+      this.drawRoughShape(ctx, () => {
+        const options = this.buildRoughOptions(element);
+        delete options.fill;
+        delete options.fillStyle;
+        return this.roughCanvas.generator.linearPath(elbowPoints, options);
+      });
+    } else {
+      this.applyCleanStroke(ctx, strokeColor, strokeWidth, strokeStyle);
+
+      ctx.beginPath();
+      ctx.moveTo(elbowPoints[0][0], elbowPoints[0][1]);
+      for (let i = 1; i < elbowPoints.length; i++) {
+        ctx.lineTo(elbowPoints[i][0], elbowPoints[i][1]);
+      }
+      ctx.stroke();
+    }
+  }
+
+  /**
+   * Calculate elbow routing points (right-angle path) between start and end.
+   * Uses L-shape or Z-shape depending on relative positions.
+   */
+  private calculateElbowPoints(
+    start: [number, number],
+    end: [number, number],
+  ): [number, number][] {
+    const dx = end[0] - start[0];
+    const dy = end[1] - start[1];
+
+    // If predominantly horizontal or vertical, use L-shape
+    if (Math.abs(dx) > Math.abs(dy)) {
+      // L-shape: go horizontal first, then vertical
+      const midX = start[0] + dx / 2;
+      return [
+        start,
+        [midX, start[1]],
+        [midX, end[1]],
+        end,
+      ];
+    } else {
+      // L-shape: go vertical first, then horizontal
+      const midY = start[1] + dy / 2;
+      return [
+        start,
+        [start[0], midY],
+        [end[0], midY],
+        end,
+      ];
+    }
+  }
+
+  private renderFreedraw(
+    ctx: CanvasRenderingContext2D,
+    element: LinearElement,
+    renderMode: RenderMode,
+  ): void {
+    const { points, strokeColor, strokeWidth, strokeStyle } = element;
+
+    if (renderMode === 'sketchy') {
+      this.drawRoughShape(ctx, () => {
+        const options = this.buildRoughOptions(element);
         delete options.fill;
         delete options.fillStyle;
 
-        if (type === 'freedraw' && points.length > 2) {
-          // Use curve for freedraw to smooth it out
+        if (points.length > 2) {
           return this.roughCanvas.generator.curve(
             points as [number, number][],
             options,
@@ -479,7 +679,7 @@ export class CanvasRenderer {
       ctx.beginPath();
       ctx.moveTo(points[0][0], points[0][1]);
 
-      if (type === 'freedraw' && points.length > 2) {
+      if (points.length > 2) {
         // Smooth curve through freedraw points using quadratic bezier
         for (let i = 1; i < points.length - 1; i++) {
           const midX = (points[i][0] + points[i + 1][0]) / 2;
@@ -498,11 +698,6 @@ export class CanvasRenderer {
 
       ctx.stroke();
     }
-
-    // Draw arrowheads for arrow elements
-    if (type === 'arrow') {
-      this.renderArrowheads(ctx, element, renderMode);
-    }
   }
 
   private renderArrowheads(
@@ -510,7 +705,7 @@ export class CanvasRenderer {
     element: LinearElement,
     _renderMode: RenderMode,
   ): void {
-    const { points, strokeColor, strokeWidth, startArrowhead, endArrowhead } = element;
+    const { points, strokeColor, strokeWidth, startArrowhead, endArrowhead, routingMode } = element;
     if (!points || points.length < 2) return;
 
     const arrowLength = Math.max(10, strokeWidth * 4);
@@ -521,7 +716,50 @@ export class CanvasRenderer {
     ctx.lineWidth = strokeWidth;
     ctx.setLineDash([]);
 
-    // End arrowhead
+    // For elbow routing, use the last segment direction
+    if (routingMode === 'elbow') {
+      const elbowPoints = this.calculateElbowPoints(points[0], points[points.length - 1]);
+
+      if (endArrowhead !== 'none') {
+        const last = elbowPoints[elbowPoints.length - 1];
+        const prev = elbowPoints[elbowPoints.length - 2];
+        const angle = Math.atan2(last[1] - prev[1], last[0] - prev[0]);
+        this.drawArrowhead(ctx, last[0], last[1], angle, arrowLength, arrowAngle, endArrowhead);
+      }
+
+      if (startArrowhead !== 'none') {
+        const first = elbowPoints[0];
+        const next = elbowPoints[1];
+        const angle = Math.atan2(first[1] - next[1], first[0] - next[0]);
+        this.drawArrowhead(ctx, first[0], first[1], angle, arrowLength, arrowAngle, startArrowhead);
+      }
+      return;
+    }
+
+    // For curved routing, compute tangent at endpoint
+    if (routingMode === 'curved') {
+      const start: Point = { x: points[0][0], y: points[0][1] };
+      const end: Point = {
+        x: points[points.length - 1][0],
+        y: points[points.length - 1][1],
+      };
+      const [, cp1, cp2] = getCubicControlPoints(start, end, 0.5);
+
+      if (endArrowhead !== 'none') {
+        // Tangent at t=1 is direction from cp2 to end
+        const angle = Math.atan2(end.y - cp2.y, end.x - cp2.x);
+        this.drawArrowhead(ctx, end.x, end.y, angle, arrowLength, arrowAngle, endArrowhead);
+      }
+
+      if (startArrowhead !== 'none') {
+        // Tangent at t=0 is direction from start to cp1, reversed
+        const angle = Math.atan2(start.y - cp1.y, start.x - cp1.x);
+        this.drawArrowhead(ctx, start.x, start.y, angle, arrowLength, arrowAngle, startArrowhead);
+      }
+      return;
+    }
+
+    // End arrowhead (straight)
     if (endArrowhead !== 'none') {
       const last = points[points.length - 1];
       const prev = points[points.length - 2];
@@ -603,6 +841,7 @@ export class CanvasRenderer {
       width,
       height,
       lineHeight,
+      containerId,
     } = element;
 
     if (!text) return;
@@ -628,7 +867,9 @@ export class CanvasRenderer {
     ctx.textAlign = textAlign;
     ctx.textBaseline = 'top';
 
-    const lines = text.split('\n');
+    // For container-bound text, wrap within bounds
+    const maxWidth = containerId ? width : undefined;
+    const lines = maxWidth ? this.wrapText(ctx, text, maxWidth) : text.split('\n');
     const lineHeightPx = fontSize * lineHeight;
 
     // Compute vertical starting position based on verticalAlign
@@ -663,6 +904,131 @@ export class CanvasRenderer {
     for (let i = 0; i < lines.length; i++) {
       ctx.fillText(lines[i], anchorX, startY + i * lineHeightPx);
     }
+  }
+
+  /**
+   * Word-wrap text to fit within maxWidth.
+   */
+  private wrapText(
+    ctx: CanvasRenderingContext2D,
+    text: string,
+    maxWidth: number,
+  ): string[] {
+    const paragraphs = text.split('\n');
+    const lines: string[] = [];
+
+    for (const paragraph of paragraphs) {
+      const words = paragraph.split(' ');
+      let currentLine = '';
+
+      for (const word of words) {
+        const testLine = currentLine ? `${currentLine} ${word}` : word;
+        const metrics = ctx.measureText(testLine);
+
+        if (metrics.width > maxWidth && currentLine) {
+          lines.push(currentLine);
+          currentLine = word;
+        } else {
+          currentLine = testLine;
+        }
+      }
+
+      lines.push(currentLine);
+    }
+
+    return lines;
+  }
+
+  /**
+   * Render an image element on the canvas.
+   */
+  private renderImage(
+    ctx: CanvasRenderingContext2D,
+    element: ImageElement,
+  ): void {
+    const { width, height, imageUrl, strokeColor, strokeWidth } = element;
+
+    if (!imageUrl) {
+      // Placeholder rectangle if no image loaded
+      ctx.save();
+      ctx.strokeStyle = strokeColor || '#999999';
+      ctx.lineWidth = strokeWidth || 1;
+      ctx.setLineDash([4, 4]);
+      ctx.strokeRect(0, 0, width, height);
+
+      // Draw X
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(width, height);
+      ctx.moveTo(width, 0);
+      ctx.lineTo(0, height);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+      return;
+    }
+
+    // Try to get from cache or create new image
+    let img = this.imageCache.get(imageUrl);
+    if (!img) {
+      img = new Image();
+      img.src = imageUrl;
+      this.imageCache.set(imageUrl, img);
+
+      // Trigger redraw when image loads
+      img.onload = () => {
+        this.needsStaticRedraw = true;
+      };
+    }
+
+    if (img.complete && img.naturalWidth > 0) {
+      ctx.drawImage(img, 0, 0, width, height);
+    } else {
+      // Draw placeholder while loading
+      ctx.save();
+      ctx.fillStyle = '#f0f0f0';
+      ctx.fillRect(0, 0, width, height);
+      ctx.strokeStyle = '#cccccc';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(0, 0, width, height);
+      ctx.fillStyle = '#999999';
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('Loading...', width / 2, height / 2);
+      ctx.restore();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Smart Guides rendering
+  // ---------------------------------------------------------------------------
+
+  private renderSmartGuides(
+    ctx: CanvasRenderingContext2D,
+    guides: SmartGuide[],
+  ): void {
+    const zoom = this.viewport.getViewport().zoom;
+
+    ctx.save();
+    ctx.strokeStyle = CanvasRenderer.SMART_GUIDE_COLOR;
+    ctx.lineWidth = 1 / zoom;
+    ctx.setLineDash([4 / zoom, 4 / zoom]);
+    ctx.globalAlpha = 0.8;
+
+    for (const guide of guides) {
+      ctx.beginPath();
+      if (guide.type === 'vertical') {
+        ctx.moveTo(guide.position, guide.start);
+        ctx.lineTo(guide.position, guide.end);
+      } else {
+        ctx.moveTo(guide.start, guide.position);
+        ctx.lineTo(guide.end, guide.position);
+      }
+      ctx.stroke();
+    }
+
+    ctx.restore();
   }
 
   // ---------------------------------------------------------------------------

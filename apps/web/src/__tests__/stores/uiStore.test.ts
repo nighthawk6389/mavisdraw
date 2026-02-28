@@ -5,6 +5,7 @@ function resetStore() {
   useUIStore.setState({
     showStylePanel: true,
     showLayerPanel: false,
+    showDiagramTree: false,
     renderMode: 'sketchy',
     showGrid: true,
     snapToGrid: false,

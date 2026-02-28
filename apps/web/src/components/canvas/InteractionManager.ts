@@ -1,12 +1,17 @@
-import type { MavisElement, Point, Bounds } from '@mavisdraw/types';
+import type { MavisElement, Point, Bounds, LinearElement, TextElement } from '@mavisdraw/types';
 import type { Tool } from '../../stores/toolStore';
 import type { ViewportManager } from './ViewportManager';
+import type { SmartGuide } from './CanvasRenderer';
 import {
   hitTestElements,
   hitTestSelectionBox,
   hitTestResizeHandle,
+  findBindingTarget,
+  hitTestElementsWithGroups,
+  getGroupElementIds,
   type ResizeHandle,
 } from './HitTesting';
+import { simplifyTuplePoints } from '@mavisdraw/math';
 
 export type InteractionMode =
   | 'idle'
@@ -25,6 +30,7 @@ export interface InteractionCallbacks {
 
   // Selection
   select: (id: string) => void;
+  selectMultiple: (ids: string[]) => void;
   addToSelection: (id: string) => void;
   clearSelection: () => void;
   selectElementsInBox: (ids: string[]) => void;
@@ -49,12 +55,29 @@ export interface InteractionCallbacks {
   deleteSelectedElements: () => void;
   pushHistory: () => void;
 
+  // Binding
+  bindArrow: (
+    arrowId: string,
+    endpoint: 'start' | 'end',
+    targetId: string,
+    gap: number,
+  ) => void;
+  unbindArrow: (arrowId: string, endpoint: 'start' | 'end') => void;
+  moveElementWithBindings: (id: string, newX: number, newY: number) => void;
+
+  // Text editing
+  startTextEditing: (element: MavisElement, isNew: boolean) => void;
+
   // Tool
   resetToSelect: () => void;
   isToolLocked: () => boolean;
 
   // Render
   invalidateStatic: () => void;
+
+  // Portal drill-down
+  onPortalDrillDown?: (portalElement: MavisElement) => void;
+  onPortalCreated?: (portalElement: MavisElement) => void;
 }
 
 const SHAPE_TOOLS = new Set<Tool>([
@@ -67,6 +90,8 @@ const SHAPE_TOOLS = new Set<Tool>([
   'text',
   'portal',
 ]);
+
+const SMART_GUIDE_THRESHOLD = 5; // pixels in screen space
 
 export class InteractionManager {
   private mode: InteractionMode = 'idle';
@@ -83,6 +108,17 @@ export class InteractionManager {
   private resizeStartBounds: Bounds | null = null;
   private isSpacePressed = false;
   private freedrawPoints: [number, number][] = [];
+
+  // Smart guides state
+  private currentSmartGuides: SmartGuide[] = [];
+
+  // Group navigation state
+  private enteredGroupIds: Set<string> = new Set();
+
+  // Double-click tracking
+  private lastClickTime = 0;
+  private lastClickId: string | null = null;
+  private static readonly DOUBLE_CLICK_THRESHOLD = 300;
 
   constructor(callbacks: InteractionCallbacks, diagramId: string) {
     this.callbacks = callbacks;
@@ -101,8 +137,16 @@ export class InteractionManager {
     return this.creatingElement;
   }
 
+  getSmartGuides(): SmartGuide[] {
+    return this.currentSmartGuides;
+  }
+
   setSpacePressed(pressed: boolean): void {
     this.isSpacePressed = pressed;
+  }
+
+  getEnteredGroupIds(): Set<string> {
+    return this.enteredGroupIds;
   }
 
   // ─── Mouse Events ─────────────────────────────────────────
@@ -144,30 +188,83 @@ export class InteractionManager {
         }
       }
 
-      // Check element hit
-      const hitElement = hitTestElements(canvasPoint, elements);
+      // Check element hit (with group awareness)
+      const hitElement = hitTestElementsWithGroups(canvasPoint, elements, this.enteredGroupIds);
       if (hitElement) {
-        if (event.shiftKey) {
-          this.callbacks.addToSelection(hitElement.id);
-        } else if (!selectedIds.has(hitElement.id)) {
-          this.callbacks.select(hitElement.id);
+        // Check for double-click
+        const now = Date.now();
+        const isDoubleClick =
+          now - this.lastClickTime < InteractionManager.DOUBLE_CLICK_THRESHOLD &&
+          this.lastClickId === hitElement.id;
+        this.lastClickTime = now;
+        this.lastClickId = hitElement.id;
+
+        if (isDoubleClick) {
+          this.handleDoubleClick(hitElement, canvasPoint);
+          return;
         }
+
+        // Get all group members if applicable
+        const groupIds = getGroupElementIds(hitElement, elements, this.enteredGroupIds);
+
+        if (event.shiftKey) {
+          // Add group members to selection
+          for (const gid of groupIds) {
+            this.callbacks.addToSelection(gid);
+          }
+        } else if (!selectedIds.has(hitElement.id) || groupIds.length > 1) {
+          // If clicking a group member that's not selected, select the whole group
+          if (groupIds.length > 1) {
+            this.callbacks.selectMultiple(groupIds);
+          } else {
+            this.callbacks.select(hitElement.id);
+          }
+        }
+
         // Start drag
         this.mode = 'dragging';
-        const currentSelectedIds = event.shiftKey
-          ? new Set([...selectedIds, hitElement.id])
-          : selectedIds.has(hitElement.id)
-            ? selectedIds
-            : new Set([hitElement.id]);
+        const currentSelectedIds = this.callbacks.getSelectedIds();
         this.captureElementPositions(elements, currentSelectedIds);
         this.callbacks.pushHistory();
       } else {
+        // Check for double-click on empty area
+        const now = Date.now();
+        if (now - this.lastClickTime < InteractionManager.DOUBLE_CLICK_THRESHOLD) {
+          // Exit any entered groups
+          this.enteredGroupIds.clear();
+        }
+        this.lastClickTime = now;
+        this.lastClickId = null;
+
         // Start selection box
         if (!event.shiftKey) {
           this.callbacks.clearSelection();
         }
         this.mode = 'selecting';
         this.callbacks.startSelectionBox(canvasPoint);
+      }
+    } else if (tool === 'text') {
+      // Text tool: check if clicking on existing text element
+      const hitElement = hitTestElements(canvasPoint, elements);
+      if (hitElement && hitElement.type === 'text') {
+        this.callbacks.select(hitElement.id);
+        this.callbacks.startTextEditing(hitElement, false);
+      } else {
+        // Create new text element at click position
+        const newText = this.callbacks.createElement(
+          'text',
+          this.diagramId,
+          canvasPoint.x,
+          canvasPoint.y,
+          200,
+          30,
+        );
+        this.callbacks.addElement(newText);
+        this.callbacks.select(newText.id);
+        this.callbacks.startTextEditing(newText, true);
+      }
+      if (!this.callbacks.isToolLocked()) {
+        this.callbacks.resetToSelect();
       }
     } else if (tool === 'freedraw') {
       this.mode = 'drawing-freedraw';
@@ -201,21 +298,45 @@ export class InteractionManager {
       }
 
       case 'creating': {
-        const x = Math.min(this.startCanvasPoint.x, canvasPoint.x);
-        const y = Math.min(this.startCanvasPoint.y, canvasPoint.y);
-        const width = Math.abs(canvasPoint.x - this.startCanvasPoint.x);
-        const height = Math.abs(canvasPoint.y - this.startCanvasPoint.y);
+        const tool = this.callbacks.getActiveTool();
 
-        if (width > 2 || height > 2) {
-          const tool = this.callbacks.getActiveTool();
+        if (tool === 'arrow' || tool === 'line') {
+          // For arrows/lines, use start point as origin and end point relative
+          const width = canvasPoint.x - this.startCanvasPoint.x;
+          const height = canvasPoint.y - this.startCanvasPoint.y;
+
           this.creatingElement = this.callbacks.createElement(
             tool,
             this.diagramId,
-            x,
-            y,
-            width,
-            height,
+            this.startCanvasPoint.x,
+            this.startCanvasPoint.y,
+            Math.abs(width),
+            Math.abs(height),
           );
+
+          // Set proper points
+          if (this.creatingElement && 'points' in this.creatingElement) {
+            (this.creatingElement as LinearElement).points = [
+              [0, 0],
+              [width, height],
+            ];
+          }
+        } else {
+          const x = Math.min(this.startCanvasPoint.x, canvasPoint.x);
+          const y = Math.min(this.startCanvasPoint.y, canvasPoint.y);
+          const width = Math.abs(canvasPoint.x - this.startCanvasPoint.x);
+          const height = Math.abs(canvasPoint.y - this.startCanvasPoint.y);
+
+          if (width > 2 || height > 2) {
+            this.creatingElement = this.callbacks.createElement(
+              tool,
+              this.diagramId,
+              x,
+              y,
+              width,
+              height,
+            );
+          }
         }
         break;
       }
@@ -223,11 +344,31 @@ export class InteractionManager {
       case 'dragging': {
         const dx = canvasPoint.x - this.startCanvasPoint.x;
         const dy = canvasPoint.y - this.startCanvasPoint.y;
+
+        // Calculate smart guides
+        const elements = this.callbacks.getElements();
+        const selectedIds = this.callbacks.getSelectedIds();
+        const { snappedDx, snappedDy, guides } = this.calculateSmartGuides(
+          dx, dy, elements, selectedIds,
+        );
+
+        this.currentSmartGuides = guides;
+
         for (const [id, startPos] of this.dragStartPositions) {
-          this.callbacks.updateElement(id, {
-            x: startPos.x + dx,
-            y: startPos.y + dy,
-          });
+          const element = elements.find((e) => e.id === id);
+          if (element && element.boundElements.length > 0) {
+            // Use moveElementWithBindings for elements with bindings
+            this.callbacks.moveElementWithBindings(
+              id,
+              startPos.x + snappedDx,
+              startPos.y + snappedDy,
+            );
+          } else {
+            this.callbacks.updateElement(id, {
+              x: startPos.x + snappedDx,
+              y: startPos.y + snappedDy,
+            });
+          }
         }
         this.callbacks.invalidateStatic();
         break;
@@ -271,11 +412,64 @@ export class InteractionManager {
   onPointerUp(_screenX: number, _screenY: number): void {
     switch (this.mode) {
       case 'creating': {
-        if (this.creatingElement && this.creatingElement.width > 2 && this.creatingElement.height > 2) {
-          this.callbacks.addElement(this.creatingElement);
-          this.callbacks.select(this.creatingElement.id);
-          if (!this.callbacks.isToolLocked()) {
-            this.callbacks.resetToSelect();
+        if (this.creatingElement) {
+          const tool = this.callbacks.getActiveTool();
+
+          // For arrows, check binding at endpoints
+          if ((tool === 'arrow' || tool === 'line') && 'points' in this.creatingElement) {
+            const linear = this.creatingElement as LinearElement;
+            const elements = this.callbacks.getElements();
+            const excludeIds = new Set([this.creatingElement.id]);
+
+            // Check end point binding
+            const endPt = linear.points[linear.points.length - 1];
+            const endCanvasX = linear.x + endPt[0];
+            const endCanvasY = linear.y + endPt[1];
+            const endTarget = findBindingTarget(endCanvasX, endCanvasY, elements, excludeIds);
+
+            // Check start point binding
+            const startPt = linear.points[0];
+            const startCanvasX = linear.x + startPt[0];
+            const startCanvasY = linear.y + startPt[1];
+            const startTarget = findBindingTarget(startCanvasX, startCanvasY, elements, excludeIds);
+
+            this.callbacks.addElement(this.creatingElement);
+
+            if (endTarget) {
+              this.callbacks.bindArrow(
+                this.creatingElement.id,
+                'end',
+                endTarget.element.id,
+                endTarget.gap,
+              );
+            }
+            if (startTarget) {
+              this.callbacks.bindArrow(
+                this.creatingElement.id,
+                'start',
+                startTarget.element.id,
+                startTarget.gap,
+              );
+            }
+          } else if (this.creatingElement.width > 2 || this.creatingElement.height > 2) {
+            this.callbacks.addElement(this.creatingElement);
+          }
+
+          if (this.creatingElement.width > 2 || this.creatingElement.height > 2 ||
+              tool === 'arrow' || tool === 'line') {
+            this.callbacks.select(this.creatingElement.id);
+
+            // Portal creation flow: auto-create child diagram
+            if (
+              this.creatingElement.type === 'portal' &&
+              this.callbacks.onPortalCreated
+            ) {
+              this.callbacks.onPortalCreated(this.creatingElement);
+            }
+
+            if (!this.callbacks.isToolLocked()) {
+              this.callbacks.resetToSelect();
+            }
           }
         }
         this.creatingElement = null;
@@ -285,6 +479,7 @@ export class InteractionManager {
 
       case 'dragging': {
         this.dragStartPositions.clear();
+        this.currentSmartGuides = [];
         this.callbacks.invalidateStatic();
         break;
       }
@@ -298,7 +493,6 @@ export class InteractionManager {
       }
 
       case 'selecting': {
-        const viewport = this.callbacks.getViewport();
         const selBox = this.getSelectionBoxBounds();
         if (selBox && selBox.width > 2 && selBox.height > 2) {
           const elements = this.callbacks.getElements();
@@ -311,8 +505,26 @@ export class InteractionManager {
 
       case 'drawing-freedraw': {
         if (this.creatingElement && this.freedrawPoints.length >= 2) {
-          this.callbacks.addElement(this.creatingElement);
-          this.callbacks.select(this.creatingElement.id);
+          // Simplify freedraw points using Ramer-Douglas-Peucker
+          const zoom = this.callbacks.getViewport().getViewport().zoom;
+          const tolerance = Math.max(1, 2 / zoom);
+
+          const minX = Math.min(...this.freedrawPoints.map((p) => p[0]));
+          const minY = Math.min(...this.freedrawPoints.map((p) => p[1]));
+          const relativePoints: [number, number][] = this.freedrawPoints.map((p) => [
+            p[0] - minX,
+            p[1] - minY,
+          ]);
+
+          const simplifiedPoints = simplifyTuplePoints(relativePoints, tolerance);
+
+          const finalElement = {
+            ...this.creatingElement,
+            points: simplifiedPoints,
+          } as MavisElement;
+
+          this.callbacks.addElement(finalElement);
+          this.callbacks.select(finalElement.id);
           if (!this.callbacks.isToolLocked()) {
             this.callbacks.resetToSelect();
           }
@@ -341,6 +553,212 @@ export class InteractionManager {
       viewport.pan(-deltaX, -deltaY);
     }
     this.callbacks.invalidateStatic();
+  }
+
+  onDoubleClick(screenX: number, screenY: number): void {
+    const viewport = this.callbacks.getViewport();
+    const canvasPoint = viewport.screenToCanvas(screenX, screenY);
+    const elements = this.callbacks.getElements();
+    const hitElement = hitTestElements(canvasPoint, elements);
+
+    if (hitElement) {
+      this.handleDoubleClick(hitElement, canvasPoint);
+    }
+  }
+
+  // ─── Double-click handling ────────────────────────────────
+
+  private handleDoubleClick(element: MavisElement, _canvasPoint: Point): void {
+    // Double-click on portal: drill down into nested diagram
+    if (element.type === 'portal' && this.callbacks.onPortalDrillDown) {
+      this.callbacks.onPortalDrillDown(element);
+      return;
+    }
+
+    // Double-click on text element: start editing
+    if (element.type === 'text') {
+      this.callbacks.select(element.id);
+      this.callbacks.startTextEditing(element, false);
+      return;
+    }
+
+    // Double-click on a shape: create bound text or enter group
+    if (element.groupIds.length > 0) {
+      // Check if we should enter the group
+      const outermostGroup = element.groupIds[0];
+      if (!this.enteredGroupIds.has(outermostGroup)) {
+        this.enteredGroupIds.add(outermostGroup);
+        this.callbacks.select(element.id);
+        return;
+      }
+    }
+
+    // For shapes without groups (or already entered groups), create bound text
+    const shapeTypes = new Set(['rectangle', 'ellipse', 'diamond', 'triangle']);
+    if (shapeTypes.has(element.type)) {
+      // Check if shape already has bound text
+      const hasBoundText = element.boundElements.some((b) => b.type === 'text');
+      if (hasBoundText) {
+        // Find the bound text element and start editing it
+        const elements = this.callbacks.getElements();
+        for (const bound of element.boundElements) {
+          if (bound.type === 'text') {
+            const textEl = elements.find((e) => e.id === bound.id);
+            if (textEl && !textEl.isDeleted) {
+              this.callbacks.select(textEl.id);
+              this.callbacks.startTextEditing(textEl, false);
+              return;
+            }
+          }
+        }
+      } else {
+        // Create new bound text
+        this.callbacks.startTextEditing(element, true);
+      }
+    }
+  }
+
+  // ─── Smart Guides ──────────────────────────────────────────
+
+  private calculateSmartGuides(
+    dx: number,
+    dy: number,
+    elements: MavisElement[],
+    selectedIds: Set<string>,
+  ): { snappedDx: number; snappedDy: number; guides: SmartGuide[] } {
+    const guides: SmartGuide[] = [];
+    let snappedDx = dx;
+    let snappedDy = dy;
+
+    const zoom = this.callbacks.getViewport().getViewport().zoom;
+    const threshold = SMART_GUIDE_THRESHOLD / zoom;
+
+    // Get dragging elements bounds
+    const draggingBounds = this.getDraggingBounds(dx, dy);
+    if (!draggingBounds) return { snappedDx, snappedDy, guides };
+
+    const dragLeft = draggingBounds.x;
+    const dragRight = draggingBounds.x + draggingBounds.width;
+    const dragCenterX = draggingBounds.x + draggingBounds.width / 2;
+    const dragTop = draggingBounds.y;
+    const dragBottom = draggingBounds.y + draggingBounds.height;
+    const dragCenterY = draggingBounds.y + draggingBounds.height / 2;
+
+    let bestSnapX: { offset: number; guides: SmartGuide[] } | null = null;
+    let bestSnapY: { offset: number; guides: SmartGuide[] } | null = null;
+    let bestDistX = threshold;
+    let bestDistY = threshold;
+
+    // Compare against all non-selected, non-deleted elements
+    for (const el of elements) {
+      if (selectedIds.has(el.id) || el.isDeleted) continue;
+
+      const elLeft = el.x;
+      const elRight = el.x + el.width;
+      const elCenterX = el.x + el.width / 2;
+      const elTop = el.y;
+      const elBottom = el.y + el.height;
+      const elCenterY = el.y + el.height / 2;
+
+      // Vertical guides (snap X positions)
+      const xSnaps: { dragVal: number; elVal: number }[] = [
+        { dragVal: dragLeft, elVal: elLeft },
+        { dragVal: dragLeft, elVal: elRight },
+        { dragVal: dragLeft, elVal: elCenterX },
+        { dragVal: dragRight, elVal: elLeft },
+        { dragVal: dragRight, elVal: elRight },
+        { dragVal: dragRight, elVal: elCenterX },
+        { dragVal: dragCenterX, elVal: elLeft },
+        { dragVal: dragCenterX, elVal: elRight },
+        { dragVal: dragCenterX, elVal: elCenterX },
+      ];
+
+      for (const snap of xSnaps) {
+        const dist = Math.abs(snap.dragVal - snap.elVal);
+        if (dist < bestDistX) {
+          bestDistX = dist;
+          const offset = snap.elVal - snap.dragVal;
+          const minY = Math.min(dragTop, dragBottom, elTop, elBottom);
+          const maxY = Math.max(dragTop, dragBottom, elTop, elBottom);
+          bestSnapX = {
+            offset,
+            guides: [{
+              type: 'vertical',
+              position: snap.elVal,
+              start: minY - 20,
+              end: maxY + 20,
+            }],
+          };
+        }
+      }
+
+      // Horizontal guides (snap Y positions)
+      const ySnaps: { dragVal: number; elVal: number }[] = [
+        { dragVal: dragTop, elVal: elTop },
+        { dragVal: dragTop, elVal: elBottom },
+        { dragVal: dragTop, elVal: elCenterY },
+        { dragVal: dragBottom, elVal: elTop },
+        { dragVal: dragBottom, elVal: elBottom },
+        { dragVal: dragBottom, elVal: elCenterY },
+        { dragVal: dragCenterY, elVal: elTop },
+        { dragVal: dragCenterY, elVal: elBottom },
+        { dragVal: dragCenterY, elVal: elCenterY },
+      ];
+
+      for (const snap of ySnaps) {
+        const dist = Math.abs(snap.dragVal - snap.elVal);
+        if (dist < bestDistY) {
+          bestDistY = dist;
+          const offset = snap.elVal - snap.dragVal;
+          const minX = Math.min(dragLeft, dragRight, elLeft, elRight);
+          const maxX = Math.max(dragLeft, dragRight, elLeft, elRight);
+          bestSnapY = {
+            offset,
+            guides: [{
+              type: 'horizontal',
+              position: snap.elVal,
+              start: minX - 20,
+              end: maxX + 20,
+            }],
+          };
+        }
+      }
+    }
+
+    if (bestSnapX) {
+      snappedDx = dx + bestSnapX.offset;
+      guides.push(...bestSnapX.guides);
+    }
+    if (bestSnapY) {
+      snappedDy = dy + bestSnapY.offset;
+      guides.push(...bestSnapY.guides);
+    }
+
+    return { snappedDx, snappedDy, guides };
+  }
+
+  private getDraggingBounds(dx: number, dy: number): Bounds | null {
+    if (this.dragStartPositions.size === 0) return null;
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    const elements = this.callbacks.getElements();
+    for (const [id, startPos] of this.dragStartPositions) {
+      const el = elements.find((e) => e.id === id);
+      if (!el) continue;
+
+      const newX = startPos.x + dx;
+      const newY = startPos.y + dy;
+      minX = Math.min(minX, newX);
+      minY = Math.min(minY, newY);
+      maxX = Math.max(maxX, newX + el.width);
+      maxY = Math.max(maxY, newY + el.height);
+    }
+
+    return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
   }
 
   // ─── Helpers ───────────────────────────────────────────────
