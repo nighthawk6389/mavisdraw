@@ -106,7 +106,6 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
       renderer.destroy();
       rendererRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Create interaction manager (separate effect to avoid dependency issues)

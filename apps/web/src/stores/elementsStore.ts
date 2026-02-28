@@ -228,9 +228,16 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
     const targetIndex = state.historyIndex;
     const entry = state.history[targetIndex];
 
+    // Save current live state for redo if we're at the end of history
+    let history = state.history;
+    if (history.length === targetIndex + 1) {
+      history = [...history, { elements: cloneElementsMap(state.elements) }];
+    }
+
     set({
       elements: cloneElementsMap(entry.elements),
       historyIndex: targetIndex - 1,
+      history,
     });
   },
 
@@ -238,7 +245,9 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
     const state = get();
     if (!state.canRedo()) return;
 
-    const entry = state.history[state.historyIndex + 1];
+    // history[i] is the pre-mutation snapshot for mutation i;
+    // history[i+1] holds the post-mutation state saved by undo
+    const entry = state.history[state.historyIndex + 2];
 
     set({
       elements: cloneElementsMap(entry.elements),
@@ -252,7 +261,7 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
 
   canRedo: () => {
     const state = get();
-    return state.historyIndex < state.history.length - 1;
+    return state.historyIndex + 2 < state.history.length;
   },
 
   createElement: (
