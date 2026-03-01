@@ -5,6 +5,7 @@ interface UIState {
   // Panels
   showStylePanel: boolean;
   showLayerPanel: boolean;
+  showDiagramTree: boolean;
 
   // Diagram render mode
   renderMode: RenderMode;
@@ -17,6 +18,7 @@ interface UIState {
   // Actions
   toggleStylePanel: () => void;
   toggleLayerPanel: () => void;
+  toggleDiagramTree: () => void;
   setRenderMode: (mode: RenderMode) => void;
   toggleGrid: () => void;
   toggleSnapToGrid: () => void;
@@ -26,6 +28,7 @@ interface UIState {
 export const useUIStore = create<UIState>((set) => ({
   showStylePanel: true,
   showLayerPanel: false,
+  showDiagramTree: false,
   renderMode: 'sketchy',
   showGrid: true,
   snapToGrid: false,
@@ -37,6 +40,10 @@ export const useUIStore = create<UIState>((set) => ({
 
   toggleLayerPanel: () => {
     set((state) => ({ showLayerPanel: !state.showLayerPanel }));
+  },
+
+  toggleDiagramTree: () => {
+    set((state) => ({ showDiagramTree: !state.showDiagramTree }));
   },
 
   setRenderMode: (mode: RenderMode) => {

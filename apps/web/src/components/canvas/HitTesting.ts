@@ -249,3 +249,270 @@ export function hitTestResizeHandle(
   }
   return null;
 }
+
+// ─── Binding support ─────────────────────────────────────
+
+const BINDING_THRESHOLD = 20;
+
+/**
+ * Shape types that can be arrow binding targets.
+ */
+const BINDABLE_TYPES = new Set(['rectangle', 'ellipse', 'diamond', 'triangle', 'portal', 'image']);
+
+/**
+ * Find the nearest shape within threshold that an arrow endpoint can bind to.
+ * Returns the element and the distance from the point to the element's nearest edge.
+ *
+ * @param canvasX - X coordinate in canvas space
+ * @param canvasY - Y coordinate in canvas space
+ * @param elements - All visible elements
+ * @param excludeIds - Element IDs to exclude (e.g., the arrow being drawn)
+ * @param threshold - Max distance from shape edge to snap (default 20)
+ */
+export function findBindingTarget(
+  canvasX: number,
+  canvasY: number,
+  elements: MavisElement[],
+  excludeIds: Set<string> = new Set(),
+  threshold: number = BINDING_THRESHOLD,
+): { element: MavisElement; gap: number } | null {
+  const point: Point = { x: canvasX, y: canvasY };
+  let best: { element: MavisElement; gap: number } | null = null;
+  let bestDist = threshold;
+
+  for (let i = elements.length - 1; i >= 0; i--) {
+    const el = elements[i];
+    if (el.isDeleted || excludeIds.has(el.id) || !BINDABLE_TYPES.has(el.type)) {
+      continue;
+    }
+
+    const dist = distanceToElementEdge(point, el);
+    if (dist <= bestDist) {
+      bestDist = dist;
+      best = { element: el, gap: dist };
+    }
+  }
+
+  return best;
+}
+
+/**
+ * Compute the approximate distance from a point to the nearest edge of an element.
+ */
+function distanceToElementEdge(point: Point, element: MavisElement): number {
+  const cx = element.x + element.width / 2;
+  const cy = element.y + element.height / 2;
+
+  // Transform to local coordinates if rotated
+  let lx = point.x;
+  let ly = point.y;
+  if (element.angle !== 0) {
+    const cos = Math.cos(-element.angle);
+    const sin = Math.sin(-element.angle);
+    const dx = point.x - cx;
+    const dy = point.y - cy;
+    lx = cx + dx * cos - dy * sin;
+    ly = cy + dx * sin + dy * cos;
+  }
+
+  switch (element.type) {
+    case 'ellipse': {
+      const rx = element.width / 2;
+      const ry = element.height / 2;
+      if (rx === 0 || ry === 0) return Infinity;
+      const dx = lx - cx;
+      const dy = ly - cy;
+      // Normalize to unit circle
+      const norm = Math.sqrt((dx * dx) / (rx * rx) + (dy * dy) / (ry * ry));
+      if (norm === 0) return Math.min(rx, ry);
+      // Point on ellipse at same angle
+      const ex = cx + (dx / norm);
+      const ey = cy + (dy / norm);
+      // Approximate using the distance ratio
+      const distToCenter = Math.sqrt(dx * dx + dy * dy);
+      const edgeDistFromCenter = Math.sqrt(
+        ((dx / norm) * (dx / norm)) + ((dy / norm) * (dy / norm)),
+      );
+      return Math.abs(distToCenter - edgeDistFromCenter);
+    }
+
+    case 'diamond': {
+      const hw = element.width / 2;
+      const hh = element.height / 2;
+      const dx = Math.abs(lx - cx);
+      const dy = Math.abs(ly - cy);
+      if (hw === 0 || hh === 0) return Infinity;
+      // Diamond edge distance
+      const edgeVal = dx / hw + dy / hh;
+      if (edgeVal === 0) return Math.min(hw, hh);
+      // Project to edge
+      const scale = 1 / edgeVal;
+      const edgeX = dx * scale;
+      const edgeY = dy * scale;
+      return Math.sqrt((dx - edgeX) ** 2 + (dy - edgeY) ** 2);
+    }
+
+    default: {
+      // Rectangle-like shapes: distance to nearest edge
+      const left = element.x;
+      const right = element.x + element.width;
+      const top = element.y;
+      const bottom = element.y + element.height;
+
+      // Clamp point to rectangle
+      const clampedX = Math.max(left, Math.min(right, lx));
+      const clampedY = Math.max(top, Math.min(bottom, ly));
+
+      if (lx >= left && lx <= right && ly >= top && ly <= bottom) {
+        // Point is inside - distance to nearest edge
+        return Math.min(
+          lx - left,
+          right - lx,
+          ly - top,
+          bottom - ly,
+        );
+      }
+
+      return Math.sqrt((lx - clampedX) ** 2 + (ly - clampedY) ** 2);
+    }
+  }
+}
+
+/**
+ * Get the point on the element's edge closest to a given direction from center.
+ * Used to compute the arrow endpoint when bound to a shape.
+ */
+export function getBindingPoint(
+  element: MavisElement,
+  fromX: number,
+  fromY: number,
+  gap: number = 0,
+): Point {
+  const cx = element.x + element.width / 2;
+  const cy = element.y + element.height / 2;
+  const dx = fromX - cx;
+  const dy = fromY - cy;
+  const angle = Math.atan2(dy, dx);
+
+  switch (element.type) {
+    case 'ellipse': {
+      const rx = element.width / 2 + gap;
+      const ry = element.height / 2 + gap;
+      return {
+        x: cx + rx * Math.cos(angle),
+        y: cy + ry * Math.sin(angle),
+      };
+    }
+
+    case 'diamond': {
+      const hw = element.width / 2 + gap;
+      const hh = element.height / 2 + gap;
+      // Diamond parametric: |x|/hw + |y|/hh = 1
+      const cosA = Math.abs(Math.cos(angle));
+      const sinA = Math.abs(Math.sin(angle));
+      const denom = cosA / hw + sinA / hh;
+      if (denom === 0) return { x: cx, y: cy };
+      const r = 1 / denom;
+      return {
+        x: cx + r * Math.cos(angle),
+        y: cy + r * Math.sin(angle),
+      };
+    }
+
+    default: {
+      // Rectangle: find intersection of ray from center with rectangle edges
+      const hw = element.width / 2 + gap;
+      const hh = element.height / 2 + gap;
+      const cosA = Math.cos(angle);
+      const sinA = Math.sin(angle);
+
+      // Avoid division by zero
+      if (cosA === 0) {
+        return { x: cx, y: cy + (sinA > 0 ? hh : -hh) };
+      }
+      if (sinA === 0) {
+        return { x: cx + (cosA > 0 ? hw : -hw), y: cy };
+      }
+
+      const tx = hw / Math.abs(cosA);
+      const ty = hh / Math.abs(sinA);
+      const t = Math.min(tx, ty);
+
+      return {
+        x: cx + t * cosA,
+        y: cy + t * sinA,
+      };
+    }
+  }
+}
+
+/**
+ * Hit test elements considering group membership.
+ * If an element belongs to a group, return the outermost group's first element
+ * so that clicking any member selects the whole group.
+ *
+ * @param canvasPoint - Point in canvas coordinates
+ * @param elements - All visible elements
+ * @param enteredGroupIds - Set of group IDs that have been "entered" (double-clicked)
+ */
+export function hitTestElementsWithGroups(
+  canvasPoint: Point,
+  elements: MavisElement[],
+  enteredGroupIds: Set<string> = new Set(),
+): MavisElement | null {
+  for (let i = elements.length - 1; i >= 0; i--) {
+    if (hitTestElement(canvasPoint, elements[i])) {
+      const el = elements[i];
+
+      // If element has group IDs, find the outermost group that hasn't been entered
+      if (el.groupIds.length > 0) {
+        for (const gid of el.groupIds) {
+          if (!enteredGroupIds.has(gid)) {
+            // Return first element of this group (for selection purposes, the hit element itself)
+            return el;
+          }
+        }
+      }
+
+      return el;
+    }
+  }
+  return null;
+}
+
+/**
+ * Get all element IDs that share a group with the given element,
+ * considering the outermost non-entered group.
+ */
+export function getGroupElementIds(
+  element: MavisElement,
+  elements: MavisElement[],
+  enteredGroupIds: Set<string> = new Set(),
+): string[] {
+  if (element.groupIds.length === 0) {
+    return [element.id];
+  }
+
+  // Find the outermost group that hasn't been entered
+  let targetGroupId: string | null = null;
+  for (const gid of element.groupIds) {
+    if (!enteredGroupIds.has(gid)) {
+      targetGroupId = gid;
+      break;
+    }
+  }
+
+  if (!targetGroupId) {
+    return [element.id];
+  }
+
+  // Find all elements that belong to this group
+  const ids: string[] = [];
+  for (const el of elements) {
+    if (!el.isDeleted && el.groupIds.includes(targetGroupId)) {
+      ids.push(el.id);
+    }
+  }
+
+  return ids;
+}
