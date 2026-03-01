@@ -6,6 +6,8 @@ import LayerPanel from './components/toolbar/LayerPanel';
 import Breadcrumb from './components/navigation/Breadcrumb';
 import DiagramTreeSidebar from './components/navigation/DiagramTreeSidebar';
 import PortalProperties from './components/elements/PortalProperties';
+import PresenceAvatars from './components/collaboration/PresenceAvatars';
+import ShareDialog from './components/collaboration/ShareDialog';
 import { useKeyboard } from './hooks/useKeyboard';
 import { useAutoSave, type SaveStatus } from './hooks/useAutoSave';
 import { useSelectionStore } from './stores/selectionStore';
@@ -45,6 +47,7 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
   const { user, logout } = useAuthStore();
 
   const { saveStatus, manualSave } = useAutoSave(activeDiagramId);
+  const [showShareDialog, setShowShareDialog] = useState(false);
 
   const showPortalProperties = useMemo(() => {
     if (selectedIds.size !== 1) return false;
@@ -69,6 +72,13 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
           <SaveIndicator status={saveStatus} />
         </div>
         <div className="flex items-center gap-3 pr-3">
+          <PresenceAvatars />
+          <button
+            onClick={() => setShowShareDialog(true)}
+            className="text-xs text-white bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded"
+          >
+            Share
+          </button>
           <button
             onClick={manualSave}
             className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 border border-gray-300 rounded"
@@ -81,6 +91,13 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
           </button>
         </div>
       </div>
+
+      {/* Share dialog */}
+      <ShareDialog
+        projectId={activeDiagramId}
+        isOpen={showShareDialog}
+        onClose={() => setShowShareDialog(false)}
+      />
 
       {/* Main content area */}
       <div className="flex flex-1 min-h-0">
@@ -108,21 +125,18 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
 
 export default function App() {
   const { isAuthenticated, isLoading, initialize } = useAuthStore();
-  const [view, setView] = useState<AppView>('loading');
+  const [userView, setUserView] = useState<'dashboard' | 'editor'>('dashboard');
 
   useEffect(() => {
     initialize();
   }, [initialize]);
 
-  useEffect(() => {
-    if (isLoading) {
-      setView('loading');
-    } else if (!isAuthenticated) {
-      setView('login');
-    } else if (view === 'loading' || view === 'login') {
-      setView('dashboard');
-    }
-  }, [isLoading, isAuthenticated]);
+  // Determine active view based on auth state and user selection
+  const view: AppView = isLoading
+    ? 'loading'
+    : !isAuthenticated
+      ? 'login'
+      : userView;
 
   const handleOpenProject = useCallback(
     async (projectId: string, rootDiagramId: string) => {
@@ -173,7 +187,7 @@ export default function App() {
           diagramPath: [rootDiagramId],
         });
 
-        setView('editor');
+        setUserView('editor');
       } catch (err) {
         console.error('Failed to open project:', err);
       }
@@ -182,7 +196,7 @@ export default function App() {
   );
 
   const handleBackToDashboard = useCallback(() => {
-    setView('dashboard');
+    setUserView('dashboard');
   }, []);
 
   if (view === 'loading') {

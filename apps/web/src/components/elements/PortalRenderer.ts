@@ -537,6 +537,46 @@ function adjustAlpha(hexColor: string, alpha: number): string {
   return hexColor;
 }
 
+// ─── Collaboration badge ──────────────────────────────────────────
+
+/**
+ * Draw a small badge showing "N users editing" in the top-right of the portal.
+ */
+function drawCollaborationBadge(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  activeUsers: number,
+): void {
+  if (activeUsers <= 0) return;
+
+  ctx.save();
+  const text = activeUsers === 1 ? '1 editing' : `${activeUsers} editing`;
+  const fontSize = 10;
+  ctx.font = `${fontSize}px "Segoe UI", system-ui, sans-serif`;
+  const metrics = ctx.measureText(text);
+  const padX = 5;
+  const padY = 3;
+  const badgeW = metrics.width + padX * 2;
+  const badgeH = fontSize + padY * 2;
+  const badgeX = width - badgeW - 4;
+  const badgeY = TITLE_BAR_HEIGHT + 4;
+
+  // Badge background
+  ctx.fillStyle = '#4ECDC4';
+  ctx.globalAlpha = 0.9;
+  ctx.beginPath();
+  ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 4);
+  ctx.fill();
+
+  // Badge text
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#ffffff';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, badgeX + badgeW / 2, badgeY + badgeH / 2);
+  ctx.restore();
+}
+
 // ─── Public API ───────────────────────────────────────────────────
 
 /**
@@ -547,6 +587,7 @@ export function renderPortalSketchy(
   ctx: CanvasRenderingContext2D,
   roughCanvas: RoughCanvas,
   element: PortalElement,
+  activeUserCount = 0,
 ): void {
   switch (element.portalStyle) {
     case 'badge':
@@ -560,6 +601,10 @@ export function renderPortalSketchy(
       renderCardSketchy(ctx, roughCanvas, element);
       break;
   }
+  // Draw collaboration badge on card and expanded styles
+  if (activeUserCount > 0 && element.portalStyle !== 'badge') {
+    drawCollaborationBadge(ctx, element.width, activeUserCount);
+  }
 }
 
 /**
@@ -569,6 +614,7 @@ export function renderPortalSketchy(
 export function renderPortalClean(
   ctx: CanvasRenderingContext2D,
   element: PortalElement,
+  activeUserCount = 0,
 ): void {
   switch (element.portalStyle) {
     case 'badge':
@@ -581,5 +627,9 @@ export function renderPortalClean(
     default:
       renderCardClean(ctx, element);
       break;
+  }
+  // Draw collaboration badge on card and expanded styles
+  if (activeUserCount > 0 && element.portalStyle !== 'badge') {
+    drawCollaborationBadge(ctx, element.width, activeUserCount);
   }
 }

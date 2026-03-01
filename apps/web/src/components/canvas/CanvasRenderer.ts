@@ -30,6 +30,16 @@ export interface SmartGuide {
  * Describes the current interactive/UI state needed for rendering.
  * Passed in each frame so the renderer always draws the latest state.
  */
+/**
+ * A remote user's selection info, used to render soft-lock borders.
+ */
+export interface RemoteSelectionInfo {
+  userId: string;
+  userName: string;
+  color: string;
+  elementIds: string[];
+}
+
 export interface RenderState {
   renderMode: RenderMode;
   selectedIds: Set<string>;
@@ -40,6 +50,10 @@ export interface RenderState {
   gridSize: number;
   smartGuides?: SmartGuide[];
   boundTextElements?: Map<string, TextElement>;
+  /** Remote users' selections for rendering soft-lock borders */
+  remoteSelections?: RemoteSelectionInfo[];
+  /** Map of targetDiagramId -> active user count for portal badges */
+  portalActiveUsers?: Map<string, number>;
 }
 
 /**
@@ -200,7 +214,7 @@ export class CanvasRenderer {
 
     // Draw each committed element
     for (const element of elements) {
-      this.renderElement(ctx, element, state.renderMode);
+      this.renderElement(ctx, element, state.renderMode, state.portalActiveUsers);
 
       // Render bound text for shape elements
       if (state.boundTextElements && element.boundElements) {
@@ -253,6 +267,18 @@ export class CanvasRenderer {
       }
     }
 
+    // Remote user selections (soft-lock borders)
+    if (state.remoteSelections && state.remoteSelections.length > 0) {
+      for (const remote of state.remoteSelections) {
+        for (const elementId of remote.elementIds) {
+          const el = elements.find((e) => e.id === elementId);
+          if (el) {
+            this.renderRemoteSelectionBorder(ctx, el, remote.color, remote.userName);
+          }
+        }
+      }
+    }
+
     // Selection marquee rectangle
     if (state.selectionBox) {
       this.renderMarquee(ctx, state.selectionBox);
@@ -284,6 +310,7 @@ export class CanvasRenderer {
     ctx: CanvasRenderingContext2D,
     element: MavisElement,
     renderMode: RenderMode,
+    portalActiveUsers?: Map<string, number>,
   ): void {
     ctx.save();
 
@@ -317,13 +344,16 @@ export class CanvasRenderer {
       case 'text':
         this.renderText(ctx, element as TextElement);
         break;
-      case 'portal':
+      case 'portal': {
+        const portal = element as PortalElement;
+        const activeCount = portalActiveUsers?.get(portal.targetDiagramId) ?? 0;
         if (renderMode === 'sketchy') {
-          renderPortalSketchy(ctx, this.roughCanvas, element as PortalElement);
+          renderPortalSketchy(ctx, this.roughCanvas, portal, activeCount);
         } else {
-          renderPortalClean(ctx, element as PortalElement);
+          renderPortalClean(ctx, portal, activeCount);
         }
         break;
+      }
       case 'image':
         this.renderImage(ctx, element as ImageElement);
         break;
@@ -1206,6 +1236,62 @@ export class CanvasRenderer {
       element.width + padding * 2,
       element.height + padding * 2,
     );
+    ctx.restore();
+  }
+
+  /**
+   * Draw a colored border around an element being edited by a remote user (soft lock).
+   * Shows the user's name above the element.
+   */
+  renderRemoteSelectionBorder(
+    ctx: CanvasRenderingContext2D,
+    element: MavisElement,
+    color: string,
+    userName: string,
+  ): void {
+    const zoom = this.viewport.getViewport().zoom;
+    const padding = 4;
+
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2 / zoom;
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 0.7;
+    ctx.strokeRect(
+      element.x - padding,
+      element.y - padding,
+      element.width + padding * 2,
+      element.height + padding * 2,
+    );
+
+    // Draw user name label above the element
+    const fontSize = 10 / zoom;
+    ctx.font = `${fontSize}px "Segoe UI", system-ui, sans-serif`;
+    ctx.textBaseline = 'bottom';
+    ctx.textAlign = 'left';
+
+    const labelText = userName;
+    const metrics = ctx.measureText(labelText);
+    const labelPadX = 4 / zoom;
+    const labelPadY = 2 / zoom;
+    const labelX = element.x - padding;
+    const labelY = element.y - padding - labelPadY;
+
+    // Background pill for the label
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    const pillH = fontSize + labelPadY * 2;
+    const pillW = metrics.width + labelPadX * 2;
+    const pillR = 3 / zoom;
+    ctx.roundRect(labelX, labelY - pillH, pillW, pillH, pillR);
+    ctx.fill();
+
+    // Label text
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(labelText, labelX + labelPadX, labelY - labelPadY);
+
     ctx.restore();
   }
 
