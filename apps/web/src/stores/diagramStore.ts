@@ -95,7 +95,7 @@ function collectDescendantIds(diagrams: Map<string, Diagram>, parentId: string):
   return result;
 }
 
-function buildTreeForParent(
+export function buildTreeForParent(
   diagrams: Map<string, Diagram>,
   parentId: string | null,
 ): DiagramTreeNode[] {
