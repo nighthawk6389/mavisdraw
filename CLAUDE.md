@@ -63,6 +63,22 @@ packages/math/      → Geometry & math utilities
 - **Elements are soft-deleted** (`isDeleted: true`) rather than removed from the store.
 - **History** stores pre-mutation snapshots for undo; redo state is captured during undo.
 
+### React & Performance Guidelines
+
+Follow the Vercel agent skills installed in `.agents/skills/`:
+
+- **vercel-react-best-practices** — Re-render optimization, derived state, functional setState, conditional rendering, bundle size, and JS performance patterns. Reference when writing or reviewing any React component.
+- **vercel-composition-patterns** — Compound components, avoiding boolean prop proliferation, context-based state management. Reference when designing component APIs or refactoring complex components.
+- **web-design-guidelines** — UI/UX design quality standards. Reference when building or modifying user-facing interfaces.
+
+Key rules to always keep in mind:
+
+- **Never call functions that create new objects/arrays inside Zustand selectors** — use `useMemo` with stable store references instead (this caused the React error 185 infinite loop bug).
+- **Derive state during render**, not in effects (`rerender-derived-state-no-effect`).
+- **Use functional setState** for callbacks that depend on current state (`rerender-functional-setstate`).
+- **Defer state reads** to the point of use — don't subscribe to store values only used in callbacks (`rerender-defer-reads`).
+- **Use refs for transient values** that change frequently but don't need to trigger re-renders (`rerender-use-ref-transient-values`).
+
 ### Commit Guidelines
 
 - Write clear, concise commit messages describing the "why" not just the "what".
