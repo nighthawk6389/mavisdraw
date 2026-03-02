@@ -1,4 +1,5 @@
 import type { MavisElement, Point, Bounds, LinearElement } from '@mavisdraw/types';
+import { getCubicControlPoints, cubicPoint } from '@mavisdraw/math';
 
 const HANDLE_SIZE = 8;
 const HIT_TOLERANCE = 5;
@@ -99,6 +100,14 @@ function hitTestPolyline(canvasPoint: Point, element: MavisElement): boolean {
 
   const tolerance = HIT_TOLERANCE + element.strokeWidth / 2;
 
+  if (linear.routingMode === 'curved') {
+    return hitTestCurvedLine(canvasPoint, linear, tolerance);
+  }
+
+  if (linear.routingMode === 'elbow') {
+    return hitTestElbowLine(canvasPoint, linear, tolerance);
+  }
+
   for (let i = 0; i < linear.points.length - 1; i++) {
     const [x1, y1] = linear.points[i];
     const [x2, y2] = linear.points[i + 1];
@@ -110,6 +119,72 @@ function hitTestPolyline(canvasPoint: Point, element: MavisElement): boolean {
     if (dist <= tolerance) return true;
   }
   return false;
+}
+
+function hitTestCurvedLine(canvasPoint: Point, linear: LinearElement, tolerance: number): boolean {
+  const start: Point = { x: linear.x + linear.points[0][0], y: linear.y + linear.points[0][1] };
+  const end: Point = {
+    x: linear.x + linear.points[linear.points.length - 1][0],
+    y: linear.y + linear.points[linear.points.length - 1][1],
+  };
+
+  const [p0, cp1, cp2, p3] = getCubicControlPoints(start, end, 0.5);
+
+  const SAMPLES = 20;
+  let prevPt = p0;
+  for (let i = 1; i <= SAMPLES; i++) {
+    const t = i / SAMPLES;
+    const pt = cubicPoint(p0, cp1, cp2, p3, t);
+    const dist = distanceToSegment(canvasPoint, prevPt, pt);
+    if (dist <= tolerance) return true;
+    prevPt = pt;
+  }
+  return false;
+}
+
+function hitTestElbowLine(canvasPoint: Point, linear: LinearElement, tolerance: number): boolean {
+  const start: [number, number] = [
+    linear.x + linear.points[0][0],
+    linear.y + linear.points[0][1],
+  ];
+  const end: [number, number] = [
+    linear.x + linear.points[linear.points.length - 1][0],
+    linear.y + linear.points[linear.points.length - 1][1],
+  ];
+
+  const elbowPoints = calculateElbowPointsForHitTest(start, end);
+
+  for (let i = 0; i < elbowPoints.length - 1; i++) {
+    const a = { x: elbowPoints[i][0], y: elbowPoints[i][1] };
+    const b = { x: elbowPoints[i + 1][0], y: elbowPoints[i + 1][1] };
+    const dist = distanceToSegment(canvasPoint, a, b);
+    if (dist <= tolerance) return true;
+  }
+  return false;
+}
+
+function calculateElbowPointsForHitTest(
+  start: [number, number],
+  end: [number, number],
+): [number, number][] {
+  const dx = end[0] - start[0];
+  const dy = end[1] - start[1];
+  const ALIGN_THRESHOLD = 5;
+
+  if (Math.abs(dx) < ALIGN_THRESHOLD) {
+    return [start, end];
+  }
+  if (Math.abs(dy) < ALIGN_THRESHOLD) {
+    return [start, end];
+  }
+
+  if (Math.abs(dx) > Math.abs(dy)) {
+    const midX = start[0] + dx / 2;
+    return [start, [midX, start[1]], [midX, end[1]], end];
+  } else {
+    const midY = start[1] + dy / 2;
+    return [start, [start[0], midY], [end[0], midY], end];
+  }
 }
 
 /**
@@ -515,4 +590,175 @@ export function getGroupElementIds(
   }
 
   return ids;
+}
+
+// ─── Anchor Points (Phase 3) ─────────────────────────────
+
+export type AnchorPosition = 'top' | 'right' | 'bottom' | 'left';
+
+/**
+ * Compute the 4 anchor points (edge midpoints) of an element.
+ */
+export function getAnchorPoints(element: MavisElement): { position: AnchorPosition; x: number; y: number }[] {
+  const cx = element.x + element.width / 2;
+  const cy = element.y + element.height / 2;
+
+  if (element.type === 'ellipse') {
+    const rx = element.width / 2;
+    const ry = element.height / 2;
+    return [
+      { position: 'top', x: cx, y: element.y },
+      { position: 'right', x: element.x + element.width, y: cy },
+      { position: 'bottom', x: cx, y: element.y + element.height },
+      { position: 'left', x: element.x, y: cy },
+    ];
+  }
+
+  if (element.type === 'diamond') {
+    return [
+      { position: 'top', x: cx, y: element.y },
+      { position: 'right', x: element.x + element.width, y: cy },
+      { position: 'bottom', x: cx, y: element.y + element.height },
+      { position: 'left', x: element.x, y: cy },
+    ];
+  }
+
+  return [
+    { position: 'top', x: cx, y: element.y },
+    { position: 'right', x: element.x + element.width, y: cy },
+    { position: 'bottom', x: cx, y: element.y + element.height },
+    { position: 'left', x: element.x, y: cy },
+  ];
+}
+
+/**
+ * Hit test whether a canvas point is near an anchor point of an element.
+ * Returns the anchor position if hit, null otherwise.
+ */
+export function hitTestAnchorPoint(
+  canvasPoint: Point,
+  element: MavisElement,
+  threshold: number = 10,
+): AnchorPosition | null {
+  const anchors = getAnchorPoints(element);
+  for (const anchor of anchors) {
+    const dist = Math.hypot(canvasPoint.x - anchor.x, canvasPoint.y - anchor.y);
+    if (dist <= threshold) {
+      return anchor.position;
+    }
+  }
+  return null;
+}
+
+/**
+ * Find if cursor is near any shape edge (within proximity) for showing anchor indicators.
+ * Returns the element if within proximity of its edge, null otherwise.
+ */
+export function findNearbyShapeForAnchors(
+  canvasX: number,
+  canvasY: number,
+  elements: MavisElement[],
+  excludeIds: Set<string> = new Set(),
+  proximity: number = 30,
+): MavisElement | null {
+  const point: Point = { x: canvasX, y: canvasY };
+  for (let i = elements.length - 1; i >= 0; i--) {
+    const el = elements[i];
+    if (el.isDeleted || excludeIds.has(el.id) || !BINDABLE_TYPES.has(el.type)) continue;
+
+    const dist = distanceToElementEdge(point, el);
+    if (dist <= proximity) {
+      return el;
+    }
+  }
+  return null;
+}
+
+// ─── Endpoint Handles (Phase 4) ─────────────────────────────
+
+/**
+ * Get the canvas-space positions of a linear element's start and end points.
+ */
+export function getLinearEndpoints(element: LinearElement): { start: Point; end: Point } {
+  const startPt = element.points[0];
+  const endPt = element.points[element.points.length - 1];
+  return {
+    start: { x: element.x + startPt[0], y: element.y + startPt[1] },
+    end: { x: element.x + endPt[0], y: element.y + endPt[1] },
+  };
+}
+
+/**
+ * Hit test whether a canvas point hits the start or end handle of a linear element.
+ * Returns 'start', 'end', or null.
+ */
+export function hitTestEndpointHandle(
+  canvasPoint: Point,
+  element: LinearElement,
+  handleRadius: number = 8,
+): 'start' | 'end' | null {
+  const { start, end } = getLinearEndpoints(element);
+  if (Math.hypot(canvasPoint.x - end.x, canvasPoint.y - end.y) <= handleRadius) {
+    return 'end';
+  }
+  if (Math.hypot(canvasPoint.x - start.x, canvasPoint.y - start.y) <= handleRadius) {
+    return 'start';
+  }
+  return null;
+}
+
+// ─── Waypoint Handles (Phase 5) ─────────────────────────────
+
+/**
+ * Get the midpoints of each segment in a linear element (for showing + handles).
+ */
+export function getSegmentMidpoints(element: LinearElement): Point[] {
+  const midpoints: Point[] = [];
+  for (let i = 0; i < element.points.length - 1; i++) {
+    const [x1, y1] = element.points[i];
+    const [x2, y2] = element.points[i + 1];
+    midpoints.push({
+      x: element.x + (x1 + x2) / 2,
+      y: element.y + (y1 + y2) / 2,
+    });
+  }
+  return midpoints;
+}
+
+/**
+ * Hit test whether a canvas point hits a segment midpoint (+ handle).
+ * Returns the segment index if hit, -1 otherwise.
+ */
+export function hitTestMidpointHandle(
+  canvasPoint: Point,
+  element: LinearElement,
+  handleRadius: number = 8,
+): number {
+  const midpoints = getSegmentMidpoints(element);
+  for (let i = 0; i < midpoints.length; i++) {
+    const dist = Math.hypot(canvasPoint.x - midpoints[i].x, canvasPoint.y - midpoints[i].y);
+    if (dist <= handleRadius) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Hit test whether a canvas point hits a waypoint (intermediate point, not start/end).
+ * Returns the point index if hit, -1 otherwise.
+ */
+export function hitTestWaypoint(
+  canvasPoint: Point,
+  element: LinearElement,
+  handleRadius: number = 8,
+): number {
+  for (let i = 1; i < element.points.length - 1; i++) {
+    const px = element.x + element.points[i][0];
+    const py = element.y + element.points[i][1];
+    if (Math.hypot(canvasPoint.x - px, canvasPoint.y - py) <= handleRadius) {
+      return i;
+    }
+  }
+  return -1;
 }

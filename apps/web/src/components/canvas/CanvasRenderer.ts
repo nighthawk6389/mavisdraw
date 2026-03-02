@@ -40,6 +40,10 @@ export interface RenderState {
   gridSize: number;
   smartGuides?: SmartGuide[];
   boundTextElements?: Map<string, TextElement>;
+  anchorTarget?: MavisElement | null;
+  hoveredAnchor?: string | null;
+  rebindingPreview?: { element: LinearElement; endpoint: 'start' | 'end' } | null;
+  snapTarget?: { element: MavisElement; anchor: string } | null;
 }
 
 /**
@@ -266,6 +270,28 @@ export class CanvasRenderer {
     // Smart guides
     if (state.smartGuides && state.smartGuides.length > 0) {
       this.renderSmartGuides(ctx, state.smartGuides);
+    }
+
+    // Anchor point indicators (Phase 3)
+    if (state.anchorTarget && !state.anchorTarget.isDeleted) {
+      this.renderAnchorPoints(ctx, state.anchorTarget, state.hoveredAnchor ?? null);
+    }
+
+    // Snap target highlight (Phase 3)
+    if (state.snapTarget) {
+      this.renderSnapFeedback(ctx, state.snapTarget.element, state.snapTarget.anchor);
+    }
+
+    // Endpoint handles for selected linear elements (Phase 4)
+    if (state.selectedIds.size > 0) {
+      for (const el of elements) {
+        if (state.selectedIds.has(el.id) && (el.type === 'arrow' || el.type === 'line') && !el.isDeleted) {
+          const linear = el as LinearElement;
+          this.renderLinearEndpointHandles(ctx, linear);
+          this.renderWaypointHandles(ctx, linear);
+          this.renderMidpointAddHandles(ctx, linear);
+        }
+      }
     }
 
     ctx.restore();
@@ -627,10 +653,17 @@ export class CanvasRenderer {
   ): [number, number][] {
     const dx = end[0] - start[0];
     const dy = end[1] - start[1];
+    const ALIGN_THRESHOLD = 5;
 
-    // If predominantly horizontal or vertical, use L-shape
+    if (Math.abs(dx) < ALIGN_THRESHOLD) {
+      return [start, end];
+    }
+
+    if (Math.abs(dy) < ALIGN_THRESHOLD) {
+      return [start, end];
+    }
+
     if (Math.abs(dx) > Math.abs(dy)) {
-      // L-shape: go horizontal first, then vertical
       const midX = start[0] + dx / 2;
       return [
         start,
@@ -639,7 +672,6 @@ export class CanvasRenderer {
         end,
       ];
     } else {
-      // L-shape: go vertical first, then horizontal
       const midY = start[1] + dy / 2;
       return [
         start,
@@ -1232,6 +1264,170 @@ export class CanvasRenderer {
     ctx.setLineDash([6 / zoom, 4 / zoom]);
     ctx.strokeRect(box.x, box.y, box.width, box.height);
 
+    ctx.restore();
+  }
+
+  /**
+   * Render anchor points on a shape for edge-initiated connections.
+   */
+  private renderAnchorPoints(
+    ctx: CanvasRenderingContext2D,
+    element: MavisElement,
+    hoveredAnchor: string | null,
+  ): void {
+    const zoom = this.viewport.getViewport().zoom;
+    const cx = element.x + element.width / 2;
+    const cy = element.y + element.height / 2;
+
+    const anchors = [
+      { position: 'top', x: cx, y: element.y },
+      { position: 'right', x: element.x + element.width, y: cy },
+      { position: 'bottom', x: cx, y: element.y + element.height },
+      { position: 'left', x: element.x, y: cy },
+    ];
+
+    for (const anchor of anchors) {
+      const isHovered = hoveredAnchor === anchor.position;
+      const radius = (isHovered ? 7 : 5) / zoom;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(anchor.x, anchor.y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = isHovered ? '#2563eb' : '#4a90d9';
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5 / zoom;
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  /**
+   * Render snap feedback when arrow endpoint is near a target shape's anchor.
+   */
+  private renderSnapFeedback(
+    ctx: CanvasRenderingContext2D,
+    element: MavisElement,
+    _anchor: string,
+  ): void {
+    const zoom = this.viewport.getViewport().zoom;
+    const padding = 4;
+
+    ctx.save();
+    ctx.strokeStyle = '#2563eb';
+    ctx.lineWidth = 2 / zoom;
+    ctx.setLineDash([4 / zoom, 4 / zoom]);
+    ctx.globalAlpha = 0.6;
+    ctx.strokeRect(
+      element.x - padding,
+      element.y - padding,
+      element.width + padding * 2,
+      element.height + padding * 2,
+    );
+    ctx.restore();
+  }
+
+  /**
+   * Render endpoint handles for a selected linear element (green circles at start/end).
+   */
+  private renderLinearEndpointHandles(
+    ctx: CanvasRenderingContext2D,
+    element: LinearElement,
+  ): void {
+    if (!element.points || element.points.length < 2) return;
+
+    const zoom = this.viewport.getViewport().zoom;
+    const radius = 6 / zoom;
+
+    const endpoints = [
+      element.points[0],
+      element.points[element.points.length - 1],
+    ];
+
+    ctx.save();
+    for (const [lx, ly] of endpoints) {
+      const px = element.x + lx;
+      const py = element.y + ly;
+      ctx.beginPath();
+      ctx.arc(px, py, radius, 0, Math.PI * 2);
+      ctx.fillStyle = '#10b981';
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5 / zoom;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Render waypoint handles (diamond shapes at intermediate points).
+   */
+  private renderWaypointHandles(
+    ctx: CanvasRenderingContext2D,
+    element: LinearElement,
+  ): void {
+    if (!element.points || element.points.length <= 2) return;
+
+    const zoom = this.viewport.getViewport().zoom;
+    const size = 5 / zoom;
+
+    ctx.save();
+    for (let i = 1; i < element.points.length - 1; i++) {
+      const px = element.x + element.points[i][0];
+      const py = element.y + element.points[i][1];
+
+      ctx.beginPath();
+      ctx.moveTo(px, py - size);
+      ctx.lineTo(px + size, py);
+      ctx.lineTo(px, py + size);
+      ctx.lineTo(px - size, py);
+      ctx.closePath();
+      ctx.fillStyle = '#f59e0b';
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1 / zoom;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Render midpoint add handles (+ icons at segment midpoints).
+   */
+  private renderMidpointAddHandles(
+    ctx: CanvasRenderingContext2D,
+    element: LinearElement,
+  ): void {
+    if (!element.points || element.points.length < 2) return;
+    if (element.routingMode === 'curved') return;
+
+    const zoom = this.viewport.getViewport().zoom;
+    const size = 5 / zoom;
+
+    ctx.save();
+    for (let i = 0; i < element.points.length - 1; i++) {
+      const [x1, y1] = element.points[i];
+      const [x2, y2] = element.points[i + 1];
+      const mx = element.x + (x1 + x2) / 2;
+      const my = element.y + (y1 + y2) / 2;
+
+      ctx.beginPath();
+      ctx.arc(mx, my, size + 1 / zoom, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(74, 144, 217, 0.15)';
+      ctx.fill();
+      ctx.strokeStyle = '#4a90d9';
+      ctx.lineWidth = 1 / zoom;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(mx - size * 0.6, my);
+      ctx.lineTo(mx + size * 0.6, my);
+      ctx.moveTo(mx, my - size * 0.6);
+      ctx.lineTo(mx, my + size * 0.6);
+      ctx.strokeStyle = '#4a90d9';
+      ctx.lineWidth = 1.5 / zoom;
+      ctx.stroke();
+    }
     ctx.restore();
   }
 

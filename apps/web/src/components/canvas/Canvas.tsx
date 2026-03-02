@@ -107,6 +107,9 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     showGrid,
     gridSize,
     smartGuides: interactionMgr?.getSmartGuides() ?? [],
+    anchorTarget: interactionMgr?.getAnchorTarget() ?? null,
+    hoveredAnchor: interactionMgr?.getHoveredAnchor() ?? null,
+    snapTarget: interactionMgr?.getSnapTarget() ?? null,
   };
 
   // ─── Text editing callbacks ────────────────────────────────

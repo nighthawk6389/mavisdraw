@@ -9,6 +9,12 @@ import {
   findBindingTarget,
   hitTestElementsWithGroups,
   getGroupElementIds,
+  hitTestAnchorPoint,
+  findNearbyShapeForAnchors,
+  hitTestEndpointHandle,
+  hitTestMidpointHandle,
+  hitTestWaypoint,
+  getAnchorPoints,
   type ResizeHandle,
 } from './HitTesting';
 import { simplifyTuplePoints } from '@mavisdraw/math';
@@ -17,10 +23,13 @@ export type InteractionMode =
   | 'idle'
   | 'panning'
   | 'creating'
+  | 'creating-from-anchor'
   | 'dragging'
   | 'resizing'
   | 'selecting'
-  | 'drawing-freedraw';
+  | 'drawing-freedraw'
+  | 'rebinding-endpoint'
+  | 'moving-waypoint';
 
 export interface InteractionCallbacks {
   getElements: () => MavisElement[];
@@ -114,6 +123,22 @@ export class InteractionManager {
   // Smart guides state
   private currentSmartGuides: SmartGuide[] = [];
 
+  // Anchor / connection state (Phase 3)
+  private anchorTarget: MavisElement | null = null;
+  private hoveredAnchor: string | null = null;
+  private anchorSourceElement: MavisElement | null = null;
+  private snapTarget: { element: MavisElement; anchor: string } | null = null;
+
+  // Rebinding state (Phase 4)
+  private rebindingEnd: 'start' | 'end' | null = null;
+  private rebindingArrowId: string = '';
+  private rebindingOriginalPoints: [number, number][] = [];
+
+  // Waypoint state (Phase 5)
+  private movingWaypointIndex: number = -1;
+  private movingWaypointArrowId: string = '';
+  private waypointOriginalPoints: [number, number][] = [];
+
   // Group navigation state
   private enteredGroupIds: Set<string> = new Set();
 
@@ -151,6 +176,18 @@ export class InteractionManager {
     return this.enteredGroupIds;
   }
 
+  getAnchorTarget(): MavisElement | null {
+    return this.anchorTarget;
+  }
+
+  getHoveredAnchor(): string | null {
+    return this.hoveredAnchor;
+  }
+
+  getSnapTarget(): { element: MavisElement; anchor: string } | null {
+    return this.snapTarget;
+  }
+
   // ─── Mouse Events ─────────────────────────────────────────
 
   onPointerDown(screenX: number, screenY: number, event: { button: number; shiftKey: boolean }): void {
@@ -173,8 +210,90 @@ export class InteractionManager {
     const elements = this.callbacks.getElements();
     const selectedIds = this.callbacks.getSelectedIds();
 
-    if (tool === 'select') {
-      // Check resize handle hit first
+    if (tool === 'select' || tool === 'arrow') {
+      // Phase 4 & 5: Check endpoint/waypoint/midpoint handles on selected linear elements
+      if (tool === 'select' && selectedIds.size > 0) {
+        for (const el of elements) {
+          if (!selectedIds.has(el.id) || el.isDeleted) continue;
+          if (el.type !== 'arrow' && el.type !== 'line') continue;
+          const linear = el as LinearElement;
+
+          // Phase 4: Endpoint handle hit
+          const endpointHit = hitTestEndpointHandle(canvasPoint, linear);
+          if (endpointHit) {
+            this.mode = 'rebinding-endpoint';
+            this.rebindingEnd = endpointHit;
+            this.rebindingArrowId = linear.id;
+            this.rebindingOriginalPoints = linear.points.map((p) => [...p] as [number, number]);
+            this.startCanvasPoint = canvasPoint;
+            this.callbacks.pushHistory();
+            return;
+          }
+
+          // Phase 5: Waypoint handle hit (intermediate points)
+          const waypointHit = hitTestWaypoint(canvasPoint, linear);
+          if (waypointHit >= 0) {
+            this.mode = 'moving-waypoint';
+            this.movingWaypointIndex = waypointHit;
+            this.movingWaypointArrowId = linear.id;
+            this.waypointOriginalPoints = linear.points.map((p) => [...p] as [number, number]);
+            this.startCanvasPoint = canvasPoint;
+            this.callbacks.pushHistory();
+            return;
+          }
+
+          // Phase 5: Midpoint + handle hit (add new waypoint)
+          if (linear.routingMode !== 'curved') {
+            const midpointHit = hitTestMidpointHandle(canvasPoint, linear);
+            if (midpointHit >= 0) {
+              const [x1, y1] = linear.points[midpointHit];
+              const [x2, y2] = linear.points[midpointHit + 1];
+              const newPoint: [number, number] = [(x1 + x2) / 2, (y1 + y2) / 2];
+              const newPoints = [...linear.points];
+              newPoints.splice(midpointHit + 1, 0, newPoint);
+              this.callbacks.pushHistory();
+              this.callbacks.updateElement(linear.id, { points: newPoints } as Partial<LinearElement>);
+              this.callbacks.invalidateStatic();
+              this.mode = 'moving-waypoint';
+              this.movingWaypointIndex = midpointHit + 1;
+              this.movingWaypointArrowId = linear.id;
+              this.waypointOriginalPoints = newPoints.map((p) => [...p] as [number, number]);
+              this.startCanvasPoint = canvasPoint;
+              return;
+            }
+          }
+        }
+      }
+
+      // Phase 3: Check anchor point hit for edge-initiated connections
+      if (this.anchorTarget) {
+        const anchorHit = hitTestAnchorPoint(canvasPoint, this.anchorTarget);
+        if (anchorHit) {
+          const sourceElement = this.anchorTarget;
+          const anchors = getAnchorPoints(sourceElement);
+          const anchor = anchors.find((a) => a.position === anchorHit);
+          if (anchor) {
+            this.mode = 'creating-from-anchor';
+            this.anchorSourceElement = sourceElement;
+            this.startCanvasPoint = { x: anchor.x, y: anchor.y };
+            this.creatingSeed = Math.floor(Math.random() * 2 ** 31);
+            this.creatingId = '';
+            this.callbacks.pushHistory();
+            return;
+          }
+        }
+      }
+
+      if (tool === 'arrow') {
+        // Standard arrow creation
+        this.mode = 'creating';
+        this.creatingSeed = Math.floor(Math.random() * 2 ** 31);
+        this.creatingId = '';
+        this.callbacks.pushHistory();
+        return;
+      }
+
+      // Check resize handle hit first (only in select mode)
       if (selectedIds.size > 0) {
         const selBounds = this.getSelectionBounds(elements, selectedIds);
         if (selBounds) {
@@ -288,10 +407,29 @@ export class InteractionManager {
 
     switch (this.mode) {
       case 'idle': {
-        // Hover detection
         const elements = this.callbacks.getElements();
+        const tool = this.callbacks.getActiveTool();
+
+        // Hover detection
         const hit = hitTestElements(canvasPoint, elements);
         this.callbacks.setHovered(hit?.id ?? null);
+
+        // Phase 3: Detect nearby shapes for anchor point display
+        if (tool === 'select' || tool === 'arrow') {
+          const selectedIds = this.callbacks.getSelectedIds();
+          const nearbyShape = findNearbyShapeForAnchors(
+            canvasPoint.x, canvasPoint.y, elements, selectedIds,
+          );
+          this.anchorTarget = nearbyShape;
+          if (nearbyShape) {
+            this.hoveredAnchor = hitTestAnchorPoint(canvasPoint, nearbyShape)?.toString() ?? null;
+          } else {
+            this.hoveredAnchor = null;
+          }
+        } else {
+          this.anchorTarget = null;
+          this.hoveredAnchor = null;
+        }
         break;
       }
 
@@ -413,6 +551,100 @@ export class InteractionManager {
             points: relativePoints,
           } as MavisElement;
         }
+        break;
+      }
+
+      case 'creating-from-anchor': {
+        const width = canvasPoint.x - this.startCanvasPoint.x;
+        const height = canvasPoint.y - this.startCanvasPoint.y;
+
+        this.creatingElement = this.callbacks.createElement(
+          'arrow',
+          this.diagramId,
+          this.startCanvasPoint.x,
+          this.startCanvasPoint.y,
+          Math.abs(width),
+          Math.abs(height),
+        );
+
+        if (this.creatingElement && 'points' in this.creatingElement) {
+          (this.creatingElement as LinearElement).points = [
+            [0, 0],
+            [width, height],
+          ];
+        }
+
+        if (this.creatingElement) {
+          if (!this.creatingId) {
+            this.creatingId = this.creatingElement.id;
+          }
+          (this.creatingElement as { id: string }).id = this.creatingId;
+          (this.creatingElement as { seed: number }).seed = this.creatingSeed;
+        }
+
+        // Check for snap target
+        const elements = this.callbacks.getElements();
+        const excludeIds = new Set(this.anchorSourceElement ? [this.anchorSourceElement.id] : []);
+        const nearbyShape = findNearbyShapeForAnchors(
+          canvasPoint.x, canvasPoint.y, elements, excludeIds,
+        );
+        if (nearbyShape) {
+          const anchorHit = hitTestAnchorPoint(canvasPoint, nearbyShape);
+          if (anchorHit) {
+            this.snapTarget = { element: nearbyShape, anchor: anchorHit };
+          } else {
+            this.snapTarget = nearbyShape ? { element: nearbyShape, anchor: '' } : null;
+          }
+        } else {
+          this.snapTarget = null;
+        }
+        break;
+      }
+
+      case 'rebinding-endpoint': {
+        const elements = this.callbacks.getElements();
+        const arrow = elements.find((e) => e.id === this.rebindingArrowId) as LinearElement | undefined;
+        if (!arrow) break;
+
+        const newPoints = arrow.points.map((p) => [...p] as [number, number]);
+        if (this.rebindingEnd === 'start') {
+          newPoints[0] = [canvasPoint.x - arrow.x, canvasPoint.y - arrow.y];
+        } else {
+          newPoints[newPoints.length - 1] = [canvasPoint.x - arrow.x, canvasPoint.y - arrow.y];
+        }
+
+        this.callbacks.updateElement(arrow.id, { points: newPoints } as Partial<LinearElement>);
+
+        // Check for snap target
+        const excludeIds = new Set([arrow.id]);
+        const nearbyShape = findNearbyShapeForAnchors(
+          canvasPoint.x, canvasPoint.y, elements, excludeIds,
+        );
+        if (nearbyShape) {
+          this.snapTarget = { element: nearbyShape, anchor: '' };
+          this.anchorTarget = nearbyShape;
+        } else {
+          this.snapTarget = null;
+          this.anchorTarget = null;
+        }
+
+        this.callbacks.invalidateStatic();
+        break;
+      }
+
+      case 'moving-waypoint': {
+        const elements = this.callbacks.getElements();
+        const arrow = elements.find((e) => e.id === this.movingWaypointArrowId) as LinearElement | undefined;
+        if (!arrow) break;
+
+        const newPoints = arrow.points.map((p) => [...p] as [number, number]);
+        newPoints[this.movingWaypointIndex] = [
+          canvasPoint.x - arrow.x,
+          canvasPoint.y - arrow.y,
+        ];
+
+        this.callbacks.updateElement(arrow.id, { points: newPoints } as Partial<LinearElement>);
+        this.callbacks.invalidateStatic();
         break;
       }
     }
@@ -546,6 +778,89 @@ export class InteractionManager {
         break;
       }
 
+      case 'creating-from-anchor': {
+        if (this.creatingElement) {
+          const linear = this.creatingElement as LinearElement;
+          const elements = this.callbacks.getElements();
+          const excludeIds = new Set([this.creatingElement.id]);
+
+          this.callbacks.addElement(this.creatingElement);
+
+          // Bind start to anchor source element
+          if (this.anchorSourceElement) {
+            this.callbacks.bindArrow(
+              this.creatingElement.id,
+              'start',
+              this.anchorSourceElement.id,
+              0,
+            );
+          }
+
+          // Bind end if snapped to a target
+          const endPt = linear.points[linear.points.length - 1];
+          const endCanvasX = linear.x + endPt[0];
+          const endCanvasY = linear.y + endPt[1];
+          const endTarget = findBindingTarget(endCanvasX, endCanvasY, elements, excludeIds);
+          if (endTarget) {
+            this.callbacks.bindArrow(
+              this.creatingElement.id,
+              'end',
+              endTarget.element.id,
+              endTarget.gap,
+            );
+          }
+
+          this.callbacks.select(this.creatingElement.id);
+          if (!this.callbacks.isToolLocked()) {
+            this.callbacks.resetToSelect();
+          }
+        }
+        this.creatingElement = null;
+        this.anchorSourceElement = null;
+        this.snapTarget = null;
+        this.anchorTarget = null;
+        this.callbacks.invalidateStatic();
+        break;
+      }
+
+      case 'rebinding-endpoint': {
+        const elements = this.callbacks.getElements();
+        const arrow = elements.find((e) => e.id === this.rebindingArrowId) as LinearElement | undefined;
+        if (arrow && this.rebindingEnd) {
+          // Unbind from old target
+          this.callbacks.unbindArrow(arrow.id, this.rebindingEnd);
+
+          const excludeIds = new Set([arrow.id]);
+          const idx = this.rebindingEnd === 'start' ? 0 : arrow.points.length - 1;
+          const ptX = arrow.x + arrow.points[idx][0];
+          const ptY = arrow.y + arrow.points[idx][1];
+          const newTarget = findBindingTarget(ptX, ptY, elements, excludeIds);
+          if (newTarget) {
+            this.callbacks.bindArrow(
+              arrow.id,
+              this.rebindingEnd,
+              newTarget.element.id,
+              newTarget.gap,
+            );
+          }
+        }
+        this.rebindingEnd = null;
+        this.rebindingArrowId = '';
+        this.rebindingOriginalPoints = [];
+        this.snapTarget = null;
+        this.anchorTarget = null;
+        this.callbacks.invalidateStatic();
+        break;
+      }
+
+      case 'moving-waypoint': {
+        this.movingWaypointIndex = -1;
+        this.movingWaypointArrowId = '';
+        this.waypointOriginalPoints = [];
+        this.callbacks.invalidateStatic();
+        break;
+      }
+
       case 'panning':
         break;
     }
@@ -579,7 +894,33 @@ export class InteractionManager {
 
   // ─── Double-click handling ────────────────────────────────
 
-  private handleDoubleClick(element: MavisElement, _canvasPoint: Point): void {
+  private handleDoubleClick(element: MavisElement, canvasPoint: Point): void {
+    // Phase 5: Double-click on waypoint to remove it
+    if ((element.type === 'arrow' || element.type === 'line') && element.points.length > 2) {
+      const linear = element as LinearElement;
+      const waypointIdx = hitTestWaypoint(canvasPoint, linear);
+      if (waypointIdx >= 0) {
+        const newPoints = [...linear.points];
+        newPoints.splice(waypointIdx, 1);
+        this.callbacks.pushHistory();
+        this.callbacks.updateElement(linear.id, { points: newPoints } as Partial<LinearElement>);
+        this.callbacks.invalidateStatic();
+        return;
+      }
+    }
+
+    // Phase 2.2: Double-click on arrow/line to cycle routing mode
+    if (element.type === 'arrow' || element.type === 'line') {
+      const linear = element as LinearElement;
+      const modes: ('straight' | 'curved' | 'elbow')[] = ['straight', 'curved', 'elbow'];
+      const currentIdx = modes.indexOf(linear.routingMode);
+      const nextMode = modes[(currentIdx + 1) % modes.length];
+      this.callbacks.pushHistory();
+      this.callbacks.updateElement(linear.id, { routingMode: nextMode } as Partial<LinearElement>);
+      this.callbacks.invalidateStatic();
+      return;
+    }
+
     // Double-click on portal: drill down into nested diagram
     if (element.type === 'portal' && this.callbacks.onPortalDrillDown) {
       this.callbacks.onPortalDrillDown(element);

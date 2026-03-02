@@ -2,6 +2,24 @@
 
 This document outlines a phased plan for upgrading arrow/connector functionality in MavisDraw to match the experience of tools like Miro, FigJam, and Excalidraw.
 
+## Implementation Status
+
+| Phase | Status | Notes |
+|---|---|---|
+| Phase 1 — Fix existing behavior | **COMPLETED** | Curved routing uses perpendicular offset, elbow handles aligned endpoints, hit testing samples Bézier curves |
+| Phase 2 — Arrow property controls | **COMPLETED** | Arrowhead picker (start/end) in StylePanel, double-click arrow to cycle routing mode |
+| Phase 3 — Edge-initiated connections | **COMPLETED** | Anchor points shown on hover, click-drag from anchor creates arrow, snap-to-anchor feedback |
+| Phase 4 — Endpoint dragging & rebinding | **COMPLETED** | Green endpoint handles on selected arrows, drag to rebind to different shapes |
+| Phase 5 — Midpoint manipulation | **COMPLETED** | Click + handle at segment midpoints to add waypoints, drag waypoints, double-click to remove |
+| Phase 6 — Advanced elbow routing | Not started | Obstacle-aware routing, rounded corners (stretch goal) |
+
+### Research Notes (Excalidraw / Miro / tldraw)
+
+- **Excalidraw**: Uses click-click-click for multi-point arrows, `LinearElementEditor` for editing points after creation (Ctrl+double-click). Bézier curves with editable control points.
+- **Miro**: Center-based snapping on drag, limited curve control. Users have requested Illustrator-like path tools.
+- **tldraw**: `ElbowArrowMidpointHandle` for dragging elbow midpoint segments, velocity-based precision snapping.
+- **Our approach**: Followed Excalidraw/tldraw patterns — waypoints via + handles at segment midpoints, endpoint handles for rebinding, anchor points on shape edges for connection initiation. Double-click on arrow cycles routing mode (discoverable without needing StylePanel). Double-click on waypoint removes it.
+
 ---
 
 ## Current State
