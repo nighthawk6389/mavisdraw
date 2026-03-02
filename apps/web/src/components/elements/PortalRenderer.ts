@@ -1,5 +1,8 @@
 import type { RoughCanvas } from 'roughjs/bin/canvas';
+import type { Drawable } from 'roughjs/bin/core';
 import type { PortalElement } from '@mavisdraw/types';
+
+export type RoughDrawFn = (ctx: CanvasRenderingContext2D, drawable: Drawable) => void;
 
 /** Corner radius for portal card style. */
 const CARD_RADIUS = 12;
@@ -200,29 +203,32 @@ function renderCardSketchy(
   ctx: CanvasRenderingContext2D,
   roughCanvas: RoughCanvas,
   element: PortalElement,
+  drawRough: RoughDrawFn,
 ): void {
-  const { width, height, strokeColor, backgroundColor, strokeWidth, roughness, label, thumbnailDataUrl } =
+  const { width, height, strokeColor, backgroundColor, strokeWidth, roughness, seed, label, thumbnailDataUrl } =
     element;
 
   const bgColor = backgroundColor === 'transparent' ? '#f8f9fb' : backgroundColor;
 
-  // Main rectangle (sketchy)
-  roughCanvas.draw(
+  drawRough(
+    ctx,
     roughCanvas.generator.rectangle(0, 0, width, height, {
       stroke: strokeColor,
       strokeWidth,
       roughness,
+      seed,
       fill: bgColor,
       fillStyle: 'solid',
     }),
   );
 
-  // Title bar divider line
-  roughCanvas.draw(
+  drawRough(
+    ctx,
     roughCanvas.generator.line(0, TITLE_BAR_HEIGHT, width, TITLE_BAR_HEIGHT, {
       stroke: adjustAlpha(strokeColor, 0.3),
       strokeWidth: 1,
       roughness: roughness * 0.5,
+      seed,
     }),
   );
 
@@ -321,17 +327,19 @@ function renderBadgeSketchy(
   ctx: CanvasRenderingContext2D,
   roughCanvas: RoughCanvas,
   element: PortalElement,
+  drawRough: RoughDrawFn,
 ): void {
-  const { width, height, strokeColor, backgroundColor, strokeWidth, roughness, label } = element;
+  const { width, height, strokeColor, backgroundColor, strokeWidth, roughness, seed, label } = element;
 
   const bgColor = backgroundColor === 'transparent' ? '#f0f4ff' : backgroundColor;
 
-  // Rough ellipse as a pill approximation
-  roughCanvas.draw(
+  drawRough(
+    ctx,
     roughCanvas.generator.rectangle(0, 0, width, height, {
       stroke: strokeColor,
       strokeWidth,
       roughness,
+      seed,
       fill: bgColor,
       fillStyle: 'solid',
     }),
@@ -446,19 +454,21 @@ function renderExpandedSketchy(
   ctx: CanvasRenderingContext2D,
   roughCanvas: RoughCanvas,
   element: PortalElement,
+  drawRough: RoughDrawFn,
 ): void {
-  const { width, height, strokeColor, backgroundColor, strokeWidth, roughness, label, thumbnailDataUrl } =
+  const { width, height, strokeColor, backgroundColor, strokeWidth, roughness, seed, label, thumbnailDataUrl } =
     element;
 
   const bgColor = backgroundColor === 'transparent' ? '#f8f9fb' : backgroundColor;
   const headerHeight = 28;
 
-  // Main rectangle
-  roughCanvas.draw(
+  drawRough(
+    ctx,
     roughCanvas.generator.rectangle(0, 0, width, height, {
       stroke: strokeColor,
       strokeWidth,
       roughness,
+      seed,
       fill: bgColor,
       fillStyle: 'solid',
     }),
@@ -539,17 +549,18 @@ export function renderPortalSketchy(
   ctx: CanvasRenderingContext2D,
   roughCanvas: RoughCanvas,
   element: PortalElement,
+  drawRough: RoughDrawFn,
 ): void {
   switch (element.portalStyle) {
     case 'badge':
-      renderBadgeSketchy(ctx, roughCanvas, element);
+      renderBadgeSketchy(ctx, roughCanvas, element, drawRough);
       break;
     case 'expanded':
-      renderExpandedSketchy(ctx, roughCanvas, element);
+      renderExpandedSketchy(ctx, roughCanvas, element, drawRough);
       break;
     case 'card':
     default:
-      renderCardSketchy(ctx, roughCanvas, element);
+      renderCardSketchy(ctx, roughCanvas, element, drawRough);
       break;
   }
 }

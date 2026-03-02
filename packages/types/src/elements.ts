@@ -50,6 +50,7 @@ export interface BaseElement {
   strokeWidth: number;
   strokeStyle: StrokeStyle;
   roughness: number;
+  seed: number;
   renderMode: RenderMode;
 
   // Organization

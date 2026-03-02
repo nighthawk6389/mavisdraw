@@ -1,7 +1,7 @@
 import { test, expect, type Page, type ConsoleMessage } from '@playwright/test';
 
 function toolButton(page: Page, titlePrefix: string) {
-  return page.locator('aside').locator(`button[title^="${titlePrefix}"]`);
+  return page.getByTestId('toolbar').locator(`button[title^="${titlePrefix}"]`);
 }
 
 function getCanvasBox(page: Page) {
