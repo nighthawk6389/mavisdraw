@@ -15,7 +15,7 @@ export function useAutoSave(diagramId: string | null) {
   const elements = useElementsStore((s) => s.elements);
   const diagrams = useDiagramStore((s) => s.diagrams);
 
-  const lastSavedRef = useRef<string>('');
+  const lastSavedVersionRef = useRef<Map<string, number>>(new Map());
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isSavingRef = useRef(false);
 
@@ -27,15 +27,23 @@ export function useAutoSave(diagramId: string | null) {
 
     // Collect elements for this diagram
     const diagramElements: MavisElement[] = [];
+    let hasChanges = false;
     for (const el of elements.values()) {
       if (el.diagramId === diagramId && !el.isDeleted) {
         diagramElements.push(el);
+        const savedVersion = lastSavedVersionRef.current.get(el.id);
+        if (savedVersion === undefined || savedVersion !== el.version) {
+          hasChanges = true;
+        }
       }
     }
 
-    // Check if anything changed
-    const currentHash = JSON.stringify(diagramElements);
-    if (currentHash === lastSavedRef.current) return;
+    // Also detect deletions (element count changed)
+    if (!hasChanges && diagramElements.length !== lastSavedVersionRef.current.size) {
+      hasChanges = true;
+    }
+
+    if (!hasChanges) return;
 
     isSavingRef.current = true;
     setSaveStatus('saving');
@@ -51,7 +59,11 @@ export function useAutoSave(diagramId: string | null) {
         layers: diagram.layers,
       });
 
-      lastSavedRef.current = currentHash;
+      const snapshot = new Map<string, number>();
+      for (const el of diagramElements) {
+        snapshot.set(el.id, el.version);
+      }
+      lastSavedVersionRef.current = snapshot;
       setSaveStatus('saved');
 
       // Reset status after 3 seconds

@@ -1,23 +1,17 @@
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useMemo } from 'react';
 import { useCollaborationStore } from '../stores/collaborationStore';
 import { useAuthStore } from '../stores/authStore';
 import { useSelectionStore } from '../stores/selectionStore';
 import type { Viewport } from '@mavisdraw/types';
 
 export function useCollaboration(diagramId: string | null) {
-  const { user, isAuthenticated } = useAuthStore();
-  const {
-    connect,
-    disconnect,
-    updateSelection,
-    updateViewport,
-    connectionStatus,
-    currentDiagramId,
-    followingUserId,
-    connectedUsers,
-  } = useCollaborationStore();
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const user = useAuthStore((s) => s.user);
+  const connectionStatus = useCollaborationStore((s) => s.connectionStatus);
+  const currentDiagramId = useCollaborationStore((s) => s.currentDiagramId);
+  const followingUserId = useCollaborationStore((s) => s.followingUserId);
+  const connectedUsers = useCollaborationStore((s) => s.connectedUsers);
   const selectedIds = useSelectionStore((s) => s.selectedIds);
-  const prevDiagramId = useRef<string | null>(null);
 
   // Connect when diagram changes (handles both initial connect and room switching)
   useEffect(() => {
@@ -26,59 +20,41 @@ export function useCollaboration(diagramId: string | null) {
     // Skip if already connected to this diagram
     if (diagramId === currentDiagramId) return;
 
-    connect(diagramId, user.id, user.name);
-    prevDiagramId.current = diagramId;
-
-    return () => {
-      // Only disconnect if the component is truly unmounting,
-      // not just switching diagrams (room switching handled by connect)
-    };
-  }, [diagramId, isAuthenticated, user?.id]);
+    useCollaborationStore.getState().connect(diagramId, user.id, user.name);
+  }, [diagramId, isAuthenticated, user, currentDiagramId]);
 
   // Disconnect on unmount
   useEffect(() => {
     return () => {
-      disconnect();
+      useCollaborationStore.getState().disconnect();
     };
   }, []);
 
   // Sync selection to awareness
   useEffect(() => {
     if (connectionStatus !== 'connected') return;
-    updateSelection(Array.from(selectedIds));
-  }, [selectedIds, connectionStatus, updateSelection]);
+    useCollaborationStore.getState().updateSelection(Array.from(selectedIds));
+  }, [selectedIds, connectionStatus]);
 
-  // Follow user viewport
-  useEffect(() => {
-    if (!followingUserId) return;
-
-    const followedUser = connectedUsers.find((u) => u.id === followingUserId);
-    if (!followedUser?.viewport) return;
-
-    // Return the viewport for the caller to apply
+  // Derive followed user's viewport during render (not in an effect)
+  const followedViewport = useMemo((): Viewport | null => {
+    if (!followingUserId) return null;
+    const followed = connectedUsers.find((u) => u.id === followingUserId);
+    return followed?.viewport ?? null;
   }, [followingUserId, connectedUsers]);
 
   const handleMouseMove = useCallback((x: number, y: number) => {
-    const store = useCollaborationStore.getState();
-    store.updateCursor(x, y);
+    useCollaborationStore.getState().updateCursor(x, y);
   }, []);
 
   const handleViewportChange = useCallback((viewport: Viewport) => {
-    updateViewport(viewport);
-  }, [updateViewport]);
-
-  // Get the followed user's viewport for the caller to apply
-  const getFollowedViewport = useCallback((): Viewport | null => {
-    const state = useCollaborationStore.getState();
-    if (!state.followingUserId) return null;
-    const followed = state.connectedUsers.find((u) => u.id === state.followingUserId);
-    return followed?.viewport ?? null;
+    useCollaborationStore.getState().updateViewport(viewport);
   }, []);
 
   return {
     handleMouseMove,
     handleViewportChange,
-    getFollowedViewport,
+    followedViewport,
     isConnected: connectionStatus === 'connected',
     connectionStatus,
   };

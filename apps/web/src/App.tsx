@@ -49,6 +49,9 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
   const { saveStatus, manualSave } = useAutoSave(activeDiagramId);
   const [showShareDialog, setShowShareDialog] = useState(false);
 
+  const diagrams = useDiagramStore((s) => s.diagrams);
+  const projectId = diagrams.get(activeDiagramId)?.projectId ?? null;
+
   const showPortalProperties = useMemo(() => {
     if (selectedIds.size !== 1) return false;
     const id = Array.from(selectedIds)[0];
@@ -93,11 +96,13 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
       </div>
 
       {/* Share dialog */}
-      <ShareDialog
-        projectId={activeDiagramId}
-        isOpen={showShareDialog}
-        onClose={() => setShowShareDialog(false)}
-      />
+      {projectId && (
+        <ShareDialog
+          projectId={projectId}
+          isOpen={showShareDialog}
+          onClose={() => setShowShareDialog(false)}
+        />
+      )}
 
       {/* Main content area */}
       <div className="flex flex-1 min-h-0">

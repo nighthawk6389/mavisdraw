@@ -59,11 +59,12 @@ export default function PresenceAvatars() {
                   : 'border-white hover:scale-105'
               }`}
               style={{ backgroundColor: user.color }}
-              title={
+              aria-label={
                 isFollowing
-                  ? `Following ${user.name} — click to unfollow`
-                  : `${user.name} — click to follow`
+                  ? `Unfollow ${user.name}`
+                  : `Follow ${user.name}`
               }
+              aria-pressed={isFollowing}
             >
               {user.name.charAt(0).toUpperCase()}
             </button>

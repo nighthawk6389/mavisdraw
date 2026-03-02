@@ -1,13 +1,8 @@
-import React, { useEffect, useRef, useMemo } from 'react';
-import { useCollaborationStore, type RemoteCursor } from '../../stores/collaborationStore';
+import React, { useEffect, useRef } from 'react';
+import { useCollaborationStore } from '../../stores/collaborationStore';
 
 /** Duration in ms over which to interpolate cursor positions */
 const INTERPOLATION_DURATION = 100;
-
-interface InterpolatedCursor extends RemoteCursor {
-  displayX: number;
-  displayY: number;
-}
 
 /**
  * Renders remote user cursors with frame-based position interpolation.
@@ -23,19 +18,6 @@ export default function CursorOverlay() {
   // Keep the ref in sync
   useEffect(() => {
     cursorsRef.current = remoteCursors;
-  }, [remoteCursors]);
-
-  // Build initial cursor list (for the non-canvas fallback rendering)
-  const cursorList = useMemo(() => {
-    const result: InterpolatedCursor[] = [];
-    for (const cursor of remoteCursors.values()) {
-      result.push({
-        ...cursor,
-        displayX: cursor.x,
-        displayY: cursor.y,
-      });
-    }
-    return result;
   }, [remoteCursors]);
 
   // Run animation loop via canvas overlay for smooth interpolation
@@ -140,7 +122,7 @@ export default function CursorOverlay() {
     };
   }, [remoteCursors]);
 
-  if (cursorList.length === 0) return null;
+  if (remoteCursors.size === 0) return null;
 
   return (
     <canvas

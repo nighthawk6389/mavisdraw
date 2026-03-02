@@ -15,22 +15,33 @@ export function setOnUnauthorized(callback: () => void): void {
   onUnauthorized = callback;
 }
 
+/** Deduplicates concurrent refresh attempts — only one inflight at a time. */
+let refreshPromise: Promise<boolean> | null = null;
+
 async function refreshAccessToken(): Promise<boolean> {
-  try {
-    const response = await fetch(`${API_BASE}/api/auth/refresh`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-    });
+  if (refreshPromise) return refreshPromise;
 
-    if (!response.ok) return false;
+  refreshPromise = (async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
 
-    const data = await response.json();
-    accessToken = data.accessToken;
-    return true;
-  } catch {
-    return false;
-  }
+      if (!response.ok) return false;
+
+      const data = await response.json();
+      accessToken = data.accessToken;
+      return true;
+    } catch {
+      return false;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
 }
 
 export async function apiFetch<T = unknown>(

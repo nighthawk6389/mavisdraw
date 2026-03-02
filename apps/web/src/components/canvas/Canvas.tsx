@@ -78,7 +78,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
   const navigateToDiagram = useDiagramStore((s) => s.navigateToDiagram);
 
   // ─── Collaboration ──────────────────────────────────────
-  const { handleMouseMove: handleCollabMouseMove, handleViewportChange } =
+  const { handleMouseMove: handleCollabMouseMove, handleViewportChange, followedViewport } =
     useCollaboration(activeDiagramId);
   const connectedUsers = useCollaborationStore((s) => s.connectedUsers);
   const saveViewport = useDiagramStore((s) => s.saveViewport);
@@ -561,6 +561,16 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     interactionRef.current?.setDiagramId(activeDiagramId);
     rendererRef.current?.invalidateStatic();
   }, [activeDiagramId]);
+
+  // ─── Apply followed user's viewport ────────────────────────
+
+  useEffect(() => {
+    if (!followedViewport) return;
+    const renderer = rendererRef.current;
+    if (!renderer) return;
+    renderer.getViewport().setViewport(followedViewport);
+    renderer.invalidateStatic();
+  }, [followedViewport]);
 
   // ─── Invalidate static layer on data changes ─────────────
 

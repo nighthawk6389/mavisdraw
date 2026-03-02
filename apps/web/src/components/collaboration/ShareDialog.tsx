@@ -4,7 +4,6 @@ import {
   apiListPermissions,
   apiRevokePermission,
   type PermissionResponse,
-  type ShareResponse,
 } from '../../services/api';
 
 interface ShareDialogProps {
@@ -19,13 +18,16 @@ export default function ShareDialog({ projectId, isOpen, onClose }: ShareDialogP
   const [shareRole, setShareRole] = useState<'viewer' | 'editor'>('viewer');
   const [isLoading, setIsLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const loadPermissions = useCallback(async () => {
     try {
+      setError(null);
       const response = await apiListPermissions(projectId);
       setPermissions(response.permissions);
     } catch (err) {
-      console.error('Failed to load permissions:', err);
+      const message = err instanceof Error ? err.message : 'Failed to load permissions';
+      setError(message);
     }
   }, [projectId]);
 
@@ -34,18 +36,21 @@ export default function ShareDialog({ projectId, isOpen, onClose }: ShareDialogP
       loadPermissions();
       setShareLink(null);
       setCopied(false);
+      setError(null);
     }
   }, [isOpen, loadPermissions]);
 
   const handleCreateLink = async () => {
     setIsLoading(true);
+    setError(null);
     try {
       const response = await apiCreateShareLink(projectId, shareRole);
       const link = `${window.location.origin}/share/${response.share.shareToken}`;
       setShareLink(link);
       loadPermissions();
     } catch (err) {
-      console.error('Failed to create share link:', err);
+      const message = err instanceof Error ? err.message : 'Failed to create share link';
+      setError(message);
     } finally {
       setIsLoading(false);
     }
@@ -61,10 +66,12 @@ export default function ShareDialog({ projectId, isOpen, onClose }: ShareDialogP
 
   const handleRevoke = async (permissionId: string) => {
     try {
+      setError(null);
       await apiRevokePermission(permissionId);
       setPermissions((prev) => prev.filter((p) => p.id !== permissionId));
     } catch (err) {
-      console.error('Failed to revoke permission:', err);
+      const message = err instanceof Error ? err.message : 'Failed to revoke permission';
+      setError(message);
     }
   };
 
@@ -84,6 +91,12 @@ export default function ShareDialog({ projectId, isOpen, onClose }: ShareDialogP
         </div>
 
         <div className="p-4 space-y-4">
+          {error && (
+            <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+              {error}
+            </div>
+          )}
+
           {/* Create share link */}
           <div>
             <h4 className="text-sm font-medium text-gray-700 mb-2">Create share link</h4>
