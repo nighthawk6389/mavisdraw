@@ -579,34 +579,102 @@ export class CanvasRenderer {
 
     if (points.length < 2) return;
 
-    const start: Point = { x: points[0][0], y: points[0][1] };
-    const end: Point = { x: points[points.length - 1][0], y: points[points.length - 1][1] };
+    if (points.length === 2) {
+      const start: Point = { x: points[0][0], y: points[0][1] };
+      const end: Point = { x: points[1][0], y: points[1][1] };
+      const [, cp1, cp2] = getCubicControlPoints(start, end, 0.5);
 
-    // Generate cubic bezier control points
-    const [, cp1, cp2] = getCubicControlPoints(start, end, 0.5);
+      if (renderMode === 'sketchy') {
+        this.drawRoughShape(ctx, () => {
+          const options = this.buildRoughOptions(element);
+          delete options.fill;
+          delete options.fillStyle;
+          const curvePoints: [number, number][] = [
+            [start.x, start.y],
+            [cp1.x, cp1.y],
+            [cp2.x, cp2.y],
+            [end.x, end.y],
+          ];
+          return this.roughCanvas.generator.curve(curvePoints, options);
+        });
+      } else {
+        this.applyCleanStroke(ctx, strokeColor, strokeWidth, strokeStyle);
+        ctx.beginPath();
+        ctx.moveTo(start.x, start.y);
+        ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, end.x, end.y);
+        ctx.stroke();
+      }
+      return;
+    }
+
+    // Multiple points: render piecewise smooth cubic bezier through all points
+    const pts: Point[] = points.map(([px, py]) => ({ x: px, y: py }));
+    const segments = this.computeSmoothCurveSegments(pts);
 
     if (renderMode === 'sketchy') {
       this.drawRoughShape(ctx, () => {
         const options = this.buildRoughOptions(element);
         delete options.fill;
         delete options.fillStyle;
-        // Use curve for sketchy mode
-        const curvePoints: [number, number][] = [
-          [start.x, start.y],
-          [cp1.x, cp1.y],
-          [cp2.x, cp2.y],
-          [end.x, end.y],
-        ];
+        const curvePoints: [number, number][] = [[pts[0].x, pts[0].y]];
+        for (const seg of segments) {
+          curvePoints.push([seg.cp1.x, seg.cp1.y]);
+          curvePoints.push([seg.cp2.x, seg.cp2.y]);
+          curvePoints.push([seg.end.x, seg.end.y]);
+        }
         return this.roughCanvas.generator.curve(curvePoints, options);
       });
     } else {
       this.applyCleanStroke(ctx, strokeColor, strokeWidth, strokeStyle);
-
       ctx.beginPath();
-      ctx.moveTo(start.x, start.y);
-      ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, end.x, end.y);
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (const seg of segments) {
+        ctx.bezierCurveTo(seg.cp1.x, seg.cp1.y, seg.cp2.x, seg.cp2.y, seg.end.x, seg.end.y);
+      }
       ctx.stroke();
     }
+  }
+
+  /**
+   * Compute smooth cubic bezier segments through an ordered list of points
+   * using Catmull-Rom-style tangent estimation.
+   */
+  private computeSmoothCurveSegments(
+    pts: Point[],
+  ): { cp1: Point; cp2: Point; end: Point }[] {
+    const n = pts.length;
+    if (n < 2) return [];
+
+    const tension = 0.35;
+    const tangents: Point[] = [];
+    for (let i = 0; i < n; i++) {
+      if (i === 0) {
+        tangents.push({ x: pts[1].x - pts[0].x, y: pts[1].y - pts[0].y });
+      } else if (i === n - 1) {
+        tangents.push({ x: pts[n - 1].x - pts[n - 2].x, y: pts[n - 1].y - pts[n - 2].y });
+      } else {
+        tangents.push({
+          x: (pts[i + 1].x - pts[i - 1].x) / 2,
+          y: (pts[i + 1].y - pts[i - 1].y) / 2,
+        });
+      }
+    }
+
+    const segments: { cp1: Point; cp2: Point; end: Point }[] = [];
+    for (let i = 0; i < n - 1; i++) {
+      segments.push({
+        cp1: {
+          x: pts[i].x + tangents[i].x * tension,
+          y: pts[i].y + tangents[i].y * tension,
+        },
+        cp2: {
+          x: pts[i + 1].x - tangents[i + 1].x * tension,
+          y: pts[i + 1].y - tangents[i + 1].y * tension,
+        },
+        end: pts[i + 1],
+      });
+    }
+    return segments;
   }
 
   private renderElbowLine(
@@ -772,23 +840,30 @@ export class CanvasRenderer {
 
     // For curved routing, compute tangent at endpoint
     if (routingMode === 'curved') {
-      const start: Point = { x: points[0][0], y: points[0][1] };
-      const end: Point = {
-        x: points[points.length - 1][0],
-        y: points[points.length - 1][1],
-      };
-      const [, cp1, cp2] = getCubicControlPoints(start, end, 0.5);
+      const pts: Point[] = points.map(([px, py]) => ({ x: px, y: py }));
 
-      if (endArrowhead !== 'none') {
-        // Tangent at t=1 is direction from cp2 to end
-        const angle = Math.atan2(end.y - cp2.y, end.x - cp2.x);
-        this.drawArrowhead(ctx, end.x, end.y, angle, arrowLength, arrowAngle, endArrowhead);
-      }
-
-      if (startArrowhead !== 'none') {
-        // Tangent at t=0 is direction from start to cp1, reversed
-        const angle = Math.atan2(start.y - cp1.y, start.x - cp1.x);
-        this.drawArrowhead(ctx, start.x, start.y, angle, arrowLength, arrowAngle, startArrowhead);
+      if (pts.length === 2) {
+        const [, cp1, cp2] = getCubicControlPoints(pts[0], pts[1], 0.5);
+        if (endArrowhead !== 'none') {
+          const angle = Math.atan2(pts[1].y - cp2.y, pts[1].x - cp2.x);
+          this.drawArrowhead(ctx, pts[1].x, pts[1].y, angle, arrowLength, arrowAngle, endArrowhead);
+        }
+        if (startArrowhead !== 'none') {
+          const angle = Math.atan2(pts[0].y - cp1.y, pts[0].x - cp1.x);
+          this.drawArrowhead(ctx, pts[0].x, pts[0].y, angle, arrowLength, arrowAngle, startArrowhead);
+        }
+      } else {
+        const segments = this.computeSmoothCurveSegments(pts);
+        if (endArrowhead !== 'none' && segments.length > 0) {
+          const lastSeg = segments[segments.length - 1];
+          const angle = Math.atan2(lastSeg.end.y - lastSeg.cp2.y, lastSeg.end.x - lastSeg.cp2.x);
+          this.drawArrowhead(ctx, lastSeg.end.x, lastSeg.end.y, angle, arrowLength, arrowAngle, endArrowhead);
+        }
+        if (startArrowhead !== 'none' && segments.length > 0) {
+          const firstSeg = segments[0];
+          const angle = Math.atan2(pts[0].y - firstSeg.cp1.y, pts[0].x - firstSeg.cp1.x);
+          this.drawArrowhead(ctx, pts[0].x, pts[0].y, angle, arrowLength, arrowAngle, startArrowhead);
+        }
       }
       return;
     }
@@ -1230,16 +1305,18 @@ export class CanvasRenderer {
     const zoom = this.viewport.getViewport().zoom;
     const padding = 4;
 
+    const bounds = this.getElementsBounds([element]);
+
     ctx.save();
     ctx.strokeStyle = CanvasRenderer.HOVER_COLOR;
     ctx.lineWidth = 1.5 / zoom;
     ctx.setLineDash([]);
     ctx.globalAlpha = 0.5;
     ctx.strokeRect(
-      element.x - padding,
-      element.y - padding,
-      element.width + padding * 2,
-      element.height + padding * 2,
+      bounds.x - padding,
+      bounds.y - padding,
+      bounds.width + padding * 2,
+      bounds.height + padding * 2,
     );
     ctx.restore();
   }
@@ -1399,7 +1476,6 @@ export class CanvasRenderer {
     element: LinearElement,
   ): void {
     if (!element.points || element.points.length < 2) return;
-    if (element.routingMode === 'curved') return;
 
     const zoom = this.viewport.getViewport().zoom;
     const size = 5 / zoom;
@@ -1437,6 +1513,7 @@ export class CanvasRenderer {
 
   /**
    * Compute the axis-aligned bounding box that encloses all given elements.
+   * Returns finite bounds; if any element has no valid bounds (e.g. linear with no points), falls back to element box.
    */
   private getElementsBounds(elements: MavisElement[]): Bounds {
     let minX = Infinity;
@@ -1445,18 +1522,44 @@ export class CanvasRenderer {
     let maxY = -Infinity;
 
     for (const el of elements) {
-      if (el.x < minX) minX = el.x;
-      if (el.y < minY) minY = el.y;
-      if (el.x + el.width > maxX) maxX = el.x + el.width;
-      if (el.y + el.height > maxY) maxY = el.y + el.height;
+      if ('points' in el && Array.isArray((el as LinearElement).points)) {
+        const linear = el as LinearElement;
+        const pts = linear.points;
+        if (pts.length > 0) {
+          for (const [px, py] of pts) {
+            const wx = linear.x + px;
+            const wy = linear.y + py;
+            if (wx < minX) minX = wx;
+            if (wy < minY) minY = wy;
+            if (wx > maxX) maxX = wx;
+            if (wy > maxY) maxY = wy;
+          }
+        } else {
+          // Linear element with no points: use element box so we always get finite bounds
+          if (el.x < minX) minX = el.x;
+          if (el.y < minY) minY = el.y;
+          if (el.x + el.width > maxX) maxX = el.x + el.width;
+          if (el.y + el.height > maxY) maxY = el.y + el.height;
+        }
+      } else {
+        if (el.x < minX) minX = el.x;
+        if (el.y < minY) minY = el.y;
+        if (el.x + el.width > maxX) maxX = el.x + el.width;
+        if (el.y + el.height > maxY) maxY = el.y + el.height;
+      }
     }
 
-    return {
-      x: minX,
-      y: minY,
-      width: maxX - minX,
-      height: maxY - minY,
-    };
+    let x = minX;
+    let y = minY;
+    let width = maxX - minX;
+    let height = maxY - minY;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height) || width < 0 || height < 0) {
+      x = 0;
+      y = 0;
+      width = 0;
+      height = 0;
+    }
+    return { x, y, width, height };
   }
 
   /**

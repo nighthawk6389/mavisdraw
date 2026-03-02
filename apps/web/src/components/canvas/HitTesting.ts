@@ -122,24 +122,83 @@ function hitTestPolyline(canvasPoint: Point, element: MavisElement): boolean {
 }
 
 function hitTestCurvedLine(canvasPoint: Point, linear: LinearElement, tolerance: number): boolean {
-  const start: Point = { x: linear.x + linear.points[0][0], y: linear.y + linear.points[0][1] };
-  const end: Point = {
-    x: linear.x + linear.points[linear.points.length - 1][0],
-    y: linear.y + linear.points[linear.points.length - 1][1],
-  };
+  const pts: Point[] = linear.points.map(([px, py]) => ({
+    x: linear.x + px,
+    y: linear.y + py,
+  }));
 
-  const [p0, cp1, cp2, p3] = getCubicControlPoints(start, end, 0.5);
+  if (pts.length === 2) {
+    const [p0, cp1, cp2, p3] = getCubicControlPoints(pts[0], pts[1], 0.5);
+    const SAMPLES = 20;
+    let prevPt = p0;
+    for (let i = 1; i <= SAMPLES; i++) {
+      const t = i / SAMPLES;
+      const pt = cubicPoint(p0, cp1, cp2, p3, t);
+      const dist = distanceToSegment(canvasPoint, prevPt, pt);
+      if (dist <= tolerance) return true;
+      prevPt = pt;
+    }
+    return false;
+  }
 
-  const SAMPLES = 20;
-  let prevPt = p0;
-  for (let i = 1; i <= SAMPLES; i++) {
-    const t = i / SAMPLES;
-    const pt = cubicPoint(p0, cp1, cp2, p3, t);
-    const dist = distanceToSegment(canvasPoint, prevPt, pt);
-    if (dist <= tolerance) return true;
-    prevPt = pt;
+  // Multi-point curved line: test each smooth segment
+  const segments = computeSmoothCurveSegments(pts);
+  const SAMPLES = 12;
+  for (let s = 0; s < segments.length; s++) {
+    const seg = segments[s];
+    const segStart = s === 0 ? pts[0] : segments[s - 1].end;
+    let prevPt = segStart;
+    for (let i = 1; i <= SAMPLES; i++) {
+      const t = i / SAMPLES;
+      const pt = cubicPoint(segStart, seg.cp1, seg.cp2, seg.end, t);
+      const dist = distanceToSegment(canvasPoint, prevPt, pt);
+      if (dist <= tolerance) return true;
+      prevPt = pt;
+    }
   }
   return false;
+}
+
+/**
+ * Compute smooth cubic bezier segments through ordered points (Catmull-Rom tangents).
+ * Shared logic for hit testing - mirrors CanvasRenderer.computeSmoothCurveSegments.
+ */
+function computeSmoothCurveSegments(
+  pts: Point[],
+): { cp1: Point; cp2: Point; end: Point }[] {
+  const n = pts.length;
+  if (n < 2) return [];
+
+  const tension = 0.35;
+  const tangents: Point[] = [];
+  for (let i = 0; i < n; i++) {
+    if (i === 0) {
+      tangents.push({ x: pts[1].x - pts[0].x, y: pts[1].y - pts[0].y });
+    } else if (i === n - 1) {
+      tangents.push({ x: pts[n - 1].x - pts[n - 2].x, y: pts[n - 1].y - pts[n - 2].y });
+    } else {
+      tangents.push({
+        x: (pts[i + 1].x - pts[i - 1].x) / 2,
+        y: (pts[i + 1].y - pts[i - 1].y) / 2,
+      });
+    }
+  }
+
+  const segments: { cp1: Point; cp2: Point; end: Point }[] = [];
+  for (let i = 0; i < n - 1; i++) {
+    segments.push({
+      cp1: {
+        x: pts[i].x + tangents[i].x * tension,
+        y: pts[i].y + tangents[i].y * tension,
+      },
+      cp2: {
+        x: pts[i + 1].x - tangents[i + 1].x * tension,
+        y: pts[i + 1].y - tangents[i + 1].y * tension,
+      },
+      end: pts[i + 1],
+    });
+  }
+  return segments;
 }
 
 function hitTestElbowLine(canvasPoint: Point, linear: LinearElement, tolerance: number): boolean {

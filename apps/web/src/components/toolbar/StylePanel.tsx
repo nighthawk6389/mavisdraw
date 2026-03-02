@@ -122,7 +122,7 @@ export default function StylePanel() {
   const roughness = getCommonValue('roughness') ?? 1;
 
   return (
-    <aside className="w-56 bg-white border-l border-gray-200 overflow-y-auto p-3 flex flex-col gap-3 z-10">
+    <aside data-testid="style-panel" className="w-56 bg-white border-l border-gray-200 overflow-y-auto p-3 flex flex-col gap-3 z-10">
       <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Style</h3>
 
       {/* Stroke Color */}

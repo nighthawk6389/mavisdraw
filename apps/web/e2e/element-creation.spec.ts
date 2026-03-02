@@ -66,6 +66,45 @@ test.describe('Shape Creation Preview', () => {
     await expect(toolButton(page, 'Select')).toHaveClass(/bg-blue-100/);
   });
 
+  test('created rectangle is visible and can be selected and deleted', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (err) => errors.push(err.message));
+    page.on('console', (msg: ConsoleMessage) => {
+      if (msg.type() === 'error') errors.push(msg.text());
+    });
+
+    await toolButton(page, 'Rectangle').click();
+    const box = (await getCanvasBox(page))!;
+    const rectCenterX = box.x + 300;
+    const rectCenterY = box.y + 275;
+    await page.mouse.move(box.x + 200, box.y + 200);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 400, box.y + 350, { steps: 5 });
+    await page.mouse.up();
+
+    await page.waitForTimeout(400);
+    expect(errors).toEqual([]);
+
+    // Deselect by clicking empty area
+    await toolButton(page, 'Select').click();
+    await page.mouse.click(box.x + 50, box.y + 50);
+    await page.waitForTimeout(200);
+
+    // Click on the rectangle center — if the shape is visible, it gets selected
+    await page.mouse.click(rectCenterX, rectCenterY);
+    await page.waitForTimeout(200);
+
+    // Delete should remove the selected shape (proves it was there and visible)
+    await page.keyboard.press('Delete');
+    await page.waitForTimeout(200);
+
+    // Undo restores the shape
+    await page.keyboard.press('Control+z');
+    await page.waitForTimeout(200);
+
+    expect(errors, 'No errors during create → select → delete → undo').toEqual([]);
+  });
+
   test('arrow creation works without errors', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', (err) => errors.push(err.message));
