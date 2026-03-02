@@ -3,7 +3,7 @@ import { test, expect, type Page, type ConsoleMessage } from '@playwright/test';
 // ─── Helpers ───────────────────────────────────────────────────
 
 function toolbarButton(page: Page, titlePrefix: string) {
-  return page.locator('aside').locator(`button[title^="${titlePrefix}"]`);
+  return page.getByTestId('toolbar').locator(`button[title^="${titlePrefix}"]`);
 }
 
 async function drawRectangle(page: Page) {
@@ -106,38 +106,35 @@ test.describe('Diagram Tree Sidebar', () => {
     await page.waitForSelector('canvas', { state: 'visible' });
   });
 
-  test('sidebar is hidden by default', async ({ page }) => {
-    const sidebar = page.getByTestId('diagram-tree-sidebar');
-    await expect(sidebar).not.toBeVisible();
-  });
-
-  test('clicking diagram tree button shows the sidebar', async ({ page }) => {
-    await toolbarButton(page, 'Diagram tree').click();
+  test('sidebar is visible by default', async ({ page }) => {
     const sidebar = page.getByTestId('diagram-tree-sidebar');
     await expect(sidebar).toBeVisible();
   });
 
-  test('sidebar shows "Diagrams" header', async ({ page }) => {
+  test('clicking diagram tree button hides the sidebar', async ({ page }) => {
+    const sidebar = page.getByTestId('diagram-tree-sidebar');
+    await expect(sidebar).toBeVisible();
     await toolbarButton(page, 'Diagram tree').click();
+    await expect(sidebar).not.toBeVisible();
+  });
+
+  test('sidebar shows "Diagrams" header', async ({ page }) => {
     const header = page.getByTestId('diagram-tree-sidebar').locator('text=Diagrams');
     await expect(header).toBeVisible();
   });
 
   test('sidebar shows root diagram node', async ({ page }) => {
-    await toolbarButton(page, 'Diagram tree').click();
     const rootNode = page.getByTestId('tree-node-root-diagram');
     await expect(rootNode).toBeVisible();
     await expect(rootNode).toContainText('Root Diagram');
   });
 
   test('root diagram node is highlighted as active', async ({ page }) => {
-    await toolbarButton(page, 'Diagram tree').click();
     const rootNode = page.getByTestId('tree-node-root-diagram');
     await expect(rootNode).toHaveClass(/bg-blue-100/);
   });
 
   test('closing sidebar via X button hides it', async ({ page }) => {
-    await toolbarButton(page, 'Diagram tree').click();
     const sidebar = page.getByTestId('diagram-tree-sidebar');
     await expect(sidebar).toBeVisible();
 
@@ -147,8 +144,7 @@ test.describe('Diagram Tree Sidebar', () => {
   });
 
   test('toggling sidebar off and on preserves root node', async ({ page }) => {
-    // Open
-    await toolbarButton(page, 'Diagram tree').click();
+    // Sidebar is open by default — verify root node
     await expect(page.getByTestId('tree-node-root-diagram')).toBeVisible();
 
     // Close
@@ -205,8 +201,7 @@ test.describe('Portal and Drill-down', () => {
     await page.mouse.move(box.x + 350, box.y + 300, { steps: 5 });
     await page.mouse.up();
 
-    // Open diagram tree and verify child diagram appeared
-    await toolbarButton(page, 'Diagram tree').click();
+    // Sidebar is open by default — verify child diagram appeared
     const sidebar = page.getByTestId('diagram-tree-sidebar');
     await expect(sidebar).toBeVisible();
 

@@ -26,6 +26,7 @@ function makeRect(
     strokeWidth: 2,
     strokeStyle: 'solid',
     roughness: 1,
+    seed: 1,
     renderMode: 'sketchy',
     layerId: 'default',
     groupIds: [],

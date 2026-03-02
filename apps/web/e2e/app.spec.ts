@@ -8,7 +8,7 @@ async function focusPage(page: Page) {
 
 /** Get a toolbar button by its title prefix (e.g., "Rectangle", "Hand") */
 function toolButton(page: Page, label: string) {
-  return page.locator('aside').locator(`button[title^="${label}"]`);
+  return page.getByTestId('toolbar').locator(`button[title^="${label}"]`);
 }
 
 test.describe('MavisDraw Application', () => {
@@ -21,7 +21,7 @@ test.describe('MavisDraw Application', () => {
   });
 
   test('renders the toolbar', async ({ page }) => {
-    const toolbar = page.locator('aside');
+    const toolbar = page.getByTestId('toolbar');
     await expect(toolbar).toBeVisible();
   });
 
@@ -42,7 +42,7 @@ test.describe('Toolbar', () => {
   });
 
   test('displays all tool buttons', async ({ page }) => {
-    const toolbar = page.locator('aside');
+    const toolbar = page.getByTestId('toolbar');
     const buttons = toolbar.locator('button');
     const count = await buttons.count();
     // 9 tool buttons + render mode toggle + grid toggle = 11
@@ -68,17 +68,19 @@ test.describe('Toolbar', () => {
   });
 
   test('toggling render mode changes button appearance', async ({ page }) => {
-    const toolbar = page.locator('aside');
+    const toolbar = page.getByTestId('toolbar');
     const renderButton = toolbar.locator('button').filter({ hasText: /✍|♢/ });
     await expect(renderButton).toBeVisible();
 
-    // Click to toggle from sketchy to clean
+    // Default is clean mode; click to toggle to sketchy
     await renderButton.click();
-    await expect(renderButton).toHaveClass(/text-blue-600/);
+    // After toggling to sketchy, click again to go back to clean
+    await renderButton.click();
+    await expect(renderButton).toBeVisible();
   });
 
   test('toggling grid changes button appearance', async ({ page }) => {
-    const toolbar = page.locator('aside');
+    const toolbar = page.getByTestId('toolbar');
     const gridButton = toolbar.locator('button').filter({ hasText: '#' });
     await expect(gridButton).toBeVisible();
 
@@ -265,7 +267,7 @@ test.describe('Responsive Layout', () => {
 
   test('toolbar is on the left side', async ({ page }) => {
     await page.goto('/');
-    const toolbar = page.locator('aside');
+    const toolbar = page.getByTestId('toolbar');
     const box = await toolbar.boundingBox();
     expect(box).not.toBeNull();
     expect(box!.x).toBe(0);

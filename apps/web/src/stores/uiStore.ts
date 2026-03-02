@@ -28,8 +28,8 @@ interface UIState {
 export const useUIStore = create<UIState>((set) => ({
   showStylePanel: true,
   showLayerPanel: false,
-  showDiagramTree: false,
-  renderMode: 'sketchy',
+  showDiagramTree: true,
+  renderMode: 'clean',
   showGrid: true,
   snapToGrid: false,
   gridSize: 20,

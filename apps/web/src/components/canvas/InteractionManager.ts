@@ -103,6 +103,8 @@ export class InteractionManager {
   private startScreenPoint: Point = { x: 0, y: 0 };
   private lastScreenPoint: Point = { x: 0, y: 0 };
   private creatingElement: MavisElement | null = null;
+  private creatingSeed: number = 0;
+  private creatingId: string = '';
   private dragStartPositions: Map<string, Point> = new Map();
   private resizeHandle: ResizeHandle | null = null;
   private resizeStartBounds: Bounds | null = null;
@@ -272,6 +274,8 @@ export class InteractionManager {
       this.callbacks.pushHistory();
     } else if (SHAPE_TOOLS.has(tool)) {
       this.mode = 'creating';
+      this.creatingSeed = Math.floor(Math.random() * 2 ** 31);
+      this.creatingId = '';
       this.callbacks.pushHistory();
     }
   }
@@ -301,7 +305,6 @@ export class InteractionManager {
         const tool = this.callbacks.getActiveTool();
 
         if (tool === 'arrow' || tool === 'line') {
-          // For arrows/lines, use start point as origin and end point relative
           const width = canvasPoint.x - this.startCanvasPoint.x;
           const height = canvasPoint.y - this.startCanvasPoint.y;
 
@@ -314,7 +317,6 @@ export class InteractionManager {
             Math.abs(height),
           );
 
-          // Set proper points
           if (this.creatingElement && 'points' in this.creatingElement) {
             (this.creatingElement as LinearElement).points = [
               [0, 0],
@@ -337,6 +339,15 @@ export class InteractionManager {
               height,
             );
           }
+        }
+
+        // Stabilize seed and id across frames so rough.js doesn't shimmer
+        if (this.creatingElement) {
+          if (!this.creatingId) {
+            this.creatingId = this.creatingElement.id;
+          }
+          (this.creatingElement as { id: string }).id = this.creatingId;
+          (this.creatingElement as { seed: number }).seed = this.creatingSeed;
         }
         break;
       }

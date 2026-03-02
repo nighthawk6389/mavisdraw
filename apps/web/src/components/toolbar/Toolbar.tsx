@@ -39,7 +39,7 @@ export default function Toolbar() {
   } = useUIStore();
 
   return (
-    <aside className="w-12 bg-white border-r border-gray-200 flex flex-col items-center py-2 gap-1 z-10">
+    <aside data-testid="toolbar" className="w-12 bg-white border-r border-gray-200 flex flex-col items-center py-2 gap-1 z-10">
       {TOOLS.map((config) => (
         <ToolButton
           key={config.tool}

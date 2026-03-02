@@ -319,7 +319,9 @@ export class CanvasRenderer {
         break;
       case 'portal':
         if (renderMode === 'sketchy') {
-          renderPortalSketchy(ctx, this.roughCanvas, element as PortalElement);
+          renderPortalSketchy(ctx, this.roughCanvas, element as PortalElement, (c, drawable) => {
+            this.drawRoughShape(c, () => drawable);
+          });
         } else {
           renderPortalClean(ctx, element as PortalElement);
         }
@@ -1043,6 +1045,7 @@ export class CanvasRenderer {
       stroke: element.strokeColor,
       strokeWidth: element.strokeWidth,
       roughness: element.roughness,
+      seed: element.seed,
     };
 
     // Fill

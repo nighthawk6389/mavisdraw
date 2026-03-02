@@ -26,7 +26,7 @@ function createDefaultDiagram(overrides: Partial<Diagram> = {}): Diagram {
     viewBackgroundColor: '#ffffff',
     gridEnabled: true,
     gridSize: 20,
-    renderMode: 'sketchy',
+    renderMode: 'clean',
     layers: [createDefaultLayer()],
     createdBy: 'local-user',
     createdAt: now,
