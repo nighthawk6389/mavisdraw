@@ -192,8 +192,6 @@ function renderCardClean(
       } else {
         drawElementCountIndicator(ctx, 'Loading...', width / 2, thumbY + thumbH / 2, strokeColor);
       }
-    } else {
-      drawElementCountIndicator(ctx, 'Empty', width / 2, thumbY + thumbH / 2, strokeColor);
     }
   }
 }
@@ -269,8 +267,6 @@ function renderCardSketchy(
       } else {
         drawElementCountIndicator(ctx, 'Loading...', width / 2, thumbY + thumbH / 2, strokeColor);
       }
-    } else {
-      drawElementCountIndicator(ctx, 'Empty', width / 2, thumbY + thumbH / 2, strokeColor);
     }
   }
 }
@@ -441,8 +437,6 @@ function renderExpandedClean(
           strokeColor,
         );
       }
-    } else {
-      drawElementCountIndicator(ctx, 'Empty', width / 2, thumbY + thumbH / 2, strokeColor);
     }
     ctx.restore();
   }
@@ -517,8 +511,6 @@ function renderExpandedSketchy(
           strokeColor,
         );
       }
-    } else {
-      drawElementCountIndicator(ctx, 'Empty', width / 2, thumbY + thumbH / 2, strokeColor);
     }
   }
 }
