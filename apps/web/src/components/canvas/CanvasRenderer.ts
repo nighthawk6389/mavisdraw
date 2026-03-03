@@ -1478,7 +1478,7 @@ export class CanvasRenderer {
     if (!element.points || element.points.length < 2) return;
 
     const zoom = this.viewport.getViewport().zoom;
-    const size = 5 / zoom;
+    const size = 8 / zoom; // larger for easier clicking (hit test uses ~14 screen px)
 
     ctx.save();
     for (let i = 0; i < element.points.length - 1; i++) {
@@ -1488,7 +1488,7 @@ export class CanvasRenderer {
       const my = element.y + (y1 + y2) / 2;
 
       ctx.beginPath();
-      ctx.arc(mx, my, size + 1 / zoom, 0, Math.PI * 2);
+      ctx.arc(mx, my, size + 2 / zoom, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(74, 144, 217, 0.15)';
       ctx.fill();
       ctx.strokeStyle = '#4a90d9';

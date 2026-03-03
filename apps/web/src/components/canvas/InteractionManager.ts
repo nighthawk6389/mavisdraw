@@ -147,6 +147,9 @@ export class InteractionManager {
   private lastClickId: string | null = null;
   private static readonly DOUBLE_CLICK_THRESHOLD = 300;
 
+  /** Track last waypoint click for double-click-to-remove (Excalidraw/draw.io style). */
+  private lastWaypointClick: { arrowId: string; pointIndex: number; time: number } | null = null;
+
   constructor(callbacks: InteractionCallbacks, diagramId: string) {
     this.callbacks = callbacks;
     this.diagramId = diagramId;
@@ -170,6 +173,32 @@ export class InteractionManager {
 
   setSpacePressed(pressed: boolean): void {
     this.isSpacePressed = pressed;
+  }
+
+  /**
+   * Handle key down for modes that consume keys (e.g. Delete to remove waypoint).
+   * Returns true if the key was handled and should not be processed further.
+   */
+  handleKeyDown(event: KeyboardEvent): boolean {
+    if (this.mode === 'moving-waypoint' && (event.key === 'Delete' || event.key === 'Backspace')) {
+      const elements = this.callbacks.getElements();
+      const arrow = elements.find((e) => e.id === this.movingWaypointArrowId) as LinearElement | undefined;
+      if (arrow && arrow.points.length > 2 && this.movingWaypointIndex >= 0) {
+        const newPoints = [...arrow.points];
+        newPoints.splice(this.movingWaypointIndex, 1);
+        this.callbacks.pushHistory();
+        this.callbacks.updateElement(arrow.id, { points: newPoints } as Partial<LinearElement>);
+        this.callbacks.invalidateStatic();
+        this.movingWaypointIndex = -1;
+        this.movingWaypointArrowId = '';
+        this.waypointOriginalPoints = [];
+        this.mode = 'idle';
+        this.lastWaypointClick = null;
+        event.preventDefault();
+        return true;
+      }
+    }
+    return false;
   }
 
   getEnteredGroupIds(): Set<string> {
@@ -197,6 +226,10 @@ export class InteractionManager {
     this.startScreenPoint = { x: screenX, y: screenY };
     this.lastScreenPoint = { x: screenX, y: screenY };
 
+    // Hit radius in canvas units: ~14 screen pixels so handles are easy to click at any zoom
+    const zoom = Math.max(0.1, viewport.getViewport().zoom);
+    const handleRadius = 14 / zoom;
+
     // Middle mouse button or space+click = pan
     if (event.button === 1 || this.isSpacePressed || this.callbacks.getActiveTool() === 'hand') {
       this.mode = 'panning';
@@ -219,7 +252,7 @@ export class InteractionManager {
           const linear = el as LinearElement;
 
           // Phase 4: Endpoint handle hit
-          const endpointHit = hitTestEndpointHandle(canvasPoint, linear);
+          const endpointHit = hitTestEndpointHandle(canvasPoint, linear, handleRadius);
           if (endpointHit) {
             this.mode = 'rebinding-endpoint';
             this.rebindingEnd = endpointHit;
@@ -231,8 +264,26 @@ export class InteractionManager {
           }
 
           // Phase 5: Waypoint handle hit (intermediate points)
-          const waypointHit = hitTestWaypoint(canvasPoint, linear);
+          const waypointHit = hitTestWaypoint(canvasPoint, linear, handleRadius);
           if (waypointHit >= 0) {
+            const now = Date.now();
+            const isDoubleClickRemove =
+              this.lastWaypointClick != null &&
+              this.lastWaypointClick.arrowId === linear.id &&
+              this.lastWaypointClick.pointIndex === waypointHit &&
+              now - this.lastWaypointClick.time < InteractionManager.DOUBLE_CLICK_THRESHOLD;
+
+            if (isDoubleClickRemove && linear.points.length > 2) {
+              const newPoints = [...linear.points];
+              newPoints.splice(waypointHit, 1);
+              this.lastWaypointClick = null;
+              this.callbacks.pushHistory();
+              this.callbacks.updateElement(linear.id, { points: newPoints } as Partial<LinearElement>);
+              this.callbacks.invalidateStatic();
+              return;
+            }
+
+            this.lastWaypointClick = { arrowId: linear.id, pointIndex: waypointHit, time: now };
             this.mode = 'moving-waypoint';
             this.movingWaypointIndex = waypointHit;
             this.movingWaypointArrowId = linear.id;
@@ -243,8 +294,8 @@ export class InteractionManager {
           }
 
           // Phase 5: Midpoint + handle hit (add new waypoint)
-          if (linear.routingMode !== 'curved') {
-            const midpointHit = hitTestMidpointHandle(canvasPoint, linear);
+          {
+            const midpointHit = hitTestMidpointHandle(canvasPoint, linear, handleRadius);
             if (midpointHit >= 0) {
               const [x1, y1] = linear.points[midpointHit];
               const [x2, y2] = linear.points[midpointHit + 1];
@@ -312,6 +363,7 @@ export class InteractionManager {
       // Check element hit (with group awareness)
       const hitElement = hitTestElementsWithGroups(canvasPoint, elements, this.enteredGroupIds);
       if (hitElement) {
+        this.lastWaypointClick = null;
         // Check for double-click
         const now = Date.now();
         const isDoubleClick =
@@ -348,6 +400,7 @@ export class InteractionManager {
         this.captureElementPositions(elements, currentSelectedIds);
         this.callbacks.pushHistory();
       } else {
+        this.lastWaypointClick = null;
         // Check for double-click on empty area
         const now = Date.now();
         if (now - this.lastClickTime < InteractionManager.DOUBLE_CLICK_THRESHOLD) {

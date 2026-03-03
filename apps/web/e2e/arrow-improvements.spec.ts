@@ -376,6 +376,54 @@ test.describe('Midpoint Manipulation (Phase 5)', () => {
 
     expect(errors).toEqual([]);
   });
+
+  test('double-click on waypoint removes it (Excalidraw/draw.io style)', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (err) => errors.push(err.message));
+
+    const box = (await getCanvasBox(page))!;
+    await drawArrow(page, box.x + 100, box.y + 300, box.x + 500, box.y + 300);
+    await selectElement(page, box.x + 300, box.y + 300);
+    await page.waitForTimeout(200);
+
+    // Add waypoint at midpoint
+    await page.mouse.move(box.x + 300, box.y + 300);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 300, box.y + 250, { steps: 5 });
+    await page.mouse.up();
+    await page.waitForTimeout(250);
+
+    // Double-click the waypoint handle to remove it
+    await page.mouse.dblclick(box.x + 300, box.y + 250);
+    await page.waitForTimeout(300);
+
+    expect(errors).toEqual([]);
+  });
+
+  test('Delete key while dragging waypoint removes it', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (err) => errors.push(err.message));
+
+    const box = (await getCanvasBox(page))!;
+    await drawArrow(page, box.x + 100, box.y + 300, box.x + 500, box.y + 300);
+    await selectElement(page, box.x + 300, box.y + 300);
+    await page.waitForTimeout(200);
+
+    // Add waypoint
+    await page.mouse.move(box.x + 300, box.y + 300);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 300, box.y + 250, { steps: 5 });
+    await page.mouse.up();
+    await page.waitForTimeout(200);
+
+    // Click waypoint to start dragging, then press Delete to remove it
+    await page.mouse.click(box.x + 300, box.y + 250);
+    await page.waitForTimeout(100);
+    await page.keyboard.press('Delete');
+    await page.waitForTimeout(200);
+
+    expect(errors).toEqual([]);
+  });
 });
 
 // ─── Integration: All Routing Modes ─────────────────────────────

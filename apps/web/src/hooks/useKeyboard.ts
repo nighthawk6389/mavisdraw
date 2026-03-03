@@ -63,8 +63,10 @@ export function useKeyboard(
         return;
       }
 
-      // Delete / Backspace = delete selected
+      // Delete / Backspace = delete selected (or remove waypoint if moving one)
       if (key === 'delete' || key === 'backspace') {
+        const mgr = interactionManagerRef.current as { setSpacePressed: (p: boolean) => void; handleKeyDown?: (e: KeyboardEvent) => boolean } | null;
+        if (mgr?.handleKeyDown?.(event)) return;
         if (selectedIds.size > 0) {
           event.preventDefault();
           deleteElements(Array.from(selectedIds));

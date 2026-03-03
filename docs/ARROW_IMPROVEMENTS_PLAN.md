@@ -10,7 +10,7 @@ This document outlines a phased plan for upgrading arrow/connector functionality
 | Phase 2 — Arrow property controls | **COMPLETED** | Arrowhead picker (start/end) in StylePanel, double-click arrow to cycle routing mode |
 | Phase 3 — Edge-initiated connections | **COMPLETED** | Anchor points shown on hover, click-drag from anchor creates arrow, snap-to-anchor feedback |
 | Phase 4 — Endpoint dragging & rebinding | **COMPLETED** | Green endpoint handles on selected arrows, drag to rebind to different shapes |
-| Phase 5 — Midpoint manipulation | **COMPLETED** | Click + handle at segment midpoints to add waypoints, drag waypoints, double-click to remove |
+| Phase 5 — Midpoint manipulation | **COMPLETED** | Click + handle at segment midpoints to add waypoints, drag waypoints; **remove**: double-click waypoint or press Delete while dragging (Excalidraw/draw.io style) |
 | Phase 6 — Advanced elbow routing | Not started | Obstacle-aware routing, rounded corners (stretch goal) |
 
 ### Research Notes (Excalidraw / Miro / tldraw)
@@ -18,7 +18,7 @@ This document outlines a phased plan for upgrading arrow/connector functionality
 - **Excalidraw**: Uses click-click-click for multi-point arrows, `LinearElementEditor` for editing points after creation (Ctrl+double-click). Bézier curves with editable control points.
 - **Miro**: Center-based snapping on drag, limited curve control. Users have requested Illustrator-like path tools.
 - **tldraw**: `ElbowArrowMidpointHandle` for dragging elbow midpoint segments, velocity-based precision snapping.
-- **Our approach**: Followed Excalidraw/tldraw patterns — waypoints via + handles at segment midpoints, endpoint handles for rebinding, anchor points on shape edges for connection initiation. Double-click on arrow cycles routing mode (discoverable without needing StylePanel). Double-click on waypoint removes it.
+- **Our approach**: Followed Excalidraw/tldraw patterns — waypoints via + handles at segment midpoints, endpoint handles for rebinding, anchor points on shape edges for connection initiation. Double-click on arrow cycles routing mode (discoverable without needing StylePanel). **Remove waypoint**: double-click on the waypoint handle, or press Delete/Backspace while dragging a waypoint (like Excalidraw Ctrl+double-click to edit points, or draw.io right-click “Remove waypoint”).
 
 ---
 
