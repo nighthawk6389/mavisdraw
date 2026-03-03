@@ -18,6 +18,8 @@ export default function Dashboard({ onOpenProject }: DashboardProps) {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const loadProjects = useCallback(async () => {
     setIsLoading(true);
@@ -25,7 +27,8 @@ export default function Dashboard({ onOpenProject }: DashboardProps) {
       const response = await apiListProjects();
       setProjects(response.projects);
     } catch (err) {
-      console.error('Failed to load projects:', err);
+      const message = err instanceof Error ? err.message : 'Failed to load projects';
+      setError(message);
     } finally {
       setIsLoading(false);
     }
@@ -37,8 +40,10 @@ export default function Dashboard({ onOpenProject }: DashboardProps) {
 
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newProjectName.trim()) return;
+    if (!newProjectName.trim() || isCreating) return;
 
+    setIsCreating(true);
+    setError(null);
     try {
       const response = await apiCreateProject(newProjectName.trim());
       setProjects((prev) => [
@@ -51,18 +56,23 @@ export default function Dashboard({ onOpenProject }: DashboardProps) {
       setNewProjectName('');
       setShowCreateDialog(false);
     } catch (err) {
-      console.error('Failed to create project:', err);
+      const message = err instanceof Error ? err.message : 'Failed to create project';
+      setError(message);
+    } finally {
+      setIsCreating(false);
     }
   };
 
   const handleDeleteProject = async (id: string) => {
     if (!confirm('Are you sure you want to delete this project?')) return;
 
+    setError(null);
     try {
       await apiDeleteProject(id);
       setProjects((prev) => prev.filter((p) => p.id !== id));
     } catch (err) {
-      console.error('Failed to delete project:', err);
+      const message = err instanceof Error ? err.message : 'Failed to delete project';
+      setError(message);
     }
   };
 
@@ -112,6 +122,13 @@ export default function Dashboard({ onOpenProject }: DashboardProps) {
           </button>
         </div>
 
+        {/* Error banner */}
+        {error && (
+          <div className="mb-4 text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+            {error}
+          </div>
+        )}
+
         {/* Create dialog */}
         {showCreateDialog && (
           <div className="mb-6 bg-white rounded-lg shadow p-4 border border-gray-200">
@@ -126,9 +143,10 @@ export default function Dashboard({ onOpenProject }: DashboardProps) {
               />
               <button
                 type="submit"
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm"
+                disabled={isCreating}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm disabled:opacity-50"
               >
-                Create
+                {isCreating ? 'Creating...' : 'Create'}
               </button>
               <button
                 type="button"
