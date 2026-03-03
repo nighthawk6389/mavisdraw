@@ -249,9 +249,15 @@ export class CanvasRenderer {
       const selectedElements = elements.filter((e) =>
         state.selectedIds.has(e.id),
       );
-      if (selectedElements.length > 0) {
-        // Compute aggregate bounds for the selection
-        const bounds = this.getElementsBounds(selectedElements);
+      const nonLinearSelected = selectedElements.filter(
+        (e) => e.type !== 'arrow' && e.type !== 'line',
+      );
+      if (nonLinearSelected.length > 0) {
+        const bounds = this.getElementsBounds(
+          selectedElements.length === nonLinearSelected.length
+            ? selectedElements
+            : nonLinearSelected,
+        );
         this.renderSelectionBox(ctx, bounds);
         this.renderResizeHandles(ctx, bounds);
       }
@@ -1478,7 +1484,7 @@ export class CanvasRenderer {
     if (!element.points || element.points.length < 2) return;
 
     const zoom = this.viewport.getViewport().zoom;
-    const size = 8 / zoom; // larger for easier clicking (hit test uses ~14 screen px)
+    const radius = 10 / zoom;
 
     ctx.save();
     for (let i = 0; i < element.points.length - 1; i++) {
@@ -1488,20 +1494,21 @@ export class CanvasRenderer {
       const my = element.y + (y1 + y2) / 2;
 
       ctx.beginPath();
-      ctx.arc(mx, my, size + 2 / zoom, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(74, 144, 217, 0.15)';
+      ctx.arc(mx, my, radius, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(74, 144, 217, 0.2)';
       ctx.fill();
       ctx.strokeStyle = '#4a90d9';
-      ctx.lineWidth = 1 / zoom;
+      ctx.lineWidth = 1.5 / zoom;
       ctx.stroke();
 
+      const cross = radius * 0.5;
       ctx.beginPath();
-      ctx.moveTo(mx - size * 0.6, my);
-      ctx.lineTo(mx + size * 0.6, my);
-      ctx.moveTo(mx, my - size * 0.6);
-      ctx.lineTo(mx, my + size * 0.6);
+      ctx.moveTo(mx - cross, my);
+      ctx.lineTo(mx + cross, my);
+      ctx.moveTo(mx, my - cross);
+      ctx.lineTo(mx, my + cross);
       ctx.strokeStyle = '#4a90d9';
-      ctx.lineWidth = 1.5 / zoom;
+      ctx.lineWidth = 2 / zoom;
       ctx.stroke();
     }
     ctx.restore();

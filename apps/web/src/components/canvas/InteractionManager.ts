@@ -226,9 +226,9 @@ export class InteractionManager {
     this.startScreenPoint = { x: screenX, y: screenY };
     this.lastScreenPoint = { x: screenX, y: screenY };
 
-    // Hit radius in canvas units: ~14 screen pixels so handles are easy to click at any zoom
+    // Hit radius in canvas units: ~18 screen pixels so handles are easy to click at any zoom
     const zoom = Math.max(0.1, viewport.getViewport().zoom);
-    const handleRadius = 14 / zoom;
+    const handleRadius = 18 / zoom;
 
     // Middle mouse button or space+click = pan
     if (event.button === 1 || this.isSpacePressed || this.callbacks.getActiveTool() === 'hand') {
@@ -344,18 +344,23 @@ export class InteractionManager {
         return;
       }
 
-      // Check resize handle hit first (only in select mode)
+      // Check resize handle hit (only for non-linear selections; arrows/lines use their own handles)
       if (selectedIds.size > 0) {
-        const selBounds = this.getSelectionBounds(elements, selectedIds);
-        if (selBounds) {
-          const handle = hitTestResizeHandle(canvasPoint, selBounds);
-          if (handle) {
-            this.mode = 'resizing';
-            this.resizeHandle = handle;
-            this.resizeStartBounds = selBounds;
-            this.captureElementPositions(elements, selectedIds);
-            this.callbacks.pushHistory();
-            return;
+        const hasNonLinear = elements.some(
+          (e) => selectedIds.has(e.id) && e.type !== 'arrow' && e.type !== 'line' && !e.isDeleted,
+        );
+        if (hasNonLinear) {
+          const selBounds = this.getSelectionBounds(elements, selectedIds);
+          if (selBounds) {
+            const handle = hitTestResizeHandle(canvasPoint, selBounds);
+            if (handle) {
+              this.mode = 'resizing';
+              this.resizeHandle = handle;
+              this.resizeStartBounds = selBounds;
+              this.captureElementPositions(elements, selectedIds);
+              this.callbacks.pushHistory();
+              return;
+            }
           }
         }
       }
