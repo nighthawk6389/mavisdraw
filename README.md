@@ -5,6 +5,8 @@ A web-based diagramming application with nested/drill-down diagram support. Doub
 ## Tech Stack
 
 - **Frontend**: React 19 + TypeScript 5.7 + Vite 6
+- **Backend**: Fastify 5 + Drizzle ORM + PostgreSQL
+- **Collaboration**: Y.js + Hocuspocus (real-time WebSocket sync)
 - **State**: Zustand 5
 - **Rendering**: HTML Canvas + Rough.js (sketchy hand-drawn style)
 - **Styling**: Tailwind CSS 3
@@ -22,39 +24,53 @@ A web-based diagramming application with nested/drill-down diagram support. Doub
 # Install dependencies
 pnpm install
 
-# Start the dev server (http://localhost:3000)
+# Start Postgres (requires Docker)
+docker compose up -d postgres
+
+# Start both frontend and backend dev servers
 pnpm run dev
+# Frontend: http://localhost:3000
+# Backend:  http://localhost:3001
 ```
 
 ## Scripts
 
 | Command | Description |
 |---------|-------------|
-| `pnpm run dev` | Start all dev servers (Vite on port 3000) |
+| `pnpm run dev` | Start all dev servers (frontend :3000, backend :3001) |
 | `pnpm run build` | Build all packages for production |
 | `pnpm run test` | Run unit tests across all packages |
 | `pnpm run lint` | Lint all packages with ESLint |
 | `pnpm run typecheck` | Type-check all packages |
 | `cd apps/web && pnpm run test:e2e` | Run Playwright e2e tests |
-| `cd apps/web && pnpm run preview` | Preview production build locally |
+| `cd apps/server && pnpm run db:push` | Push schema to database |
+| `cd apps/server && pnpm run db:seed` | Seed database with sample data |
 
 ## Project Structure
 
 ```
 mavisdraw/
 ├── apps/
-│   └── web/              # React frontend application
-│       ├── src/
-│       │   ├── components/   # UI components (Canvas, Toolbar)
-│       │   ├── stores/       # Zustand state stores
-│       │   └── hooks/        # Custom React hooks
-│       └── e2e/              # Playwright e2e tests
+│   ├── web/              # React frontend (Vite)
+│   │   ├── src/
+│   │   │   ├── components/   # UI components (Canvas, Toolbar, Collaboration)
+│   │   │   ├── stores/       # Zustand state stores
+│   │   │   ├── hooks/        # Custom React hooks
+│   │   │   └── services/     # API client layer
+│   │   └── e2e/              # Playwright e2e tests
+│   └── server/           # Fastify backend API
+│       └── src/
+│           ├── routes/       # REST API routes (auth, projects, diagrams, sharing)
+│           ├── db/           # Drizzle ORM schema + migrations
+│           ├── services/     # Business logic (auth, diagrams, sharing)
+│           ├── middleware/    # Auth + rate limiting middleware
+│           └── ws/           # Hocuspocus WebSocket collaboration server
 ├── packages/
 │   ├── types/            # Shared TypeScript type definitions
 │   └── math/             # Geometry & math utilities
+├── docker-compose.yml    # Local dev services (Postgres, Redis)
 ├── .github/workflows/    # CI pipeline (lint, test, build)
-├── vercel.json           # Vercel deployment config
-└── render.yaml           # Render deployment config
+└── render.yaml           # Render deployment blueprint
 ```
 
 ## Testing
@@ -89,59 +105,37 @@ cd apps/web && npx playwright test --ui
 
 ## Deployment
 
-MavisDraw is a static single-page application. The production build outputs to `apps/web/dist/`.
+MavisDraw is a full-stack application with a React frontend and a Fastify API backend. Deployment requires both services plus a PostgreSQL database.
 
-### Vercel
+### Render (recommended)
 
-Vercel is the recommended deployment platform for Vite apps.
-
-**First-time setup:**
-
-1. Install the [Vercel CLI](https://vercel.com/docs/cli): `npm i -g vercel`
-2. From the repo root, run: `vercel`
-3. Follow the prompts — Vercel will auto-detect the Vite framework
-4. The included `vercel.json` configures:
-   - Build command: `pnpm run build`
-   - Output directory: `apps/web/dist`
-
-**Subsequent deploys:**
-
-```bash
-# Preview deployment
-vercel
-
-# Production deployment
-vercel --prod
-```
-
-**Or connect via GitHub:**
-
-1. Go to [vercel.com/new](https://vercel.com/new)
-2. Import your GitHub repository
-3. Vercel reads `vercel.json` automatically — no additional config needed
-4. Every push to `main` triggers a production deploy; PRs get preview deploys
-
-### Render
-
-Render supports static site hosting.
+The included `render.yaml` Blueprint deploys the full stack automatically.
 
 **First-time setup:**
 
 1. Go to [dashboard.render.com](https://dashboard.render.com)
-2. Click **New** > **Static Site**
+2. Click **New** > **Blueprint**
 3. Connect your GitHub repository
-4. Render reads `render.yaml` (Blueprint) automatically, or configure manually:
-   - **Build command**: `pnpm install && pnpm run build`
-   - **Publish directory**: `apps/web/dist`
-   - **Node version**: Set `NODE_VERSION=22` in environment variables
+4. Render reads `render.yaml` and creates all three resources:
+   - **mavisdraw-web** — Static site (frontend)
+   - **mavisdraw-api** — Web service (backend)
+   - **mavisdraw-db** — PostgreSQL database
 
-**Using Render Blueprint (recommended):**
+Environment variables (`CORS_ORIGIN`, `VITE_API_URL`, `DATABASE_URL`, etc.) are wired automatically between services. `COOKIE_SECRET` and `JWT_SECRET` are auto-generated.
 
-The included `render.yaml` defines the service configuration. Render will pick it up automatically when you connect the repo. It configures:
+**Manual setup (if not using Blueprint):**
 
-- Static site hosting with SPA rewrite rules
-- Cache headers for hashed assets
-- Node 22 runtime for the build step
+Create three Render resources:
+
+1. **PostgreSQL database** — note the connection string
+2. **Web Service** (backend):
+   - Build: `pnpm install && pnpm --filter @mavisdraw/types build && pnpm --filter @mavisdraw/server build`
+   - Start: `node apps/server/dist/index.js`
+   - Set env: `DATABASE_URL`, `CORS_ORIGIN` (frontend URL), `COOKIE_SECRET`, `NODE_ENV=production`
+3. **Static Site** (frontend):
+   - Build: `pnpm install && pnpm run build`
+   - Publish dir: `apps/web/dist`
+   - Set env: `VITE_API_URL` (backend URL), `VITE_WS_URL` (backend URL with `wss://`)
 
 ## CI/CD
 
