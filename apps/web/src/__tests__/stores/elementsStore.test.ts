@@ -309,4 +309,54 @@ describe('elementsStore', () => {
       expect(useElementsStore.getState().canRedo()).toBe(false);
     });
   });
+
+  describe('alignElements', () => {
+    it('aligns two rectangles and keeps finite positions', () => {
+      const store = useElementsStore.getState();
+      const r1 = store.createElement('rectangle', 'd1', 10, 20, 50, 40);
+      const r2 = store.createElement('rectangle', 'd1', 100, 80, 50, 40);
+      store.addElement(r1);
+      store.addElement(r2);
+      store.alignElements([r1.id, r2.id], 'left');
+      const el1 = useElementsStore.getState().elements.get(r1.id)!;
+      const el2 = useElementsStore.getState().elements.get(r2.id)!;
+      expect(Number.isFinite(el1.x)).toBe(true);
+      expect(Number.isFinite(el1.y)).toBe(true);
+      expect(Number.isFinite(el2.x)).toBe(true);
+      expect(Number.isFinite(el2.y)).toBe(true);
+      expect(el1.x).toBe(10);
+      expect(el2.x).toBe(10);
+    });
+
+    it('aligns rectangle and arrow without producing NaN', () => {
+      const store = useElementsStore.getState();
+      const rect = store.createElement('rectangle', 'd1', 50, 50, 60, 40);
+      const arrow = store.createElement('arrow', 'd1', 200, 100, 80, 30);
+      store.addElement(rect);
+      store.addElement(arrow);
+      useElementsStore.getState().alignElements([rect.id, arrow.id], 'left');
+      const r = useElementsStore.getState().elements.get(rect.id)!;
+      const a = useElementsStore.getState().elements.get(arrow.id)!;
+      expect(Number.isFinite(r.x) && Number.isFinite(r.y)).toBe(true);
+      expect(Number.isFinite(a.x) && Number.isFinite(a.y)).toBe(true);
+    });
+  });
+
+  describe('distributeElements', () => {
+    it('distributes three rectangles and keeps finite positions', () => {
+      const store = useElementsStore.getState();
+      const r1 = store.createElement('rectangle', 'd1', 0, 0, 30, 20);
+      const r2 = store.createElement('rectangle', 'd1', 50, 0, 30, 20);
+      const r3 = store.createElement('rectangle', 'd1', 120, 0, 30, 20);
+      store.addElement(r1);
+      store.addElement(r2);
+      store.addElement(r3);
+      useElementsStore.getState().distributeElements([r1.id, r2.id, r3.id], 'horizontal');
+      for (const id of [r1.id, r2.id, r3.id]) {
+        const el = useElementsStore.getState().elements.get(id)!;
+        expect(Number.isFinite(el.x)).toBe(true);
+        expect(Number.isFinite(el.y)).toBe(true);
+      }
+    });
+  });
 });

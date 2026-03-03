@@ -215,24 +215,53 @@ describe('bezier - Stage 2 functions', () => {
       expect(p3).toEqual(end);
     });
 
-    it('control points are between start and end for curvature 0.5', () => {
+    it('control points have perpendicular offset for horizontal line', () => {
       const start = { x: 0, y: 0 };
       const end = { x: 100, y: 0 };
       const [, cp1, cp2] = getCubicControlPoints(start, end, 0.5);
 
-      // For horizontal line, control points should be horizontally offset
-      expect(cp1.x).toBeGreaterThan(start.x);
-      expect(cp1.x).toBeLessThan(end.x);
-      expect(cp2.x).toBeGreaterThan(start.x);
-      expect(cp2.x).toBeLessThan(end.x);
+      expect(cp1.x).toBeCloseTo(100 / 3, 0);
+      expect(cp1.y).not.toBeCloseTo(0);
+      expect(cp2.x).toBeCloseTo(200 / 3, 0);
+      expect(cp2.y).not.toBeCloseTo(0);
     });
 
-    it('with zero curvature, control points are at endpoints', () => {
+    it('control points have perpendicular offset for vertical line', () => {
+      const start = { x: 0, y: 0 };
+      const end = { x: 0, y: 100 };
+      const [, cp1, cp2] = getCubicControlPoints(start, end, 0.5);
+
+      expect(cp1.y).toBeCloseTo(100 / 3, 0);
+      expect(cp1.x).not.toBeCloseTo(0);
+      expect(cp2.y).toBeCloseTo(200 / 3, 0);
+      expect(cp2.x).not.toBeCloseTo(0);
+    });
+
+    it('with zero curvature, control points collapse to straight line', () => {
       const start = { x: 0, y: 0 };
       const end = { x: 100, y: 0 };
       const [, cp1, cp2] = getCubicControlPoints(start, end, 0);
-      expect(cp1.x).toBeCloseTo(0);
-      expect(cp2.x).toBeCloseTo(100);
+      expect(cp1.x).toBeCloseTo(100 / 3);
+      expect(cp1.y).toBeCloseTo(0);
+      expect(cp2.x).toBeCloseTo(200 / 3);
+      expect(cp2.y).toBeCloseTo(0);
+    });
+
+    it('handles coincident points', () => {
+      const point = { x: 50, y: 50 };
+      const [p0, cp1, cp2, p3] = getCubicControlPoints(point, point);
+      expect(p0).toEqual(point);
+      expect(p3).toEqual(point);
+    });
+
+    it('produces a visible arc for diagonal line', () => {
+      const start = { x: 0, y: 0 };
+      const end = { x: 100, y: 100 };
+      const [, cp1, cp2] = getCubicControlPoints(start, end, 0.5);
+      const dist = Math.sqrt(100 * 100 + 100 * 100);
+      const expectedOffset = dist * 0.5 * 0.4;
+      expect(cp1.x).toBeLessThan(100 / 3 + 1);
+      expect(cp1.y).toBeGreaterThan(100 / 3 - 1);
     });
   });
 });

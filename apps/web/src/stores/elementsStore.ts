@@ -17,6 +17,85 @@ import type {
 
 const MAX_HISTORY = 100;
 
+/** Padding between shape edge and bound text box (must match createBoundText). */
+const BOUND_TEXT_PADDING = 10;
+
+/**
+ * Clamp a bound text element's position and size so its box stays inside the container.
+ * Returns clamped { x, y, width, height }.
+ */
+function clampBoundTextToContainer(
+  textX: number,
+  textY: number,
+  textW: number,
+  textH: number,
+  container: MavisElement,
+): { x: number; y: number; width: number; height: number } {
+  const minX = container.x + BOUND_TEXT_PADDING;
+  const minY = container.y + BOUND_TEXT_PADDING;
+  const maxW = Math.max(20, container.width - BOUND_TEXT_PADDING * 2);
+  const maxH = Math.max(20, container.height - BOUND_TEXT_PADDING * 2);
+  const width = Math.max(20, Math.min(textW, maxW));
+  const height = Math.max(20, Math.min(textH, maxH));
+  const x = Math.max(minX, Math.min(textX, minX + maxW - width));
+  const y = Math.max(minY, Math.min(textY, minY + maxH - height));
+  return { x, y, width, height };
+}
+function getElementBounds(el: MavisElement): { minX: number; minY: number; maxX: number; maxY: number } {
+  if ('points' in el && Array.isArray((el as LinearElement).points)) {
+    const linear = el as LinearElement;
+    const pts = linear.points;
+    if (pts.length > 0) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const [px, py] of pts) {
+        const wx = linear.x + px;
+        const wy = linear.y + py;
+        if (wx < minX) minX = wx;
+        if (wy < minY) minY = wy;
+        if (wx > maxX) maxX = wx;
+        if (wy > maxY) maxY = wy;
+      }
+      return { minX, minY, maxX, maxY };
+    }
+  }
+  return { minX: el.x, minY: el.y, maxX: el.x + el.width, maxY: el.y + el.height };
+}
+
+function getElWidth(el: MavisElement): number {
+  const b = getElementBounds(el);
+  return b.maxX - b.minX;
+}
+
+function getElHeight(el: MavisElement): number {
+  const b = getElementBounds(el);
+  return b.maxY - b.minY;
+}
+
+/** Shift a linear element so its visual minX becomes newMinX. */
+function setLinearMinX(el: MavisElement, next: Map<string, MavisElement>, newMinX: number) {
+  const b = getElementBounds(el);
+  const dx = newMinX - b.minX;
+  const current = next.get(el.id)!;
+  next.set(el.id, {
+    ...current,
+    x: current.x + dx,
+    version: current.version + 1,
+    updatedAt: Date.now(),
+  } as MavisElement);
+}
+
+function setLinearMinY(el: MavisElement, next: Map<string, MavisElement>, newMinY: number) {
+  const b = getElementBounds(el);
+  const dy = newMinY - b.minY;
+  const current = next.get(el.id)!;
+  next.set(el.id, {
+    ...current,
+    y: current.y + dy,
+    version: current.version + 1,
+    updatedAt: Date.now(),
+  } as MavisElement);
+}
+
 const DEFAULT_STYLE = {
   strokeColor: '#1e1e1e',
   backgroundColor: 'transparent',
@@ -69,6 +148,8 @@ interface ElementsState {
   // CRUD operations
   addElement: (element: MavisElement) => void;
   updateElement: (id: string, updates: Partial<MavisElement>) => void;
+  /** Update without pushing history — use when caller already pushed history (e.g. drag/resize). */
+  updateElementSilent: (id: string, updates: Partial<MavisElement>) => void;
   deleteElement: (id: string) => void;
   deleteElements: (ids: string[]) => void;
 
@@ -162,6 +243,73 @@ function cloneElementsMap(
   return cloned;
 }
 
+/** Shared logic for updating a single element (with bound-text clamping). */
+function applyElementUpdate(
+  set: (fn: (prev: ElementsState) => Partial<ElementsState>) => void,
+  id: string,
+  updates: Partial<MavisElement>,
+) {
+  set((prev) => {
+    const next = new Map(prev.elements);
+    const current = next.get(id);
+    if (!current) return prev;
+
+    const merged = {
+      ...current,
+      ...updates,
+      version: current.version + 1,
+      updatedAt: Date.now(),
+    } as MavisElement;
+
+    // Keep bound text inside its container
+    if (merged.type === 'text') {
+      const textEl = merged as TextElement;
+      if (textEl.containerId) {
+        const container = next.get(textEl.containerId);
+        if (container && !container.isDeleted) {
+          const clamped = clampBoundTextToContainer(
+            textEl.x,
+            textEl.y,
+            textEl.width,
+            textEl.height,
+            container,
+          );
+          (merged as TextElement).x = clamped.x;
+          (merged as TextElement).y = clamped.y;
+          (merged as TextElement).width = clamped.width;
+          (merged as TextElement).height = clamped.height;
+        }
+      }
+    }
+
+    next.set(id, merged);
+
+    // When container (shape) is updated, keep its bound text inside
+    if (merged.type !== 'text' && merged.boundElements?.length) {
+      for (const bound of merged.boundElements) {
+        if (bound.type !== 'text') continue;
+        const textEl = next.get(bound.id) as TextElement | undefined;
+        if (!textEl || textEl.isDeleted || textEl.containerId !== id) continue;
+        const clamped = clampBoundTextToContainer(
+          textEl.x,
+          textEl.y,
+          textEl.width,
+          textEl.height,
+          merged,
+        );
+        next.set(bound.id, {
+          ...textEl,
+          ...clamped,
+          version: textEl.version + 1,
+          updatedAt: Date.now(),
+        } as TextElement);
+      }
+    }
+
+    return { elements: next };
+  });
+}
+
 export const useElementsStore = create<ElementsState>((set, get) => ({
   elements: new Map<string, MavisElement>(),
   history: [],
@@ -184,18 +332,14 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
     if (!existing) return;
 
     state.pushHistory();
-    set((prev) => {
-      const next = new Map(prev.elements);
-      const current = next.get(id);
-      if (!current) return prev;
-      next.set(id, {
-        ...current,
-        ...updates,
-        version: current.version + 1,
-        updatedAt: Date.now(),
-      } as MavisElement);
-      return { elements: next };
-    });
+    applyElementUpdate(set, id, updates);
+  },
+
+  updateElementSilent: (id: string, updates: Partial<MavisElement>) => {
+    const existing = get().elements.get(id);
+    if (!existing) return;
+
+    applyElementUpdate(set, id, updates);
   },
 
   updateElements: (updates: { id: string; changes: Partial<MavisElement> }[]) => {
@@ -597,15 +741,34 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
 
     set((prev) => {
       const next = new Map(prev.elements);
-
-      // Move the element
       const current = next.get(id);
       if (!current) return prev;
 
+      let finalX = newX;
+      let finalY = newY;
+      // Keep bound text inside its container when moving the text
+      if (current.type === 'text') {
+        const textEl = current as TextElement;
+        if (textEl.containerId) {
+          const container = next.get(textEl.containerId);
+          if (container && !container.isDeleted) {
+            const clamped = clampBoundTextToContainer(
+              newX,
+              newY,
+              textEl.width,
+              textEl.height,
+              container,
+            );
+            finalX = clamped.x;
+            finalY = clamped.y;
+          }
+        }
+      }
+
       next.set(id, {
         ...current,
-        x: newX,
-        y: newY,
+        x: finalX,
+        y: finalY,
         version: current.version + 1,
         updatedAt: Date.now(),
       } as MavisElement);
@@ -684,7 +847,7 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
     const container = state.elements.get(containerId);
     if (!container) throw new Error(`Container ${containerId} not found`);
 
-    const padding = 10;
+    const padding = BOUND_TEXT_PADDING;
     const textEl: TextElement = {
       id: nanoid(),
       type: 'text',
@@ -962,94 +1125,63 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
 
     if (elems.length < 2) return;
 
+    const bounds = elems.map((e) => ({ el: e, b: getElementBounds(e) }));
+
     state.pushHistory();
     set((prev) => {
       const next = new Map(prev.elements);
 
-      // Compute reference values
       let refValue: number;
       switch (alignment) {
         case 'left':
-          refValue = Math.min(...elems.map((e) => e.x));
-          for (const el of elems) {
-            const current = next.get(el.id)!;
-            next.set(el.id, {
-              ...current,
-              x: refValue,
-              version: current.version + 1,
-              updatedAt: Date.now(),
-            } as MavisElement);
+          refValue = Math.min(...bounds.map((e) => e.b.minX));
+          for (const { el } of bounds) {
+            setLinearMinX(el, next, refValue);
           }
           break;
 
-        case 'center-horizontal':
-          refValue =
-            (Math.min(...elems.map((e) => e.x)) +
-              Math.max(...elems.map((e) => e.x + e.width))) /
-            2;
-          for (const el of elems) {
-            const current = next.get(el.id)!;
-            next.set(el.id, {
-              ...current,
-              x: refValue - current.width / 2,
-              version: current.version + 1,
-              updatedAt: Date.now(),
-            } as MavisElement);
+        case 'center-horizontal': {
+          const groupMinX = Math.min(...bounds.map((e) => e.b.minX));
+          const groupMaxX = Math.max(...bounds.map((e) => e.b.maxX));
+          refValue = (groupMinX + groupMaxX) / 2;
+          for (const { el } of bounds) {
+            const w = getElWidth(el);
+            setLinearMinX(el, next, refValue - w / 2);
           }
           break;
+        }
 
         case 'right':
-          refValue = Math.max(...elems.map((e) => e.x + e.width));
-          for (const el of elems) {
-            const current = next.get(el.id)!;
-            next.set(el.id, {
-              ...current,
-              x: refValue - current.width,
-              version: current.version + 1,
-              updatedAt: Date.now(),
-            } as MavisElement);
+          refValue = Math.max(...bounds.map((e) => e.b.maxX));
+          for (const { el } of bounds) {
+            const w = getElWidth(el);
+            setLinearMinX(el, next, refValue - w);
           }
           break;
 
         case 'top':
-          refValue = Math.min(...elems.map((e) => e.y));
-          for (const el of elems) {
-            const current = next.get(el.id)!;
-            next.set(el.id, {
-              ...current,
-              y: refValue,
-              version: current.version + 1,
-              updatedAt: Date.now(),
-            } as MavisElement);
+          refValue = Math.min(...bounds.map((e) => e.b.minY));
+          for (const { el } of bounds) {
+            setLinearMinY(el, next, refValue);
           }
           break;
 
-        case 'center-vertical':
-          refValue =
-            (Math.min(...elems.map((e) => e.y)) +
-              Math.max(...elems.map((e) => e.y + e.height))) /
-            2;
-          for (const el of elems) {
-            const current = next.get(el.id)!;
-            next.set(el.id, {
-              ...current,
-              y: refValue - current.height / 2,
-              version: current.version + 1,
-              updatedAt: Date.now(),
-            } as MavisElement);
+        case 'center-vertical': {
+          const groupMinY = Math.min(...bounds.map((e) => e.b.minY));
+          const groupMaxY = Math.max(...bounds.map((e) => e.b.maxY));
+          refValue = (groupMinY + groupMaxY) / 2;
+          for (const { el } of bounds) {
+            const h = getElHeight(el);
+            setLinearMinY(el, next, refValue - h / 2);
           }
           break;
+        }
 
         case 'bottom':
-          refValue = Math.max(...elems.map((e) => e.y + e.height));
-          for (const el of elems) {
-            const current = next.get(el.id)!;
-            next.set(el.id, {
-              ...current,
-              y: refValue - current.height,
-              version: current.version + 1,
-              updatedAt: Date.now(),
-            } as MavisElement);
+          refValue = Math.max(...bounds.map((e) => e.b.maxY));
+          for (const { el } of bounds) {
+            const h = getElHeight(el);
+            setLinearMinY(el, next, refValue - h);
           }
           break;
       }
@@ -1073,42 +1205,30 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
       const next = new Map(prev.elements);
 
       if (direction === 'horizontal') {
-        // Sort by x position
-        const sorted = [...elems].sort((a, b) => a.x - b.x);
-        const firstX = sorted[0].x;
-        const lastX = sorted[sorted.length - 1].x + sorted[sorted.length - 1].width;
-        const totalWidth = sorted.reduce((sum, el) => sum + el.width, 0);
+        const withBounds = elems.map((e) => ({ el: e, b: getElementBounds(e) }));
+        const sorted = withBounds.sort((a, b) => a.b.minX - b.b.minX);
+        const firstX = sorted[0].b.minX;
+        const lastX = sorted[sorted.length - 1].b.maxX;
+        const totalWidth = sorted.reduce((sum, s) => sum + (s.b.maxX - s.b.minX), 0);
         const totalGap = (lastX - firstX - totalWidth) / (sorted.length - 1);
 
-        let currentX = sorted[0].x + sorted[0].width + totalGap;
+        let currentX = sorted[0].b.maxX + totalGap;
         for (let i = 1; i < sorted.length - 1; i++) {
-          const current = next.get(sorted[i].id)!;
-          next.set(sorted[i].id, {
-            ...current,
-            x: currentX,
-            version: current.version + 1,
-            updatedAt: Date.now(),
-          } as MavisElement);
-          currentX += sorted[i].width + totalGap;
+          setLinearMinX(sorted[i].el, next, currentX);
+          currentX += (sorted[i].b.maxX - sorted[i].b.minX) + totalGap;
         }
       } else {
-        // Sort by y position
-        const sorted = [...elems].sort((a, b) => a.y - b.y);
-        const firstY = sorted[0].y;
-        const lastY = sorted[sorted.length - 1].y + sorted[sorted.length - 1].height;
-        const totalHeight = sorted.reduce((sum, el) => sum + el.height, 0);
+        const withBounds = elems.map((e) => ({ el: e, b: getElementBounds(e) }));
+        const sorted = withBounds.sort((a, b) => a.b.minY - b.b.minY);
+        const firstY = sorted[0].b.minY;
+        const lastY = sorted[sorted.length - 1].b.maxY;
+        const totalHeight = sorted.reduce((sum, s) => sum + (s.b.maxY - s.b.minY), 0);
         const totalGap = (lastY - firstY - totalHeight) / (sorted.length - 1);
 
-        let currentY = sorted[0].y + sorted[0].height + totalGap;
+        let currentY = sorted[0].b.maxY + totalGap;
         for (let i = 1; i < sorted.length - 1; i++) {
-          const current = next.get(sorted[i].id)!;
-          next.set(sorted[i].id, {
-            ...current,
-            y: currentY,
-            version: current.version + 1,
-            updatedAt: Date.now(),
-          } as MavisElement);
-          currentY += sorted[i].height + totalGap;
+          setLinearMinY(sorted[i].el, next, currentY);
+          currentY += (sorted[i].b.maxY - sorted[i].b.minY) + totalGap;
         }
       }
 

@@ -11,6 +11,8 @@ import type {
   TextElement,
   LinearElement,
   RoutingMode,
+  Arrowhead,
+  VerticalAlign,
 } from '@mavisdraw/types';
 
 const PRESET_COLORS = [
@@ -49,10 +51,24 @@ const TEXT_ALIGNS: { value: TextAlign; label: string }[] = [
   { value: 'right', label: '\u2261R' },
 ];
 
+const VERTICAL_ALIGNS: { value: VerticalAlign; label: string }[] = [
+  { value: 'top', label: 'Top' },
+  { value: 'middle', label: 'Middle' },
+  { value: 'bottom', label: 'Bottom' },
+];
+
 const ROUTING_MODES: { value: RoutingMode; label: string }[] = [
   { value: 'straight', label: 'Straight' },
   { value: 'curved', label: 'Curved' },
   { value: 'elbow', label: 'Elbow' },
+];
+
+const ARROWHEAD_OPTIONS: { value: Arrowhead; label: string; icon: string }[] = [
+  { value: 'none', label: 'None', icon: '—' },
+  { value: 'arrow', label: 'Arrow', icon: '→' },
+  { value: 'triangle', label: 'Triangle', icon: '▶' },
+  { value: 'dot', label: 'Dot', icon: '●' },
+  { value: 'bar', label: 'Bar', icon: '|' },
 ];
 
 export default function StylePanel() {
@@ -113,7 +129,7 @@ export default function StylePanel() {
   const roughness = getCommonValue('roughness') ?? 1;
 
   return (
-    <aside className="w-56 bg-white border-l border-gray-200 overflow-y-auto p-3 flex flex-col gap-3 z-10">
+    <aside data-testid="style-panel" className="w-56 bg-white border-l border-gray-200 overflow-y-auto p-3 flex flex-col gap-3 z-10">
       <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Style</h3>
 
       {/* Stroke Color */}
@@ -214,37 +230,104 @@ export default function StylePanel() {
         />
       </Section>
 
-      {/* Arrow Routing Mode */}
       {hasLinearSelected && (
-        <Section label="Arrow Routing">
-          <div className="flex gap-1">
-            {ROUTING_MODES.map((rm) => {
-              const linearEl = selectedElements.find(
-                (el) => el.type === 'arrow' || el.type === 'line',
-              ) as LinearElement | undefined;
-              const currentRouting = linearEl?.routingMode ?? 'straight';
-              return (
-                <button
-                  key={rm.value}
-                  className={`px-2 py-1 text-xs rounded border ${
-                    currentRouting === rm.value
-                      ? 'border-blue-500 bg-blue-50 text-blue-700'
-                      : 'border-gray-200 text-gray-600 hover:bg-gray-50'
-                  }`}
-                  onClick={() => {
-                    for (const el of selectedElements) {
-                      if (el.type === 'arrow' || el.type === 'line') {
-                        updateElement(el.id, { routingMode: rm.value } as Partial<LinearElement>);
+        <>
+          <Section label="Arrow Routing">
+            <div className="flex gap-1">
+              {ROUTING_MODES.map((rm) => {
+                const linearEl = selectedElements.find(
+                  (el) => el.type === 'arrow' || el.type === 'line',
+                ) as LinearElement | undefined;
+                const currentRouting = linearEl?.routingMode ?? 'straight';
+                return (
+                  <button
+                    key={rm.value}
+                    className={`px-2 py-1 text-xs rounded border ${
+                      currentRouting === rm.value
+                        ? 'border-blue-500 bg-blue-50 text-blue-700'
+                        : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                    }`}
+                    onClick={() => {
+                      for (const el of selectedElements) {
+                        if (el.type === 'arrow' || el.type === 'line') {
+                          updateElement(el.id, { routingMode: rm.value } as Partial<LinearElement>);
+                        }
                       }
-                    }
-                  }}
-                >
-                  {rm.label}
-                </button>
-              );
-            })}
-          </div>
-        </Section>
+                    }}
+                  >
+                    {rm.label}
+                  </button>
+                );
+              })}
+            </div>
+          </Section>
+
+          <Section label="Start Arrowhead">
+            <div className="flex gap-1">
+              {ARROWHEAD_OPTIONS.map((ah) => {
+                const linearEl = selectedElements.find(
+                  (el) => el.type === 'arrow' || el.type === 'line',
+                ) as LinearElement | undefined;
+                const current = linearEl?.startArrowhead ?? 'none';
+                return (
+                  <button
+                    key={ah.value}
+                    className={`w-7 h-7 text-xs rounded border flex items-center justify-center ${
+                      current === ah.value
+                        ? 'border-blue-500 bg-blue-50 text-blue-700'
+                        : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                    }`}
+                    onClick={() => {
+                      for (const el of selectedElements) {
+                        if (el.type === 'arrow' || el.type === 'line') {
+                          updateElement(el.id, {
+                            startArrowhead: ah.value,
+                          } as Partial<LinearElement>);
+                        }
+                      }
+                    }}
+                    title={ah.label}
+                  >
+                    {ah.icon}
+                  </button>
+                );
+              })}
+            </div>
+          </Section>
+
+          <Section label="End Arrowhead">
+            <div className="flex gap-1">
+              {ARROWHEAD_OPTIONS.map((ah) => {
+                const linearEl = selectedElements.find(
+                  (el) => el.type === 'arrow' || el.type === 'line',
+                ) as LinearElement | undefined;
+                const current = linearEl?.endArrowhead ?? 'none';
+                return (
+                  <button
+                    key={ah.value}
+                    className={`w-7 h-7 text-xs rounded border flex items-center justify-center ${
+                      current === ah.value
+                        ? 'border-blue-500 bg-blue-50 text-blue-700'
+                        : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                    }`}
+                    onClick={() => {
+                      for (const el of selectedElements) {
+                        if (el.type === 'arrow' || el.type === 'line') {
+                          updateElement(el.id, {
+                            endArrowhead: ah.value,
+                          } as Partial<LinearElement>);
+                        }
+                      }
+                    }}
+                    title={ah.label}
+                  >
+                    {ah.icon}
+                  </button>
+                );
+              })}
+            </div>
+          </Section>
+        </>
       )}
 
       {/* Font Controls */}
@@ -304,7 +387,8 @@ export default function StylePanel() {
 
           {/* Text Alignment */}
           <Section label="Alignment">
-            <div className="flex gap-1">
+            <div className="text-xs text-gray-500 mb-0.5">Horizontal</div>
+            <div className="flex gap-1 mb-2">
               {TEXT_ALIGNS.map((ta) => {
                 const currentAlign =
                   (selectedElements.find((el) => el.type === 'text') as TextElement | undefined)
@@ -328,6 +412,35 @@ export default function StylePanel() {
                     }}
                   >
                     {ta.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="text-xs text-gray-500 mb-0.5">Vertical</div>
+            <div className="flex gap-1">
+              {VERTICAL_ALIGNS.map((va) => {
+                const currentVertical =
+                  (selectedElements.find((el) => el.type === 'text') as TextElement | undefined)
+                    ?.verticalAlign ?? 'top';
+                return (
+                  <button
+                    key={va.value}
+                    className={`px-2 py-1 text-xs rounded border ${
+                      currentVertical === va.value
+                        ? 'border-blue-500 bg-blue-50 text-blue-700'
+                        : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                    }`}
+                    onClick={() => {
+                      for (const el of selectedElements) {
+                        if (el.type === 'text') {
+                          updateElement(el.id, {
+                            verticalAlign: va.value,
+                          } as Partial<TextElement>);
+                        }
+                      }
+                    }}
+                  >
+                    {va.label}
                   </button>
                 );
               })}

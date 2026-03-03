@@ -324,25 +324,28 @@ export function getCubicControlPoints(
 ): [Point, Point, Point, Point] {
   const dx = end.x - start.x;
   const dy = end.y - start.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
 
-  // Generate control points by offsetting along the perpendicular
-  // and along the direction of the line
-  const offsetX = Math.abs(dx) * curvature;
-  const offsetY = Math.abs(dy) * curvature;
-
-  // Determine the dominant direction
-  let cp1: Point;
-  let cp2: Point;
-
-  if (Math.abs(dx) >= Math.abs(dy)) {
-    // Horizontal-ish: curve control points extend horizontally
-    cp1 = { x: start.x + offsetX, y: start.y };
-    cp2 = { x: end.x - offsetX, y: end.y };
-  } else {
-    // Vertical-ish: curve control points extend vertically
-    cp1 = { x: start.x, y: start.y + (dy > 0 ? offsetY : -offsetY) };
-    cp2 = { x: end.x, y: end.y - (dy > 0 ? offsetY : -offsetY) };
+  if (dist === 0) {
+    return [start, { ...start }, { ...end }, end];
   }
+
+  const ux = dx / dist;
+  const uy = dy / dist;
+
+  const px = -uy;
+  const py = ux;
+
+  const perpOffset = dist * curvature * 0.4;
+
+  const cp1: Point = {
+    x: start.x + (ux * dist) / 3 + px * perpOffset,
+    y: start.y + (uy * dist) / 3 + py * perpOffset,
+  };
+  const cp2: Point = {
+    x: start.x + (ux * dist * 2) / 3 + px * perpOffset,
+    y: start.y + (uy * dist * 2) / 3 + py * perpOffset,
+  };
 
   return [start, cp1, cp2, end];
 }
