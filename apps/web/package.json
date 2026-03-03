@@ -13,12 +13,16 @@
     "lint": "eslint src"
   },
   "dependencies": {
+    "@hocuspocus/provider": "^2.15.0",
     "@mavisdraw/math": "workspace:*",
     "@mavisdraw/types": "workspace:*",
     "nanoid": "^5.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "roughjs": "^4.6.0",
+    "yjs": "^13.6.0",
+    "y-websocket": "^2.1.0",
+    "lib0": "^0.2.0",
     "zustand": "^5.0.0"
   },
   "devDependencies": {

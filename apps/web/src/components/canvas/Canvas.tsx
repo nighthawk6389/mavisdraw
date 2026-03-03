@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { CanvasRenderer } from './CanvasRenderer';
-import type { RenderState } from './CanvasRenderer';
+import type { RenderState, RemoteSelectionInfo } from './CanvasRenderer';
 import { InteractionManager } from './InteractionManager';
 import { useElementsStore } from '../../stores/elementsStore';
 import { useToolStore } from '../../stores/toolStore';
@@ -8,6 +8,9 @@ import { useSelectionStore } from '../../stores/selectionStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useLayerStore } from '../../stores/layerStore';
 import { useDiagramStore } from '../../stores/diagramStore';
+import { useCollaborationStore } from '../../stores/collaborationStore';
+import { useCollaboration } from '../../hooks/useCollaboration';
+import CursorOverlay from '../collaboration/CursorOverlay';
 import { generateThumbnail } from '../../utils/thumbnailGenerator';
 import type { MavisElement, TextElement, ImageElement, PortalElement, RenderMode } from '@mavisdraw/types';
 
@@ -74,6 +77,11 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
   const activeDiagramId = useDiagramStore((s) => s.activeDiagramId);
   const navigateToDiagram = useDiagramStore((s) => s.navigateToDiagram);
+
+  // ─── Collaboration ──────────────────────────────────────
+  const { handleMouseMove: handleCollabMouseMove, handleViewportChange, followedViewport } =
+    useCollaboration(activeDiagramId);
+  const connectedUsers = useCollaborationStore((s) => s.connectedUsers);
   const saveViewport = useDiagramStore((s) => s.saveViewport);
   const getViewport = useDiagramStore((s) => s.getViewport);
   const createDiagram = useDiagramStore((s) => s.createDiagram);
@@ -96,6 +104,27 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     gridSize,
   });
 
+  // Build remote selection info for soft-lock borders
+  const remoteSelections: RemoteSelectionInfo[] = connectedUsers
+    .filter((u) => u.selectedElementIds.length > 0)
+    .map((u) => ({
+      userId: u.id,
+      userName: u.name,
+      color: u.color,
+      elementIds: u.selectedElementIds,
+    }));
+
+  // Build portal active user counts
+  const portalActiveUsers = new Map<string, number>();
+  for (const user of connectedUsers) {
+    if (user.diagramId) {
+      portalActiveUsers.set(
+        user.diagramId,
+        (portalActiveUsers.get(user.diagramId) ?? 0) + 1,
+      );
+    }
+  }
+
   // Update state ref on each render (cheap)
   const interactionMgr = interactionRef.current;
   stateRef.current = {
@@ -107,6 +136,8 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     showGrid,
     gridSize,
     smartGuides: interactionMgr?.getSmartGuides() ?? [],
+    remoteSelections,
+    portalActiveUsers,
     anchorTarget: interactionMgr?.getAnchorTarget() ?? null,
     hoveredAnchor: interactionMgr?.getHoveredAnchor() ?? null,
     snapTarget: interactionMgr?.getSnapTarget() ?? null,
@@ -554,6 +585,16 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     rendererRef.current?.invalidateStatic();
   }, [activeDiagramId]);
 
+  // ─── Apply followed user's viewport ────────────────────────
+
+  useEffect(() => {
+    if (!followedViewport) return;
+    const renderer = rendererRef.current;
+    if (!renderer) return;
+    renderer.getViewport().setViewport(followedViewport);
+    renderer.invalidateStatic();
+  }, [followedViewport]);
+
   // ─── Invalidate static layer on data changes ─────────────
 
   useEffect(() => {
@@ -633,7 +674,14 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     if (!mgr) return;
     const pos = getCanvasOffset(e);
     mgr.onPointerMove(pos.x, pos.y);
-  }, [getCanvasOffset]);
+
+    // Send cursor position to collaboration (in canvas coordinates)
+    const renderer = rendererRef.current;
+    if (renderer) {
+      const canvasPos = renderer.getViewport().screenToCanvas(pos.x, pos.y);
+      handleCollabMouseMove(canvasPos.x, canvasPos.y);
+    }
+  }, [getCanvasOffset, handleCollabMouseMove]);
 
   const handleMouseUp = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const mgr = interactionRef.current;
@@ -898,6 +946,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         onMouseLeave={handleMouseUp}
         onContextMenu={handleContextMenu}
       />
+      <CursorOverlay />
       {textEditState && textEditorStyle && (
         <div
           ref={textEditorRef}
