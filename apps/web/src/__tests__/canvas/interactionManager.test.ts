@@ -65,6 +65,7 @@ function createMockCallbacks(overrides?: Partial<InteractionCallbacks>): Interac
     ),
     addElement: vi.fn(),
     updateElement: vi.fn(),
+    updateElementSilent: vi.fn(),
     deleteSelectedElements: vi.fn(),
     pushHistory: vi.fn(),
 

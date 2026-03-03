@@ -143,6 +143,33 @@ describe('elementsStore - Stage 2', () => {
         useElementsStore.getState().createBoundText('non-existent', 'Hello');
       }).toThrow();
     });
+
+    it('updateElement clamps bound text to stay inside container', () => {
+      const store = useElementsStore.getState();
+      const rect = store.createElement('rectangle', 'd1', 100, 100, 200, 100);
+      store.addElement(rect);
+      const textEl = store.createBoundText(rect.id, 'Hello');
+
+      // Try to move text outside container
+      useElementsStore.getState().updateElement(textEl.id, { x: 0, y: 0 });
+      const updated = useElementsStore.getState().getElementById(textEl.id)! as TextElement;
+      expect(updated.x).toBeGreaterThanOrEqual(110);
+      expect(updated.y).toBeGreaterThanOrEqual(110);
+      expect(updated.x + updated.width).toBeLessThanOrEqual(290);
+      expect(updated.y + updated.height).toBeLessThanOrEqual(190);
+    });
+
+    it('moveElementWithBindings clamps bound text when moving the text', () => {
+      const store = useElementsStore.getState();
+      const rect = store.createElement('rectangle', 'd1', 50, 50, 150, 80);
+      store.addElement(rect);
+      const textEl = store.createBoundText(rect.id, 'Hi');
+
+      useElementsStore.getState().moveElementWithBindings(textEl.id, 0, 0);
+      const updated = useElementsStore.getState().getElementById(textEl.id)! as TextElement;
+      expect(updated.x).toBeGreaterThanOrEqual(60);
+      expect(updated.y).toBeGreaterThanOrEqual(60);
+    });
   });
 
   // ── Grouping ───────────────────────────────────────────

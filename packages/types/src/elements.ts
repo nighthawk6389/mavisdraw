@@ -20,6 +20,8 @@ export type TextAlign = 'left' | 'center' | 'right';
 export type VerticalAlign = 'top' | 'middle' | 'bottom';
 export type PortalStyle = 'card' | 'badge' | 'expanded';
 
+export type AnchorPosition = 'top' | 'right' | 'bottom' | 'left';
+
 export interface Point {
   x: number;
   y: number;

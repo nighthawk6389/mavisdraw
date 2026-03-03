@@ -54,6 +54,10 @@ export interface RenderState {
   remoteSelections?: RemoteSelectionInfo[];
   /** Map of targetDiagramId -> active user count for portal badges */
   portalActiveUsers?: Map<string, number>;
+  anchorTarget?: MavisElement | null;
+  hoveredAnchor?: string | null;
+  rebindingPreview?: { element: LinearElement; endpoint: 'start' | 'end' } | null;
+  snapTarget?: { element: MavisElement; anchor: string } | null;
 }
 
 /**
@@ -259,9 +263,15 @@ export class CanvasRenderer {
       const selectedElements = elements.filter((e) =>
         state.selectedIds.has(e.id),
       );
-      if (selectedElements.length > 0) {
-        // Compute aggregate bounds for the selection
-        const bounds = this.getElementsBounds(selectedElements);
+      const nonLinearSelected = selectedElements.filter(
+        (e) => e.type !== 'arrow' && e.type !== 'line',
+      );
+      if (nonLinearSelected.length > 0) {
+        const bounds = this.getElementsBounds(
+          selectedElements.length === nonLinearSelected.length
+            ? selectedElements
+            : nonLinearSelected,
+        );
         this.renderSelectionBox(ctx, bounds);
         this.renderResizeHandles(ctx, bounds);
       }
@@ -292,6 +302,28 @@ export class CanvasRenderer {
     // Smart guides
     if (state.smartGuides && state.smartGuides.length > 0) {
       this.renderSmartGuides(ctx, state.smartGuides);
+    }
+
+    // Anchor point indicators (Phase 3)
+    if (state.anchorTarget && !state.anchorTarget.isDeleted) {
+      this.renderAnchorPoints(ctx, state.anchorTarget, state.hoveredAnchor ?? null);
+    }
+
+    // Snap target highlight (Phase 3)
+    if (state.snapTarget) {
+      this.renderSnapFeedback(ctx, state.snapTarget.element, state.snapTarget.anchor);
+    }
+
+    // Endpoint handles for selected linear elements (Phase 4)
+    if (state.selectedIds.size > 0) {
+      for (const el of elements) {
+        if (state.selectedIds.has(el.id) && (el.type === 'arrow' || el.type === 'line') && !el.isDeleted) {
+          const linear = el as LinearElement;
+          this.renderLinearEndpointHandles(ctx, linear);
+          this.renderWaypointHandles(ctx, linear);
+          this.renderMidpointAddHandles(ctx, linear);
+        }
+      }
     }
 
     ctx.restore();
@@ -583,34 +615,102 @@ export class CanvasRenderer {
 
     if (points.length < 2) return;
 
-    const start: Point = { x: points[0][0], y: points[0][1] };
-    const end: Point = { x: points[points.length - 1][0], y: points[points.length - 1][1] };
+    if (points.length === 2) {
+      const start: Point = { x: points[0][0], y: points[0][1] };
+      const end: Point = { x: points[1][0], y: points[1][1] };
+      const [, cp1, cp2] = getCubicControlPoints(start, end, 0.5);
 
-    // Generate cubic bezier control points
-    const [, cp1, cp2] = getCubicControlPoints(start, end, 0.5);
+      if (renderMode === 'sketchy') {
+        this.drawRoughShape(ctx, () => {
+          const options = this.buildRoughOptions(element);
+          delete options.fill;
+          delete options.fillStyle;
+          const curvePoints: [number, number][] = [
+            [start.x, start.y],
+            [cp1.x, cp1.y],
+            [cp2.x, cp2.y],
+            [end.x, end.y],
+          ];
+          return this.roughCanvas.generator.curve(curvePoints, options);
+        });
+      } else {
+        this.applyCleanStroke(ctx, strokeColor, strokeWidth, strokeStyle);
+        ctx.beginPath();
+        ctx.moveTo(start.x, start.y);
+        ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, end.x, end.y);
+        ctx.stroke();
+      }
+      return;
+    }
+
+    // Multiple points: render piecewise smooth cubic bezier through all points
+    const pts: Point[] = points.map(([px, py]) => ({ x: px, y: py }));
+    const segments = this.computeSmoothCurveSegments(pts);
 
     if (renderMode === 'sketchy') {
       this.drawRoughShape(ctx, () => {
         const options = this.buildRoughOptions(element);
         delete options.fill;
         delete options.fillStyle;
-        // Use curve for sketchy mode
-        const curvePoints: [number, number][] = [
-          [start.x, start.y],
-          [cp1.x, cp1.y],
-          [cp2.x, cp2.y],
-          [end.x, end.y],
-        ];
+        const curvePoints: [number, number][] = [[pts[0].x, pts[0].y]];
+        for (const seg of segments) {
+          curvePoints.push([seg.cp1.x, seg.cp1.y]);
+          curvePoints.push([seg.cp2.x, seg.cp2.y]);
+          curvePoints.push([seg.end.x, seg.end.y]);
+        }
         return this.roughCanvas.generator.curve(curvePoints, options);
       });
     } else {
       this.applyCleanStroke(ctx, strokeColor, strokeWidth, strokeStyle);
-
       ctx.beginPath();
-      ctx.moveTo(start.x, start.y);
-      ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, end.x, end.y);
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (const seg of segments) {
+        ctx.bezierCurveTo(seg.cp1.x, seg.cp1.y, seg.cp2.x, seg.cp2.y, seg.end.x, seg.end.y);
+      }
       ctx.stroke();
     }
+  }
+
+  /**
+   * Compute smooth cubic bezier segments through an ordered list of points
+   * using Catmull-Rom-style tangent estimation.
+   */
+  private computeSmoothCurveSegments(
+    pts: Point[],
+  ): { cp1: Point; cp2: Point; end: Point }[] {
+    const n = pts.length;
+    if (n < 2) return [];
+
+    const tension = 0.35;
+    const tangents: Point[] = [];
+    for (let i = 0; i < n; i++) {
+      if (i === 0) {
+        tangents.push({ x: pts[1].x - pts[0].x, y: pts[1].y - pts[0].y });
+      } else if (i === n - 1) {
+        tangents.push({ x: pts[n - 1].x - pts[n - 2].x, y: pts[n - 1].y - pts[n - 2].y });
+      } else {
+        tangents.push({
+          x: (pts[i + 1].x - pts[i - 1].x) / 2,
+          y: (pts[i + 1].y - pts[i - 1].y) / 2,
+        });
+      }
+    }
+
+    const segments: { cp1: Point; cp2: Point; end: Point }[] = [];
+    for (let i = 0; i < n - 1; i++) {
+      segments.push({
+        cp1: {
+          x: pts[i].x + tangents[i].x * tension,
+          y: pts[i].y + tangents[i].y * tension,
+        },
+        cp2: {
+          x: pts[i + 1].x - tangents[i + 1].x * tension,
+          y: pts[i + 1].y - tangents[i + 1].y * tension,
+        },
+        end: pts[i + 1],
+      });
+    }
+    return segments;
   }
 
   private renderElbowLine(
@@ -657,10 +757,17 @@ export class CanvasRenderer {
   ): [number, number][] {
     const dx = end[0] - start[0];
     const dy = end[1] - start[1];
+    const ALIGN_THRESHOLD = 5;
 
-    // If predominantly horizontal or vertical, use L-shape
+    if (Math.abs(dx) < ALIGN_THRESHOLD) {
+      return [start, end];
+    }
+
+    if (Math.abs(dy) < ALIGN_THRESHOLD) {
+      return [start, end];
+    }
+
     if (Math.abs(dx) > Math.abs(dy)) {
-      // L-shape: go horizontal first, then vertical
       const midX = start[0] + dx / 2;
       return [
         start,
@@ -669,7 +776,6 @@ export class CanvasRenderer {
         end,
       ];
     } else {
-      // L-shape: go vertical first, then horizontal
       const midY = start[1] + dy / 2;
       return [
         start,
@@ -770,23 +876,30 @@ export class CanvasRenderer {
 
     // For curved routing, compute tangent at endpoint
     if (routingMode === 'curved') {
-      const start: Point = { x: points[0][0], y: points[0][1] };
-      const end: Point = {
-        x: points[points.length - 1][0],
-        y: points[points.length - 1][1],
-      };
-      const [, cp1, cp2] = getCubicControlPoints(start, end, 0.5);
+      const pts: Point[] = points.map(([px, py]) => ({ x: px, y: py }));
 
-      if (endArrowhead !== 'none') {
-        // Tangent at t=1 is direction from cp2 to end
-        const angle = Math.atan2(end.y - cp2.y, end.x - cp2.x);
-        this.drawArrowhead(ctx, end.x, end.y, angle, arrowLength, arrowAngle, endArrowhead);
-      }
-
-      if (startArrowhead !== 'none') {
-        // Tangent at t=0 is direction from start to cp1, reversed
-        const angle = Math.atan2(start.y - cp1.y, start.x - cp1.x);
-        this.drawArrowhead(ctx, start.x, start.y, angle, arrowLength, arrowAngle, startArrowhead);
+      if (pts.length === 2) {
+        const [, cp1, cp2] = getCubicControlPoints(pts[0], pts[1], 0.5);
+        if (endArrowhead !== 'none') {
+          const angle = Math.atan2(pts[1].y - cp2.y, pts[1].x - cp2.x);
+          this.drawArrowhead(ctx, pts[1].x, pts[1].y, angle, arrowLength, arrowAngle, endArrowhead);
+        }
+        if (startArrowhead !== 'none') {
+          const angle = Math.atan2(pts[0].y - cp1.y, pts[0].x - cp1.x);
+          this.drawArrowhead(ctx, pts[0].x, pts[0].y, angle, arrowLength, arrowAngle, startArrowhead);
+        }
+      } else {
+        const segments = this.computeSmoothCurveSegments(pts);
+        if (endArrowhead !== 'none' && segments.length > 0) {
+          const lastSeg = segments[segments.length - 1];
+          const angle = Math.atan2(lastSeg.end.y - lastSeg.cp2.y, lastSeg.end.x - lastSeg.cp2.x);
+          this.drawArrowhead(ctx, lastSeg.end.x, lastSeg.end.y, angle, arrowLength, arrowAngle, endArrowhead);
+        }
+        if (startArrowhead !== 'none' && segments.length > 0) {
+          const firstSeg = segments[0];
+          const angle = Math.atan2(pts[0].y - firstSeg.cp1.y, pts[0].x - firstSeg.cp1.x);
+          this.drawArrowhead(ctx, pts[0].x, pts[0].y, angle, arrowLength, arrowAngle, startArrowhead);
+        }
       }
       return;
     }
@@ -1228,16 +1341,18 @@ export class CanvasRenderer {
     const zoom = this.viewport.getViewport().zoom;
     const padding = 4;
 
+    const bounds = this.getElementsBounds([element]);
+
     ctx.save();
     ctx.strokeStyle = CanvasRenderer.HOVER_COLOR;
     ctx.lineWidth = 1.5 / zoom;
     ctx.setLineDash([]);
     ctx.globalAlpha = 0.5;
     ctx.strokeRect(
-      element.x - padding,
-      element.y - padding,
-      element.width + padding * 2,
-      element.height + padding * 2,
+      bounds.x - padding,
+      bounds.y - padding,
+      bounds.width + padding * 2,
+      bounds.height + padding * 2,
     );
     ctx.restore();
   }
@@ -1321,12 +1436,177 @@ export class CanvasRenderer {
     ctx.restore();
   }
 
+  /**
+   * Render anchor points on a shape for edge-initiated connections.
+   */
+  private renderAnchorPoints(
+    ctx: CanvasRenderingContext2D,
+    element: MavisElement,
+    hoveredAnchor: string | null,
+  ): void {
+    const zoom = this.viewport.getViewport().zoom;
+    const cx = element.x + element.width / 2;
+    const cy = element.y + element.height / 2;
+
+    const anchors = [
+      { position: 'top', x: cx, y: element.y },
+      { position: 'right', x: element.x + element.width, y: cy },
+      { position: 'bottom', x: cx, y: element.y + element.height },
+      { position: 'left', x: element.x, y: cy },
+    ];
+
+    for (const anchor of anchors) {
+      const isHovered = hoveredAnchor === anchor.position;
+      const radius = (isHovered ? 7 : 5) / zoom;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(anchor.x, anchor.y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = isHovered ? '#2563eb' : '#4a90d9';
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5 / zoom;
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  /**
+   * Render snap feedback when arrow endpoint is near a target shape's anchor.
+   */
+  private renderSnapFeedback(
+    ctx: CanvasRenderingContext2D,
+    element: MavisElement,
+    _anchor: string,
+  ): void {
+    const zoom = this.viewport.getViewport().zoom;
+    const padding = 4;
+
+    ctx.save();
+    ctx.strokeStyle = '#2563eb';
+    ctx.lineWidth = 2 / zoom;
+    ctx.setLineDash([4 / zoom, 4 / zoom]);
+    ctx.globalAlpha = 0.6;
+    ctx.strokeRect(
+      element.x - padding,
+      element.y - padding,
+      element.width + padding * 2,
+      element.height + padding * 2,
+    );
+    ctx.restore();
+  }
+
+  /**
+   * Render endpoint handles for a selected linear element (green circles at start/end).
+   */
+  private renderLinearEndpointHandles(
+    ctx: CanvasRenderingContext2D,
+    element: LinearElement,
+  ): void {
+    if (!element.points || element.points.length < 2) return;
+
+    const zoom = this.viewport.getViewport().zoom;
+    const radius = 6 / zoom;
+
+    const endpoints = [
+      element.points[0],
+      element.points[element.points.length - 1],
+    ];
+
+    ctx.save();
+    for (const [lx, ly] of endpoints) {
+      const px = element.x + lx;
+      const py = element.y + ly;
+      ctx.beginPath();
+      ctx.arc(px, py, radius, 0, Math.PI * 2);
+      ctx.fillStyle = '#10b981';
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5 / zoom;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Render waypoint handles (diamond shapes at intermediate points).
+   */
+  private renderWaypointHandles(
+    ctx: CanvasRenderingContext2D,
+    element: LinearElement,
+  ): void {
+    if (!element.points || element.points.length <= 2) return;
+
+    const zoom = this.viewport.getViewport().zoom;
+    const size = 5 / zoom;
+
+    ctx.save();
+    for (let i = 1; i < element.points.length - 1; i++) {
+      const px = element.x + element.points[i][0];
+      const py = element.y + element.points[i][1];
+
+      ctx.beginPath();
+      ctx.moveTo(px, py - size);
+      ctx.lineTo(px + size, py);
+      ctx.lineTo(px, py + size);
+      ctx.lineTo(px - size, py);
+      ctx.closePath();
+      ctx.fillStyle = '#f59e0b';
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1 / zoom;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Render midpoint add handles (+ icons at segment midpoints).
+   */
+  private renderMidpointAddHandles(
+    ctx: CanvasRenderingContext2D,
+    element: LinearElement,
+  ): void {
+    if (!element.points || element.points.length < 2) return;
+
+    const zoom = this.viewport.getViewport().zoom;
+    const radius = 10 / zoom;
+
+    ctx.save();
+    for (let i = 0; i < element.points.length - 1; i++) {
+      const [x1, y1] = element.points[i];
+      const [x2, y2] = element.points[i + 1];
+      const mx = element.x + (x1 + x2) / 2;
+      const my = element.y + (y1 + y2) / 2;
+
+      ctx.beginPath();
+      ctx.arc(mx, my, radius, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(74, 144, 217, 0.2)';
+      ctx.fill();
+      ctx.strokeStyle = '#4a90d9';
+      ctx.lineWidth = 1.5 / zoom;
+      ctx.stroke();
+
+      const cross = radius * 0.5;
+      ctx.beginPath();
+      ctx.moveTo(mx - cross, my);
+      ctx.lineTo(mx + cross, my);
+      ctx.moveTo(mx, my - cross);
+      ctx.lineTo(mx, my + cross);
+      ctx.strokeStyle = '#4a90d9';
+      ctx.lineWidth = 2 / zoom;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   // ---------------------------------------------------------------------------
   // Utility
   // ---------------------------------------------------------------------------
 
   /**
    * Compute the axis-aligned bounding box that encloses all given elements.
+   * Returns finite bounds; if any element has no valid bounds (e.g. linear with no points), falls back to element box.
    */
   private getElementsBounds(elements: MavisElement[]): Bounds {
     let minX = Infinity;
@@ -1335,18 +1615,44 @@ export class CanvasRenderer {
     let maxY = -Infinity;
 
     for (const el of elements) {
-      if (el.x < minX) minX = el.x;
-      if (el.y < minY) minY = el.y;
-      if (el.x + el.width > maxX) maxX = el.x + el.width;
-      if (el.y + el.height > maxY) maxY = el.y + el.height;
+      if ('points' in el && Array.isArray((el as LinearElement).points)) {
+        const linear = el as LinearElement;
+        const pts = linear.points;
+        if (pts.length > 0) {
+          for (const [px, py] of pts) {
+            const wx = linear.x + px;
+            const wy = linear.y + py;
+            if (wx < minX) minX = wx;
+            if (wy < minY) minY = wy;
+            if (wx > maxX) maxX = wx;
+            if (wy > maxY) maxY = wy;
+          }
+        } else {
+          // Linear element with no points: use element box so we always get finite bounds
+          if (el.x < minX) minX = el.x;
+          if (el.y < minY) minY = el.y;
+          if (el.x + el.width > maxX) maxX = el.x + el.width;
+          if (el.y + el.height > maxY) maxY = el.y + el.height;
+        }
+      } else {
+        if (el.x < minX) minX = el.x;
+        if (el.y < minY) minY = el.y;
+        if (el.x + el.width > maxX) maxX = el.x + el.width;
+        if (el.y + el.height > maxY) maxY = el.y + el.height;
+      }
     }
 
-    return {
-      x: minX,
-      y: minY,
-      width: maxX - minX,
-      height: maxY - minY,
-    };
+    let x = minX;
+    let y = minY;
+    let width = maxX - minX;
+    let height = maxY - minY;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height) || width < 0 || height < 0) {
+      x = 0;
+      y = 0;
+      width = 0;
+      height = 0;
+    }
+    return { x, y, width, height };
   }
 
   /**

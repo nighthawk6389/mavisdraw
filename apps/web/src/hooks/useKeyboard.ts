@@ -29,7 +29,6 @@ export function useKeyboard(
   const undo = useElementsStore((s) => s.undo);
   const redo = useElementsStore((s) => s.redo);
   const deleteElements = useElementsStore((s) => s.deleteElements);
-  const elements = useElementsStore((s) => s.elements);
   const groupElements = useElementsStore((s) => s.groupElements);
   const ungroupElements = useElementsStore((s) => s.ungroupElements);
   const copyElements = useElementsStore((s) => s.copyElements);
@@ -63,8 +62,10 @@ export function useKeyboard(
         return;
       }
 
-      // Delete / Backspace = delete selected
+      // Delete / Backspace = delete selected (or remove waypoint if moving one)
       if (key === 'delete' || key === 'backspace') {
+        const mgr = interactionManagerRef.current as { setSpacePressed: (p: boolean) => void; handleKeyDown?: (e: KeyboardEvent) => boolean } | null;
+        if (mgr?.handleKeyDown?.(event)) return;
         if (selectedIds.size > 0) {
           event.preventDefault();
           deleteElements(Array.from(selectedIds));
@@ -94,7 +95,8 @@ export function useKeyboard(
       // Ctrl+A = select all
       if (isCtrlOrMeta && key === 'a') {
         event.preventDefault();
-        const allIds = Array.from(elements.values())
+        const currentElements = useElementsStore.getState().elements;
+        const allIds = Array.from(currentElements.values())
           .filter((el) => !el.isDeleted && el.diagramId === activeDiagramId)
           .map((el) => el.id);
         selectAll(allIds);
@@ -179,7 +181,6 @@ export function useKeyboard(
     },
     [
       selectedIds,
-      elements,
       activeDiagramId,
       diagramPath,
       clearSelection,

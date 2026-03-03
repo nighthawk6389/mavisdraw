@@ -138,6 +138,9 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     smartGuides: interactionMgr?.getSmartGuides() ?? [],
     remoteSelections,
     portalActiveUsers,
+    anchorTarget: interactionMgr?.getAnchorTarget() ?? null,
+    hoveredAnchor: interactionMgr?.getHoveredAnchor() ?? null,
+    snapTarget: interactionMgr?.getSnapTarget() ?? null,
   };
 
   // ─── Text editing callbacks ────────────────────────────────
@@ -524,6 +527,9 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         },
         addElement,
         updateElement,
+        updateElementSilent: (id, updates) => {
+          useElementsStore.getState().updateElementSilent(id, updates);
+        },
         deleteSelectedElements: () => {
           const ids = Array.from(useSelectionStore.getState().selectedIds);
           if (ids.length > 0) {
