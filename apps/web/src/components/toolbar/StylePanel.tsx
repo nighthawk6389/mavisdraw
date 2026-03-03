@@ -12,6 +12,7 @@ import type {
   LinearElement,
   RoutingMode,
   Arrowhead,
+  VerticalAlign,
 } from '@mavisdraw/types';
 
 const PRESET_COLORS = [
@@ -48,6 +49,12 @@ const TEXT_ALIGNS: { value: TextAlign; label: string }[] = [
   { value: 'left', label: '\u2261L' },
   { value: 'center', label: '\u2261C' },
   { value: 'right', label: '\u2261R' },
+];
+
+const VERTICAL_ALIGNS: { value: VerticalAlign; label: string }[] = [
+  { value: 'top', label: 'Top' },
+  { value: 'middle', label: 'Middle' },
+  { value: 'bottom', label: 'Bottom' },
 ];
 
 const ROUTING_MODES: { value: RoutingMode; label: string }[] = [
@@ -380,7 +387,8 @@ export default function StylePanel() {
 
           {/* Text Alignment */}
           <Section label="Alignment">
-            <div className="flex gap-1">
+            <div className="text-xs text-gray-500 mb-0.5">Horizontal</div>
+            <div className="flex gap-1 mb-2">
               {TEXT_ALIGNS.map((ta) => {
                 const currentAlign =
                   (selectedElements.find((el) => el.type === 'text') as TextElement | undefined)
@@ -404,6 +412,35 @@ export default function StylePanel() {
                     }}
                   >
                     {ta.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="text-xs text-gray-500 mb-0.5">Vertical</div>
+            <div className="flex gap-1">
+              {VERTICAL_ALIGNS.map((va) => {
+                const currentVertical =
+                  (selectedElements.find((el) => el.type === 'text') as TextElement | undefined)
+                    ?.verticalAlign ?? 'top';
+                return (
+                  <button
+                    key={va.value}
+                    className={`px-2 py-1 text-xs rounded border ${
+                      currentVertical === va.value
+                        ? 'border-blue-500 bg-blue-50 text-blue-700'
+                        : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                    }`}
+                    onClick={() => {
+                      for (const el of selectedElements) {
+                        if (el.type === 'text') {
+                          updateElement(el.id, {
+                            verticalAlign: va.value,
+                          } as Partial<TextElement>);
+                        }
+                      }
+                    }}
+                  >
+                    {va.label}
                   </button>
                 );
               })}

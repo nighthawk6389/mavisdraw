@@ -17,7 +17,30 @@ import type {
 
 const MAX_HISTORY = 100;
 
-/** Compute the visual bounding box of an element, accounting for linear element points. */
+/** Padding between shape edge and bound text box (must match createBoundText). */
+const BOUND_TEXT_PADDING = 10;
+
+/**
+ * Clamp a bound text element's position and size so its box stays inside the container.
+ * Returns clamped { x, y, width, height }.
+ */
+function clampBoundTextToContainer(
+  textX: number,
+  textY: number,
+  textW: number,
+  textH: number,
+  container: MavisElement,
+): { x: number; y: number; width: number; height: number } {
+  const minX = container.x + BOUND_TEXT_PADDING;
+  const minY = container.y + BOUND_TEXT_PADDING;
+  const maxW = Math.max(20, container.width - BOUND_TEXT_PADDING * 2);
+  const maxH = Math.max(20, container.height - BOUND_TEXT_PADDING * 2);
+  const width = Math.max(20, Math.min(textW, maxW));
+  const height = Math.max(20, Math.min(textH, maxH));
+  const x = Math.max(minX, Math.min(textX, minX + maxW - width));
+  const y = Math.max(minY, Math.min(textY, minY + maxH - height));
+  return { x, y, width, height };
+}
 function getElementBounds(el: MavisElement): { minX: number; minY: number; maxX: number; maxY: number } {
   if ('points' in el && Array.isArray((el as LinearElement).points)) {
     const linear = el as LinearElement;
@@ -244,12 +267,59 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
       const next = new Map(prev.elements);
       const current = next.get(id);
       if (!current) return prev;
-      next.set(id, {
+
+      const merged = {
         ...current,
         ...updates,
         version: current.version + 1,
         updatedAt: Date.now(),
-      } as MavisElement);
+      } as MavisElement;
+
+      // Keep bound text inside its container
+      if (merged.type === 'text') {
+        const textEl = merged as TextElement;
+        if (textEl.containerId) {
+          const container = next.get(textEl.containerId);
+          if (container && !container.isDeleted) {
+            const clamped = clampBoundTextToContainer(
+              textEl.x,
+              textEl.y,
+              textEl.width,
+              textEl.height,
+              container,
+            );
+            (merged as TextElement).x = clamped.x;
+            (merged as TextElement).y = clamped.y;
+            (merged as TextElement).width = clamped.width;
+            (merged as TextElement).height = clamped.height;
+          }
+        }
+      }
+
+      next.set(id, merged);
+
+      // When container (shape) is updated, keep its bound text inside
+      if (merged.type !== 'text' && merged.boundElements?.length) {
+        for (const bound of merged.boundElements) {
+          if (bound.type !== 'text') continue;
+          const textEl = next.get(bound.id) as TextElement | undefined;
+          if (!textEl || textEl.isDeleted || textEl.containerId !== id) continue;
+          const clamped = clampBoundTextToContainer(
+            textEl.x,
+            textEl.y,
+            textEl.width,
+            textEl.height,
+            merged,
+          );
+          next.set(bound.id, {
+            ...textEl,
+            ...clamped,
+            version: textEl.version + 1,
+            updatedAt: Date.now(),
+          } as TextElement);
+        }
+      }
+
       return { elements: next };
     });
   },
@@ -653,15 +723,34 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
 
     set((prev) => {
       const next = new Map(prev.elements);
-
-      // Move the element
       const current = next.get(id);
       if (!current) return prev;
 
+      let finalX = newX;
+      let finalY = newY;
+      // Keep bound text inside its container when moving the text
+      if (current.type === 'text') {
+        const textEl = current as TextElement;
+        if (textEl.containerId) {
+          const container = next.get(textEl.containerId);
+          if (container && !container.isDeleted) {
+            const clamped = clampBoundTextToContainer(
+              newX,
+              newY,
+              textEl.width,
+              textEl.height,
+              container,
+            );
+            finalX = clamped.x;
+            finalY = clamped.y;
+          }
+        }
+      }
+
       next.set(id, {
         ...current,
-        x: newX,
-        y: newY,
+        x: finalX,
+        y: finalY,
         version: current.version + 1,
         updatedAt: Date.now(),
       } as MavisElement);
@@ -740,7 +829,7 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
     const container = state.elements.get(containerId);
     if (!container) throw new Error(`Container ${containerId} not found`);
 
-    const padding = 10;
+    const padding = BOUND_TEXT_PADDING;
     const textEl: TextElement = {
       id: nanoid(),
       type: 'text',
