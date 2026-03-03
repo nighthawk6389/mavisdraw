@@ -39,7 +39,6 @@ services:
   - type: web
     name: mavisdraw-web
     runtime: static
-    plan: free
     buildCommand: pnpm install && pnpm run build
     staticPublishPath: apps/web/dist
     envVars:
