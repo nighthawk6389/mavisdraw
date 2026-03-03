@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from 'react';
-import { useDiagramStore } from '../../stores/diagramStore';
+import React, { useState, useCallback, useMemo } from 'react';
+import { useDiagramStore, buildTreeForParent } from '../../stores/diagramStore';
 import type { DiagramTreeNode } from '../../stores/diagramStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useElementsStore } from '../../stores/elementsStore';
@@ -180,13 +180,15 @@ function TreeNode({
 export default function DiagramTreeSidebar() {
   const showDiagramTree = useUIStore((s) => s.showDiagramTree);
   const toggleDiagramTree = useUIStore((s) => s.toggleDiagramTree);
-  const tree = useDiagramStore((s) => s.getDiagramTree());
+  const diagrams = useDiagramStore((s) => s.diagrams);
   const activeDiagramId = useDiagramStore((s) => s.activeDiagramId);
   const navigateToDiagram = useDiagramStore((s) => s.navigateToDiagram);
   const updateDiagram = useDiagramStore((s) => s.updateDiagram);
   const deleteDiagram = useDiagramStore((s) => s.deleteDiagram);
   const createDiagram = useDiagramStore((s) => s.createDiagram);
   const elements = useElementsStore((s) => s.elements);
+
+  const tree = useMemo(() => buildTreeForParent(diagrams, null), [diagrams]);
 
   const getElementCount = useCallback(
     (diagramId: string) => {

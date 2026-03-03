@@ -26,7 +26,7 @@ function createDefaultDiagram(overrides: Partial<Diagram> = {}): Diagram {
     viewBackgroundColor: '#ffffff',
     gridEnabled: true,
     gridSize: 20,
-    renderMode: 'sketchy',
+    renderMode: 'clean',
     layers: [createDefaultLayer()],
     createdBy: 'local-user',
     createdAt: now,
@@ -95,7 +95,7 @@ function collectDescendantIds(diagrams: Map<string, Diagram>, parentId: string):
   return result;
 }
 
-function buildTreeForParent(
+export function buildTreeForParent(
   diagrams: Map<string, Diagram>,
   parentId: string | null,
 ): DiagramTreeNode[] {

@@ -40,6 +40,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
   // Text editing state
   const [textEditState, setTextEditState] = useState<TextEditState | null>(null);
+  const textEditStartTimeRef = useRef<number>(0);
 
   // ─── Store subscriptions ──────────────────────────────────
 
@@ -143,6 +144,8 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
   const startTextEditing = useCallback(
     (element: MavisElement, isNew: boolean) => {
+      textEditStartTimeRef.current = Date.now();
+
       // If element is a shape (not text), we need to create bound text
       const shapeTypes = new Set(['rectangle', 'ellipse', 'diamond', 'triangle']);
       if (shapeTypes.has(element.type)) {
@@ -168,6 +171,15 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
   const finalizeTextEdit = useCallback(() => {
     if (!textEditState) return;
+
+    // Guard against the initial blur that occurs when the mouseup (from the
+    // click that created the text element) steals focus from the editor.
+    const elapsed = Date.now() - textEditStartTimeRef.current;
+    if (elapsed < 150) {
+      // Re-focus the editor instead of closing it
+      requestAnimationFrame(() => textEditorRef.current?.focus());
+      return;
+    }
 
     const editor = textEditorRef.current;
     if (!editor) return;
@@ -459,7 +471,12 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         }
         return els;
       },
-      () => stateRef.current,
+      () => {
+        const mgr = interactionRef.current;
+        stateRef.current.creatingElement = mgr?.getCreatingElement() ?? null;
+        stateRef.current.smartGuides = mgr?.getSmartGuides() ?? [];
+        return stateRef.current;
+      },
     );
 
     return () => {
@@ -882,8 +899,9 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
       color: textEl.strokeColor,
       textAlign: textEl.textAlign,
       outline: 'none',
-      border: 'none',
-      background: 'transparent',
+      border: '1px solid rgba(74, 144, 217, 0.4)',
+      borderRadius: '2px',
+      background: 'rgba(255, 255, 255, 0.8)',
       padding: '0',
       margin: '0',
       overflow: 'hidden',

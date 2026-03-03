@@ -24,7 +24,8 @@ const DEFAULT_STYLE = {
   strokeWidth: 2,
   strokeStyle: 'solid' as const,
   roughness: 1,
-  renderMode: 'sketchy' as RenderMode,
+  seed: Math.floor(Math.random() * 2 ** 31),
+  renderMode: 'clean' as RenderMode,
   opacity: 100,
   angle: 0,
   layerId: 'default',
@@ -378,6 +379,7 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
       width,
       height,
       ...DEFAULT_STYLE,
+      seed: Math.floor(Math.random() * 2 ** 31),
       updatedAt: Date.now(),
     };
 

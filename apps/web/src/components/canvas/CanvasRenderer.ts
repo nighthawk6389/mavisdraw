@@ -348,7 +348,9 @@ export class CanvasRenderer {
         const portal = element as PortalElement;
         const activeCount = portalActiveUsers?.get(portal.targetDiagramId) ?? 0;
         if (renderMode === 'sketchy') {
-          renderPortalSketchy(ctx, this.roughCanvas, portal, activeCount);
+          renderPortalSketchy(ctx, this.roughCanvas, portal, (c, drawable) => {
+            this.drawRoughShape(c, () => drawable);
+          }, activeCount);
         } else {
           renderPortalClean(ctx, portal, activeCount);
         }
@@ -1073,6 +1075,7 @@ export class CanvasRenderer {
       stroke: element.strokeColor,
       strokeWidth: element.strokeWidth,
       roughness: element.roughness,
+      seed: element.seed,
     };
 
     // Fill
