@@ -459,15 +459,9 @@ function distanceToElementEdge(point: Point, element: MavisElement): number {
       // Normalize to unit circle
       const norm = Math.sqrt((dx * dx) / (rx * rx) + (dy * dy) / (ry * ry));
       if (norm === 0) return Math.min(rx, ry);
-      // Point on ellipse at same angle
-      const ex = cx + (dx / norm);
-      const ey = cy + (dy / norm);
-      // Approximate using the distance ratio
+      // Approximate distance along radial direction: |dist - dist/norm|
       const distToCenter = Math.sqrt(dx * dx + dy * dy);
-      const edgeDistFromCenter = Math.sqrt(
-        ((dx / norm) * (dx / norm)) + ((dy / norm) * (dy / norm)),
-      );
-      return Math.abs(distToCenter - edgeDistFromCenter);
+      return Math.abs(distToCenter - distToCenter / norm);
     }
 
     case 'diamond': {
@@ -661,26 +655,6 @@ export type AnchorPosition = 'top' | 'right' | 'bottom' | 'left';
 export function getAnchorPoints(element: MavisElement): { position: AnchorPosition; x: number; y: number }[] {
   const cx = element.x + element.width / 2;
   const cy = element.y + element.height / 2;
-
-  if (element.type === 'ellipse') {
-    const rx = element.width / 2;
-    const ry = element.height / 2;
-    return [
-      { position: 'top', x: cx, y: element.y },
-      { position: 'right', x: element.x + element.width, y: cy },
-      { position: 'bottom', x: cx, y: element.y + element.height },
-      { position: 'left', x: element.x, y: cy },
-    ];
-  }
-
-  if (element.type === 'diamond') {
-    return [
-      { position: 'top', x: cx, y: element.y },
-      { position: 'right', x: element.x + element.width, y: cy },
-      { position: 'bottom', x: cx, y: element.y + element.height },
-      { position: 'left', x: element.x, y: cy },
-    ];
-  }
 
   return [
     { position: 'top', x: cx, y: element.y },

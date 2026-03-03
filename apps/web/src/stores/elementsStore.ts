@@ -148,6 +148,8 @@ interface ElementsState {
   // CRUD operations
   addElement: (element: MavisElement) => void;
   updateElement: (id: string, updates: Partial<MavisElement>) => void;
+  /** Update without pushing history — use when caller already pushed history (e.g. drag/resize). */
+  updateElementSilent: (id: string, updates: Partial<MavisElement>) => void;
   deleteElement: (id: string) => void;
   deleteElements: (ids: string[]) => void;
 
@@ -241,6 +243,73 @@ function cloneElementsMap(
   return cloned;
 }
 
+/** Shared logic for updating a single element (with bound-text clamping). */
+function applyElementUpdate(
+  set: (fn: (prev: ElementsState) => Partial<ElementsState>) => void,
+  id: string,
+  updates: Partial<MavisElement>,
+) {
+  set((prev) => {
+    const next = new Map(prev.elements);
+    const current = next.get(id);
+    if (!current) return prev;
+
+    const merged = {
+      ...current,
+      ...updates,
+      version: current.version + 1,
+      updatedAt: Date.now(),
+    } as MavisElement;
+
+    // Keep bound text inside its container
+    if (merged.type === 'text') {
+      const textEl = merged as TextElement;
+      if (textEl.containerId) {
+        const container = next.get(textEl.containerId);
+        if (container && !container.isDeleted) {
+          const clamped = clampBoundTextToContainer(
+            textEl.x,
+            textEl.y,
+            textEl.width,
+            textEl.height,
+            container,
+          );
+          (merged as TextElement).x = clamped.x;
+          (merged as TextElement).y = clamped.y;
+          (merged as TextElement).width = clamped.width;
+          (merged as TextElement).height = clamped.height;
+        }
+      }
+    }
+
+    next.set(id, merged);
+
+    // When container (shape) is updated, keep its bound text inside
+    if (merged.type !== 'text' && merged.boundElements?.length) {
+      for (const bound of merged.boundElements) {
+        if (bound.type !== 'text') continue;
+        const textEl = next.get(bound.id) as TextElement | undefined;
+        if (!textEl || textEl.isDeleted || textEl.containerId !== id) continue;
+        const clamped = clampBoundTextToContainer(
+          textEl.x,
+          textEl.y,
+          textEl.width,
+          textEl.height,
+          merged,
+        );
+        next.set(bound.id, {
+          ...textEl,
+          ...clamped,
+          version: textEl.version + 1,
+          updatedAt: Date.now(),
+        } as TextElement);
+      }
+    }
+
+    return { elements: next };
+  });
+}
+
 export const useElementsStore = create<ElementsState>((set, get) => ({
   elements: new Map<string, MavisElement>(),
   history: [],
@@ -263,65 +332,14 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
     if (!existing) return;
 
     state.pushHistory();
-    set((prev) => {
-      const next = new Map(prev.elements);
-      const current = next.get(id);
-      if (!current) return prev;
+    applyElementUpdate(set, id, updates);
+  },
 
-      const merged = {
-        ...current,
-        ...updates,
-        version: current.version + 1,
-        updatedAt: Date.now(),
-      } as MavisElement;
+  updateElementSilent: (id: string, updates: Partial<MavisElement>) => {
+    const existing = get().elements.get(id);
+    if (!existing) return;
 
-      // Keep bound text inside its container
-      if (merged.type === 'text') {
-        const textEl = merged as TextElement;
-        if (textEl.containerId) {
-          const container = next.get(textEl.containerId);
-          if (container && !container.isDeleted) {
-            const clamped = clampBoundTextToContainer(
-              textEl.x,
-              textEl.y,
-              textEl.width,
-              textEl.height,
-              container,
-            );
-            (merged as TextElement).x = clamped.x;
-            (merged as TextElement).y = clamped.y;
-            (merged as TextElement).width = clamped.width;
-            (merged as TextElement).height = clamped.height;
-          }
-        }
-      }
-
-      next.set(id, merged);
-
-      // When container (shape) is updated, keep its bound text inside
-      if (merged.type !== 'text' && merged.boundElements?.length) {
-        for (const bound of merged.boundElements) {
-          if (bound.type !== 'text') continue;
-          const textEl = next.get(bound.id) as TextElement | undefined;
-          if (!textEl || textEl.isDeleted || textEl.containerId !== id) continue;
-          const clamped = clampBoundTextToContainer(
-            textEl.x,
-            textEl.y,
-            textEl.width,
-            textEl.height,
-            merged,
-          );
-          next.set(bound.id, {
-            ...textEl,
-            ...clamped,
-            version: textEl.version + 1,
-            updatedAt: Date.now(),
-          } as TextElement);
-        }
-      }
-
-      return { elements: next };
-    });
+    applyElementUpdate(set, id, updates);
   },
 
   updateElements: (updates: { id: string; changes: Partial<MavisElement> }[]) => {

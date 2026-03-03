@@ -496,6 +496,9 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         },
         addElement,
         updateElement,
+        updateElementSilent: (id, updates) => {
+          useElementsStore.getState().updateElementSilent(id, updates);
+        },
         deleteSelectedElements: () => {
           const ids = Array.from(useSelectionStore.getState().selectedIds);
           if (ids.length > 0) {

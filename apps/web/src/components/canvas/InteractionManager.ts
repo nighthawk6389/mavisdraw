@@ -61,6 +61,7 @@ export interface InteractionCallbacks {
   ) => MavisElement;
   addElement: (element: MavisElement) => void;
   updateElement: (id: string, updates: Partial<MavisElement>) => void;
+  updateElementSilent: (id: string, updates: Partial<MavisElement>) => void;
   deleteSelectedElements: () => void;
   pushHistory: () => void;
 
@@ -115,10 +116,15 @@ export class InteractionManager {
   private creatingSeed: number = 0;
   private creatingId: string = '';
   private dragStartPositions: Map<string, Point> = new Map();
+  private dragStartSizes: Map<string, { width: number; height: number }> = new Map();
   private resizeHandle: ResizeHandle | null = null;
   private resizeStartBounds: Bounds | null = null;
   private isSpacePressed = false;
   private freedrawPoints: [number, number][] = [];
+  private freedrawMinX = Infinity;
+  private freedrawMinY = Infinity;
+  private freedrawMaxX = -Infinity;
+  private freedrawMaxY = -Infinity;
 
   // Smart guides state
   private currentSmartGuides: SmartGuide[] = [];
@@ -448,6 +454,10 @@ export class InteractionManager {
     } else if (tool === 'freedraw') {
       this.mode = 'drawing-freedraw';
       this.freedrawPoints = [[canvasPoint.x, canvasPoint.y]];
+      this.freedrawMinX = canvasPoint.x;
+      this.freedrawMinY = canvasPoint.y;
+      this.freedrawMaxX = canvasPoint.x;
+      this.freedrawMaxY = canvasPoint.y;
       this.callbacks.pushHistory();
     } else if (SHAPE_TOOLS.has(tool)) {
       this.mode = 'creating';
@@ -480,7 +490,7 @@ export class InteractionManager {
           );
           this.anchorTarget = nearbyShape;
           if (nearbyShape) {
-            this.hoveredAnchor = hitTestAnchorPoint(canvasPoint, nearbyShape)?.toString() ?? null;
+            this.hoveredAnchor = hitTestAnchorPoint(canvasPoint, nearbyShape) ?? null;
           } else {
             this.hoveredAnchor = null;
           }
@@ -571,7 +581,7 @@ export class InteractionManager {
               startPos.y + snappedDy,
             );
           } else {
-            this.callbacks.updateElement(id, {
+            this.callbacks.updateElementSilent(id, {
               x: startPos.x + snappedDx,
               y: startPos.y + snappedDy,
             });
@@ -594,12 +604,17 @@ export class InteractionManager {
 
       case 'drawing-freedraw': {
         this.freedrawPoints.push([canvasPoint.x, canvasPoint.y]);
+        // Update running bounds incrementally (O(1) per frame)
+        if (canvasPoint.x < this.freedrawMinX) this.freedrawMinX = canvasPoint.x;
+        if (canvasPoint.y < this.freedrawMinY) this.freedrawMinY = canvasPoint.y;
+        if (canvasPoint.x > this.freedrawMaxX) this.freedrawMaxX = canvasPoint.x;
+        if (canvasPoint.y > this.freedrawMaxY) this.freedrawMaxY = canvasPoint.y;
         // Update creating element preview
         if (this.freedrawPoints.length >= 2) {
-          const minX = Math.min(...this.freedrawPoints.map((p) => p[0]));
-          const minY = Math.min(...this.freedrawPoints.map((p) => p[1]));
-          const maxX = Math.max(...this.freedrawPoints.map((p) => p[0]));
-          const maxY = Math.max(...this.freedrawPoints.map((p) => p[1]));
+          const minX = this.freedrawMinX;
+          const minY = this.freedrawMinY;
+          const maxX = this.freedrawMaxX;
+          const maxY = this.freedrawMaxY;
           const relativePoints: [number, number][] = this.freedrawPoints.map((p) => [
             p[0] - minX,
             p[1] - minY,
@@ -671,7 +686,7 @@ export class InteractionManager {
           newPoints[newPoints.length - 1] = [canvasPoint.x - arrow.x, canvasPoint.y - arrow.y];
         }
 
-        this.callbacks.updateElement(arrow.id, { points: newPoints } as Partial<LinearElement>);
+        this.callbacks.updateElementSilent(arrow.id, { points: newPoints } as Partial<LinearElement>);
 
         // Check for snap target
         const excludeIds = new Set([arrow.id]);
@@ -701,7 +716,7 @@ export class InteractionManager {
           canvasPoint.y - arrow.y,
         ];
 
-        this.callbacks.updateElement(arrow.id, { points: newPoints } as Partial<LinearElement>);
+        this.callbacks.updateElementSilent(arrow.id, { points: newPoints } as Partial<LinearElement>);
         this.callbacks.invalidateStatic();
         break;
       }
@@ -780,6 +795,7 @@ export class InteractionManager {
 
       case 'dragging': {
         this.dragStartPositions.clear();
+        this.dragStartSizes.clear();
         this.currentSmartGuides = [];
         this.callbacks.invalidateStatic();
         break;
@@ -789,6 +805,7 @@ export class InteractionManager {
         this.resizeHandle = null;
         this.resizeStartBounds = null;
         this.dragStartPositions.clear();
+        this.dragStartSizes.clear();
         this.callbacks.invalidateStatic();
         break;
       }
@@ -1175,9 +1192,11 @@ export class InteractionManager {
 
   private captureElementPositions(elements: MavisElement[], selectedIds: Set<string>): void {
     this.dragStartPositions.clear();
+    this.dragStartSizes.clear();
     for (const el of elements) {
       if (selectedIds.has(el.id)) {
         this.dragStartPositions.set(el.id, { x: el.x, y: el.y });
+        this.dragStartSizes.set(el.id, { width: el.width, height: el.height });
       }
     }
   }
@@ -1255,7 +1274,7 @@ export class InteractionManager {
 
       // For single element, directly set position/size
       if (this.dragStartPositions.size === 1) {
-        this.callbacks.updateElement(id, {
+        this.callbacks.updateElementSilent(id, {
           x: newBoundsX,
           y: newBoundsY,
           width: newBoundsW,
@@ -1265,11 +1284,14 @@ export class InteractionManager {
         // For multi-element resize, scale proportionally
         const scaleX = sb.width > 0 ? newBoundsW / sb.width : 1;
         const scaleY = sb.height > 0 ? newBoundsH / sb.height : 1;
-        this.callbacks.updateElement(id, {
+        const startSize = this.dragStartSizes.get(id);
+        const startW = startSize?.width ?? 10;
+        const startH = startSize?.height ?? 10;
+        this.callbacks.updateElementSilent(id, {
           x: newBoundsX + relX * newBoundsW,
           y: newBoundsY + relY * newBoundsH,
-          width: (this.dragStartPositions.get(id)!.x + 100) * scaleX, // approximate
-          height: (this.dragStartPositions.get(id)!.y + 100) * scaleY,
+          width: Math.max(10, startW * scaleX),
+          height: Math.max(10, startH * scaleY),
         });
       }
     }

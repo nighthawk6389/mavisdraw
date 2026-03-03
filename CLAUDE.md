@@ -79,6 +79,12 @@ Key rules to always keep in mind:
 - **Defer state reads** to the point of use — don't subscribe to store values only used in callbacks (`rerender-defer-reads`).
 - **Use refs for transient values** that change frequently but don't need to trigger re-renders (`rerender-use-ref-transient-values`).
 
+### Backlog Tracking
+
+- If you notice an issue, improvement, or code smell that **can't be addressed in the current task**, add it to `BACKLOG.md` at the project root.
+- Categorize entries under the appropriate section (Code Quality, Performance, Architecture, Testing, etc.).
+- Include the file path and a brief description of the problem and why it matters.
+
 ### Commit Guidelines
 
 - Write clear, concise commit messages describing the "why" not just the "what".
