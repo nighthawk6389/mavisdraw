@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  # ── Database ─────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: mavisdraw-postgres
+    environment:
+      POSTGRES_USER: mavisdraw
+      POSTGRES_PASSWORD: mavisdraw_dev
+      POSTGRES_DB: mavisdraw
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U mavisdraw']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Schema push + seed (runs once, then exits) ──────────
+  db-init:
+    build:
+      context: .
+      target: server
+    container_name: mavisdraw-db-init
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://mavisdraw:mavisdraw_dev@postgres:5432/mavisdraw
+      DB_HOST: postgres
+      DB_PORT: '5432'
+      DB_USER: mavisdraw
+    entrypoint: ['sh', '/app/scripts/db-init.sh']
+    volumes:
+      - ./scripts:/app/scripts:ro
+    restart: 'no'
+
+  # ── Backend API + WebSocket server ──────────────────────
+  api:
+    build:
+      context: .
+      target: server
+    container_name: mavisdraw-api
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://mavisdraw:mavisdraw_dev@postgres:5432/mavisdraw
+      CORS_ORIGIN: http://localhost:3000
+      COOKIE_SECRET: mavisdraw-cookie-secret
+      JWT_SECRET: mavisdraw-dev-secret-change-in-production
+      NODE_ENV: development
+      PORT: '3001'
+      HOST: '0.0.0.0'
+      LOG_LEVEL: info
+    ports:
+      - '3001:3001'
+    restart: unless-stopped
+
+  # ── Frontend (nginx serving built assets) ───────────────
+  web:
+    build:
+      context: .
+      target: web
+      args:
+        VITE_API_URL: http://localhost:3001
+        VITE_WS_URL: ws://localhost:3001
+    container_name: mavisdraw-web
+    depends_on:
+      - api
+    ports:
+      - '3000:3000'
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

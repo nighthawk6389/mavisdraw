@@ -1,14 +1,59 @@
-# Render Blueprint – static site deployment
+# Render Blueprint — full-stack deployment
 # https://docs.render.com/infrastructure-as-code
+
+databases:
+  - name: mavisdraw-db
+    plan: basic-256mb
+    databaseName: mavisdraw
+    user: mavisdraw
+
 services:
+  # ── Backend API + WebSocket server ──────────────────────
   - type: web
-    name: mavisdraw
+    name: mavisdraw-api
+    runtime: node
+    plan: standard
+    buildCommand: pnpm install && pnpm turbo run build --filter=@mavisdraw/server && cd apps/server && pnpm run db:push && pnpm run db:seed
+    startCommand: node apps/server/dist/index.js
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mavisdraw-db
+          property: connectionString
+      - key: CORS_ORIGIN
+        fromService:
+          name: mavisdraw-web
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: COOKIE_SECRET
+        generateValue: true
+      - key: JWT_SECRET
+        generateValue: true
+      - key: NODE_ENV
+        value: production
+    healthCheckPath: /api/health
+
+  # ── Frontend static site ────────────────────────────────
+  - type: web
+    name: mavisdraw-web
     runtime: static
-    buildCommand: pnpm install && pnpm run build
+    buildCommand: pnpm install && pnpm turbo run build --filter=@mavisdraw/web
     staticPublishPath: apps/web/dist
     envVars:
       - key: NODE_VERSION
         value: "22"
+      - key: VITE_API_URL
+        fromService:
+          name: mavisdraw-api
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: VITE_WS_URL
+        fromService:
+          name: mavisdraw-api
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
     headers:
       - path: /*
         name: Cache-Control
