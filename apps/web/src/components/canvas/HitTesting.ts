@@ -1,5 +1,5 @@
 import type { MavisElement, Point, Bounds, LinearElement } from '@mavisdraw/types';
-import { getCubicControlPoints, cubicPoint, calculateElbowRoute, getConnectionSide } from '@mavisdraw/math';
+import { getCubicControlPoints, cubicPoint, calculateElbowRoute, getConnectionSide, getSegmentOrientation } from '@mavisdraw/math';
 
 const HANDLE_SIZE = 8;
 const HIT_TOLERANCE = 5;
@@ -242,6 +242,89 @@ function hitTestElbowLine(
     if (dist <= tolerance) return true;
   }
   return false;
+}
+
+// ─── Elbow segment interaction ───────────────────────────────
+
+export interface ElbowSegmentHit {
+  segmentIndex: number;
+  orientation: 'horizontal' | 'vertical';
+}
+
+/**
+ * Compute elbow routing points for a linear element in element-local coordinates.
+ * If elbowManualRoute is true and points.length > 2, returns stored points.
+ * Otherwise computes via calculateElbowRoute with binding-aware directions.
+ */
+export function computeElbowPoints(
+  element: LinearElement,
+  elementsMap?: Map<string, MavisElement>,
+): [number, number][] {
+  if (element.elbowManualRoute && element.points.length > 2) {
+    return element.points.map((p) => [...p] as [number, number]);
+  }
+
+  const pts = element.points;
+  const start = pts[0] as [number, number];
+  const end = pts[pts.length - 1] as [number, number];
+
+  let startDir = null as ReturnType<typeof getConnectionSide> | null;
+  let endDir = null as ReturnType<typeof getConnectionSide> | null;
+
+  if (elementsMap && element.startBinding) {
+    const bound = elementsMap.get(element.startBinding.elementId);
+    if (bound) {
+      const absX = element.x + start[0];
+      const absY = element.y + start[1];
+      startDir = getConnectionSide(absX, absY, bound.x, bound.y, bound.width, bound.height);
+    }
+  }
+
+  if (elementsMap && element.endBinding) {
+    const bound = elementsMap.get(element.endBinding.elementId);
+    if (bound) {
+      const absX = element.x + end[0];
+      const absY = element.y + end[1];
+      endDir = getConnectionSide(absX, absY, bound.x, bound.y, bound.width, bound.height);
+    }
+  }
+
+  return calculateElbowRoute(start, end, startDir, endDir);
+}
+
+/**
+ * Hit test whether a canvas point hits a specific inner segment of an elbow arrow.
+ * Returns the segment index and orientation, or null if no segment was hit.
+ * Skips the first and last segments (departure/approach to bindings).
+ */
+export function hitTestElbowSegment(
+  canvasPoint: Point,
+  element: LinearElement,
+  elementsMap?: Map<string, MavisElement>,
+  tolerance: number = 8,
+): ElbowSegmentHit | null {
+  const elbowPoints = computeElbowPoints(element, elementsMap);
+  if (elbowPoints.length < 3) return null;
+
+  // Skip first (index 0) and last segment — those connect to bindings
+  const startIdx = 1;
+  const endIdx = elbowPoints.length - 2;
+
+  for (let i = startIdx; i < endIdx; i++) {
+    const ax = element.x + elbowPoints[i][0];
+    const ay = element.y + elbowPoints[i][1];
+    const bx = element.x + elbowPoints[i + 1][0];
+    const by = element.y + elbowPoints[i + 1][1];
+
+    const dist = distanceToSegment(canvasPoint, { x: ax, y: ay }, { x: bx, y: by });
+    if (dist <= tolerance) {
+      const orientation = getSegmentOrientation(elbowPoints[i], elbowPoints[i + 1]);
+      if (orientation === 'diagonal') continue; // skip non-axis-aligned
+      return { segmentIndex: i, orientation };
+    }
+  }
+
+  return null;
 }
 
 /**

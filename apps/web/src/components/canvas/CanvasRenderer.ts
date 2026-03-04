@@ -329,8 +329,12 @@ export class CanvasRenderer {
         if (state.selectedIds.has(el.id) && (el.type === 'arrow' || el.type === 'line') && !el.isDeleted) {
           const linear = el as LinearElement;
           this.renderLinearEndpointHandles(ctx, linear);
-          this.renderWaypointHandles(ctx, linear);
-          this.renderMidpointAddHandles(ctx, linear);
+          if (linear.routingMode === 'elbow') {
+            this.renderElbowSegmentHandles(ctx, linear);
+          } else {
+            this.renderWaypointHandles(ctx, linear);
+            this.renderMidpointAddHandles(ctx, linear);
+          }
         }
       }
     }
@@ -759,6 +763,11 @@ export class CanvasRenderer {
    * Returns points in element-local coordinate space (relative to element.x, element.y).
    */
   private getElbowPointsForElement(element: LinearElement): [number, number][] {
+    // If manually routed with stored waypoints, use them directly
+    if (element.elbowManualRoute && element.points.length > 2) {
+      return element.points.map((p) => [...p] as [number, number]);
+    }
+
     const pts = element.points;
     const start = pts[0] as [number, number];
     const end = pts[pts.length - 1] as [number, number];
@@ -1596,6 +1605,56 @@ export class CanvasRenderer {
       ctx.lineTo(mx + cross, my);
       ctx.moveTo(mx, my - cross);
       ctx.lineTo(mx, my + cross);
+      ctx.strokeStyle = '#4a90d9';
+      ctx.lineWidth = 1.5 / zoom;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Render segment drag handles for elbow arrows (grab dots at inner segment midpoints).
+   */
+  private renderElbowSegmentHandles(
+    ctx: CanvasRenderingContext2D,
+    element: LinearElement,
+  ): void {
+    const elbowPoints = this.getElbowPointsForElement(element);
+    if (elbowPoints.length < 3) return;
+
+    const zoom = this.viewport.getViewport().zoom;
+    const dotRadius = 4 / zoom;
+
+    ctx.save();
+    // Skip first and last segments (departure/approach to bindings)
+    for (let i = 1; i < elbowPoints.length - 2; i++) {
+      const [x1, y1] = elbowPoints[i];
+      const [x2, y2] = elbowPoints[i + 1];
+      const mx = element.x + (x1 + x2) / 2;
+      const my = element.y + (y1 + y2) / 2;
+
+      // Draw grab dot
+      ctx.beginPath();
+      ctx.arc(mx, my, dotRadius, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(74, 144, 217, 0.3)';
+      ctx.fill();
+      ctx.strokeStyle = '#4a90d9';
+      ctx.lineWidth = 1 / zoom;
+      ctx.stroke();
+
+      // Draw direction indicator (short line perpendicular to drag direction)
+      const indicatorSize = 3 / zoom;
+      const isHorizontal = Math.abs(y1 - y2) < 1;
+      ctx.beginPath();
+      if (isHorizontal) {
+        // Can drag up/down
+        ctx.moveTo(mx, my - indicatorSize);
+        ctx.lineTo(mx, my + indicatorSize);
+      } else {
+        // Can drag left/right
+        ctx.moveTo(mx - indicatorSize, my);
+        ctx.lineTo(mx + indicatorSize, my);
+      }
       ctx.strokeStyle = '#4a90d9';
       ctx.lineWidth = 1.5 / zoom;
       ctx.stroke();
