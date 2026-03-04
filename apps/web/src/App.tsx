@@ -6,13 +6,18 @@ import LayerPanel from './components/toolbar/LayerPanel';
 import Breadcrumb from './components/navigation/Breadcrumb';
 import DiagramTreeSidebar from './components/navigation/DiagramTreeSidebar';
 import PortalProperties from './components/elements/PortalProperties';
+import ExportDialog from './components/export/ExportDialog';
+import ImportHandler from './components/export/ImportHandler';
+import VersionHistoryPanel from './components/version/VersionHistoryPanel';
 import { useKeyboard } from './hooks/useKeyboard';
+import { useAutoSnapshot } from './hooks/useAutoSnapshot';
 import { useSelectionStore } from './stores/selectionStore';
 import { useElementsStore } from './stores/elementsStore';
 
 export default function App() {
   const interactionManagerRef = useRef<{ setSpacePressed: (p: boolean) => void } | null>(null);
   useKeyboard(interactionManagerRef);
+  useAutoSnapshot();
 
   // Check if a portal is selected to show portal properties
   const selectedIds = useSelectionStore((s) => s.selectedIds);
@@ -49,7 +54,12 @@ export default function App() {
 
         <StylePanel />
         <LayerPanel />
+        <VersionHistoryPanel />
       </div>
+
+      {/* Overlays */}
+      <ExportDialog />
+      <ImportHandler />
     </div>
   );
 }

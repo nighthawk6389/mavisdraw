@@ -7,6 +7,10 @@ interface UIState {
   showLayerPanel: boolean;
   showDiagramTree: boolean;
 
+  // Dialogs
+  showExportDialog: boolean;
+  showVersionHistory: boolean;
+
   // Diagram render mode
   renderMode: RenderMode;
 
@@ -19,6 +23,8 @@ interface UIState {
   toggleStylePanel: () => void;
   toggleLayerPanel: () => void;
   toggleDiagramTree: () => void;
+  toggleExportDialog: () => void;
+  toggleVersionHistory: () => void;
   setRenderMode: (mode: RenderMode) => void;
   toggleGrid: () => void;
   toggleSnapToGrid: () => void;
@@ -29,6 +35,8 @@ export const useUIStore = create<UIState>((set) => ({
   showStylePanel: true,
   showLayerPanel: false,
   showDiagramTree: true,
+  showExportDialog: false,
+  showVersionHistory: false,
   renderMode: 'clean',
   showGrid: true,
   snapToGrid: false,
@@ -44,6 +52,14 @@ export const useUIStore = create<UIState>((set) => ({
 
   toggleDiagramTree: () => {
     set((state) => ({ showDiagramTree: !state.showDiagramTree }));
+  },
+
+  toggleExportDialog: () => {
+    set((state) => ({ showExportDialog: !state.showExportDialog }));
+  },
+
+  toggleVersionHistory: () => {
+    set((state) => ({ showVersionHistory: !state.showVersionHistory }));
   },
 
   setRenderMode: (mode: RenderMode) => {
