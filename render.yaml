@@ -3,7 +3,7 @@
 
 databases:
   - name: mavisdraw-db
-    plan: basic
+    plan: basic-256mb
     databaseName: mavisdraw
     user: mavisdraw
 
