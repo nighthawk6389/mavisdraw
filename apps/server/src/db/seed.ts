@@ -1,10 +1,18 @@
 import { nanoid } from 'nanoid';
 import bcrypt from 'bcryptjs';
+import { eq } from 'drizzle-orm';
 import { db } from './client.js';
 import { users, projects, diagrams } from './schema.js';
 
 async function seed() {
   console.log('Seeding database...');
+
+  // Check if demo user already exists
+  const existing = await db.select().from(users).where(eq(users.email, 'demo@mavisdraw.dev'));
+  if (existing.length > 0) {
+    console.log('Demo user already exists, skipping seed.');
+    process.exit(0);
+  }
 
   // Create a demo user
   const userId = nanoid();

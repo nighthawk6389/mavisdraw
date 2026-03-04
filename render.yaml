@@ -13,7 +13,7 @@ services:
     name: mavisdraw-api
     runtime: node
     plan: standard
-    buildCommand: pnpm install && pnpm turbo run build --filter=@mavisdraw/server && cd apps/server && pnpm run db:push
+    buildCommand: pnpm install && pnpm turbo run build --filter=@mavisdraw/server && cd apps/server && pnpm run db:push && pnpm run db:seed
     startCommand: node apps/server/dist/index.js
     envVars:
       - key: NODE_VERSION
