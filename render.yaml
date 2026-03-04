@@ -3,7 +3,7 @@
 
 databases:
   - name: mavisdraw-db
-    plan: standard
+    plan: basic
     databaseName: mavisdraw
     user: mavisdraw
 
