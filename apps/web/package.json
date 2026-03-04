@@ -16,6 +16,7 @@
     "@hocuspocus/provider": "^2.15.0",
     "@mavisdraw/compat": "workspace:*",
     "@mavisdraw/export": "workspace:*",
+    "@mavisdraw/llm": "workspace:*",
     "@mavisdraw/math": "workspace:*",
     "@mavisdraw/types": "workspace:*",
     "idb": "^8.0.0",

@@ -12,6 +12,7 @@ import {
   exportToDrawio,
   exportToMiro,
 } from '@mavisdraw/compat';
+import { serializeScene } from '@mavisdraw/llm';
 import type { ExportFormat } from '@mavisdraw/types';
 
 const FORMAT_OPTIONS: { value: ExportFormat; label: string; ext: string }[] = [
@@ -22,6 +23,7 @@ const FORMAT_OPTIONS: { value: ExportFormat; label: string; ext: string }[] = [
   { value: 'excalidraw', label: 'Excalidraw (.excalidraw)', ext: '.excalidraw' },
   { value: 'drawio', label: 'draw.io (.drawio)', ext: '.drawio' },
   { value: 'miro', label: 'Miro JSON', ext: '.json' },
+  { value: 'llm-text', label: 'LLM-Readable Text (.md)', ext: '.md' },
 ];
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -121,6 +123,18 @@ export default function ExportDialog() {
             type: 'application/json',
           });
           downloadBlob(blob, `${filename}-miro.json`);
+          break;
+        }
+
+        case 'llm-text': {
+          const scene = {
+            diagrams: includeNested ? diagrams : diagrams.filter((d) => d.id === activeDiagramId),
+            elements: currentElements,
+            rootDiagramId,
+          };
+          const markdown = serializeScene(scene, diagramTitle);
+          const blob = new Blob([markdown], { type: 'text/markdown' });
+          downloadBlob(blob, `${filename}.md`);
           break;
         }
 

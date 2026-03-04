@@ -6,6 +6,9 @@ function resetStore() {
     showStylePanel: true,
     showLayerPanel: false,
     showDiagramTree: false,
+    showExportDialog: false,
+    showVersionHistory: false,
+    showGitHubDialog: false,
     renderMode: 'sketchy',
     showGrid: true,
     snapToGrid: false,
@@ -23,6 +26,7 @@ describe('uiStore', () => {
       const state = useUIStore.getState();
       expect(state.showStylePanel).toBe(true);
       expect(state.showLayerPanel).toBe(false);
+      expect(state.showGitHubDialog).toBe(false);
       expect(state.renderMode).toBe('sketchy');
       expect(state.showGrid).toBe(true);
       expect(state.snapToGrid).toBe(false);
@@ -76,6 +80,15 @@ describe('uiStore', () => {
       expect(useUIStore.getState().snapToGrid).toBe(true);
       useUIStore.getState().toggleSnapToGrid();
       expect(useUIStore.getState().snapToGrid).toBe(false);
+    });
+  });
+
+  describe('toggleGitHubDialog', () => {
+    it('toggles GitHub dialog visibility', () => {
+      useUIStore.getState().toggleGitHubDialog();
+      expect(useUIStore.getState().showGitHubDialog).toBe(true);
+      useUIStore.getState().toggleGitHubDialog();
+      expect(useUIStore.getState().showGitHubDialog).toBe(false);
     });
   });
 

@@ -29,6 +29,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   sessions: many(sessions),
   projects: many(projects),
   permissions: many(projectPermissions),
+  githubConnections: many(githubConnections),
 }));
 
 // ── Sessions ─────────────────────────────────────────────────
@@ -200,6 +201,37 @@ export const projectPermissionsRelations = relations(projectPermissions, ({ one 
   }),
   user: one(users, {
     fields: [projectPermissions.userId],
+    references: [users.id],
+  }),
+}));
+
+// ── GitHub Connections ──────────────────────────────────────
+
+export const githubConnections = pgTable(
+  'github_connections',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    githubUserId: text('github_user_id').notNull(),
+    githubUsername: varchar('github_username', { length: 255 }).notNull(),
+    accessToken: text('access_token').notNull(),
+    refreshToken: text('refresh_token'),
+    scope: text('scope'),
+    enterpriseUrl: text('enterprise_url'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('github_connections_user_id_idx').on(table.userId),
+    uniqueIndex('github_connections_user_github_idx').on(table.userId, table.githubUserId),
+  ],
+);
+
+export const githubConnectionsRelations = relations(githubConnections, ({ one }) => ({
+  user: one(users, {
+    fields: [githubConnections.userId],
     references: [users.id],
   }),
 }));

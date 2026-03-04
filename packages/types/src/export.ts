@@ -39,7 +39,8 @@ export type ExportFormat =
   | 'pdf'
   | 'excalidraw'
   | 'drawio'
-  | 'miro';
+  | 'miro'
+  | 'llm-text';
 
 export interface ExportOptions {
   format: ExportFormat;

@@ -233,6 +233,7 @@ describe('exportToExcalidraw', () => {
       label: 'Sub',
       thumbnailDataUrl: null,
       portalStyle: 'card' as const,
+      githubLink: null,
     };
 
     const file = exportToExcalidraw([portal]);
