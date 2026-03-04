@@ -184,6 +184,55 @@ function routeStartDirection(
   }
 }
 
+// ── Segment manipulation helpers ─────────────────────────────────
+
+export type SegmentOrientation = 'horizontal' | 'vertical' | 'diagonal';
+
+/**
+ * Determine the orientation of a segment between two points.
+ */
+export function getSegmentOrientation(
+  a: [number, number],
+  b: [number, number],
+  threshold: number = 1,
+): SegmentOrientation {
+  if (Math.abs(a[1] - b[1]) < threshold) return 'horizontal';
+  if (Math.abs(a[0] - b[0]) < threshold) return 'vertical';
+  return 'diagonal';
+}
+
+/**
+ * Apply a constrained drag to an elbow route segment.
+ * Moving a horizontal segment shifts both endpoints' Y by delta.
+ * Moving a vertical segment shifts both endpoints' X by delta.
+ * Adjacent segments auto-adjust because they share endpoints.
+ *
+ * @param points - Current elbow route points
+ * @param segmentIndex - Which segment (0-based) is being dragged
+ * @param delta - Perpendicular displacement (deltaY for horizontal, deltaX for vertical)
+ * @returns New points array with segment moved
+ */
+export function applyElbowSegmentDrag(
+  points: [number, number][],
+  segmentIndex: number,
+  delta: number,
+): [number, number][] {
+  const result = points.map((p) => [...p] as [number, number]);
+  const orientation = getSegmentOrientation(points[segmentIndex], points[segmentIndex + 1]);
+
+  if (orientation === 'horizontal') {
+    // Shift Y of both endpoints
+    result[segmentIndex][1] += delta;
+    result[segmentIndex + 1][1] += delta;
+  } else if (orientation === 'vertical') {
+    // Shift X of both endpoints
+    result[segmentIndex][0] += delta;
+    result[segmentIndex + 1][0] += delta;
+  }
+
+  return result;
+}
+
 function routeEndDirection(
   start: [number, number],
   end: [number, number],

@@ -94,6 +94,8 @@ export interface LinearElement extends BaseElement {
   routingMode: RoutingMode;
   startArrowhead: Arrowhead;
   endArrowhead: Arrowhead;
+  /** When true, elbow routing uses stored points rather than computing on-the-fly. */
+  elbowManualRoute?: boolean;
 }
 
 export interface TextElement extends BaseElement {

@@ -15,9 +15,11 @@ import {
   hitTestMidpointHandle,
   hitTestWaypoint,
   getAnchorPoints,
+  hitTestElbowSegment,
+  computeElbowPoints,
   type ResizeHandle,
 } from './HitTesting';
-import { simplifyTuplePoints } from '@mavisdraw/math';
+import { simplifyTuplePoints, applyElbowSegmentDrag } from '@mavisdraw/math';
 
 export type InteractionMode =
   | 'idle'
@@ -29,7 +31,8 @@ export type InteractionMode =
   | 'selecting'
   | 'drawing-freedraw'
   | 'rebinding-endpoint'
-  | 'moving-waypoint';
+  | 'moving-waypoint'
+  | 'dragging-elbow-segment';
 
 export interface InteractionCallbacks {
   getElements: () => MavisElement[];
@@ -144,6 +147,12 @@ export class InteractionManager {
   private movingWaypointIndex: number = -1;
   private movingWaypointArrowId: string = '';
   private waypointOriginalPoints: [number, number][] = [];
+
+  // Elbow segment drag state
+  private elbowSegmentArrowId: string = '';
+  private elbowSegmentIndex: number = -1;
+  private elbowSegmentOrientation: 'horizontal' | 'vertical' = 'horizontal';
+  private elbowSegmentOriginalPoints: [number, number][] = [];
 
   // Group navigation state
   private enteredGroupIds: Set<string> = new Set();
@@ -299,8 +308,8 @@ export class InteractionManager {
             return;
           }
 
-          // Phase 5: Midpoint + handle hit (add new waypoint)
-          {
+          // Phase 5: Midpoint + handle hit (add new waypoint) — skip for elbow arrows
+          if (linear.routingMode !== 'elbow') {
             const midpointHit = hitTestMidpointHandle(canvasPoint, linear, handleRadius);
             if (midpointHit >= 0) {
               const [x1, y1] = linear.points[midpointHit];
@@ -316,6 +325,53 @@ export class InteractionManager {
               this.movingWaypointArrowId = linear.id;
               this.waypointOriginalPoints = newPoints.map((p) => [...p] as [number, number]);
               this.startCanvasPoint = canvasPoint;
+              return;
+            }
+          }
+
+          // Elbow segment drag hit test
+          if (linear.routingMode === 'elbow') {
+            const elementsMap = new Map<string, MavisElement>();
+            for (const e of elements) elementsMap.set(e.id, e);
+
+            const segmentHit = hitTestElbowSegment(canvasPoint, linear, elementsMap);
+            if (segmentHit) {
+              // Materialize computed route if arrow is auto-routed
+              if (!linear.elbowManualRoute || linear.points.length <= 2) {
+                const computedPoints = computeElbowPoints(linear, elementsMap);
+                this.callbacks.pushHistory();
+                this.callbacks.updateElement(linear.id, {
+                  points: computedPoints,
+                  elbowManualRoute: true,
+                } as Partial<LinearElement>);
+                this.callbacks.invalidateStatic();
+
+                // Re-read the updated element and re-run hit test
+                const updatedElements = this.callbacks.getElements();
+                const updatedArrow = updatedElements.find((e) => e.id === linear.id) as LinearElement | undefined;
+                if (!updatedArrow) return;
+
+                const updatedMap = new Map<string, MavisElement>();
+                for (const e of updatedElements) updatedMap.set(e.id, e);
+                const reHit = hitTestElbowSegment(canvasPoint, updatedArrow, updatedMap);
+                if (!reHit) return;
+
+                this.mode = 'dragging-elbow-segment';
+                this.elbowSegmentArrowId = updatedArrow.id;
+                this.elbowSegmentIndex = reHit.segmentIndex;
+                this.elbowSegmentOrientation = reHit.orientation;
+                this.elbowSegmentOriginalPoints = updatedArrow.points.map((p) => [...p] as [number, number]);
+                this.startCanvasPoint = canvasPoint;
+                return;
+              }
+
+              this.mode = 'dragging-elbow-segment';
+              this.elbowSegmentArrowId = linear.id;
+              this.elbowSegmentIndex = segmentHit.segmentIndex;
+              this.elbowSegmentOrientation = segmentHit.orientation;
+              this.elbowSegmentOriginalPoints = linear.points.map((p) => [...p] as [number, number]);
+              this.startCanvasPoint = canvasPoint;
+              this.callbacks.pushHistory();
               return;
             }
           }
@@ -720,6 +776,29 @@ export class InteractionManager {
         this.callbacks.invalidateStatic();
         break;
       }
+
+      case 'dragging-elbow-segment': {
+        const elements = this.callbacks.getElements();
+        const arrow = elements.find((e) => e.id === this.elbowSegmentArrowId) as LinearElement | undefined;
+        if (!arrow) break;
+
+        let delta: number;
+        if (this.elbowSegmentOrientation === 'horizontal') {
+          delta = canvasPoint.y - this.startCanvasPoint.y;
+        } else {
+          delta = canvasPoint.x - this.startCanvasPoint.x;
+        }
+
+        const newPoints = applyElbowSegmentDrag(
+          this.elbowSegmentOriginalPoints,
+          this.elbowSegmentIndex,
+          delta,
+        );
+
+        this.callbacks.updateElementSilent(arrow.id, { points: newPoints } as Partial<LinearElement>);
+        this.callbacks.invalidateStatic();
+        break;
+      }
     }
 
     this.lastScreenPoint = { x: screenX, y: screenY };
@@ -936,6 +1015,14 @@ export class InteractionManager {
         break;
       }
 
+      case 'dragging-elbow-segment': {
+        this.elbowSegmentArrowId = '';
+        this.elbowSegmentIndex = -1;
+        this.elbowSegmentOriginalPoints = [];
+        this.callbacks.invalidateStatic();
+        break;
+      }
+
       case 'panning':
         break;
     }
@@ -984,14 +1071,43 @@ export class InteractionManager {
       }
     }
 
+    // Double-click on manually-routed elbow: reset to auto-routing
+    if (element.type === 'arrow' || element.type === 'line') {
+      const linear = element as LinearElement;
+      if (linear.routingMode === 'elbow' && linear.elbowManualRoute) {
+        const newPoints: [number, number][] = [
+          [...linear.points[0]] as [number, number],
+          [...linear.points[linear.points.length - 1]] as [number, number],
+        ];
+        this.callbacks.pushHistory();
+        this.callbacks.updateElement(linear.id, {
+          points: newPoints,
+          elbowManualRoute: false,
+        } as Partial<LinearElement>);
+        this.callbacks.invalidateStatic();
+        return;
+      }
+    }
+
     // Phase 2.2: Double-click on arrow/line to cycle routing mode
     if (element.type === 'arrow' || element.type === 'line') {
       const linear = element as LinearElement;
       const modes: ('straight' | 'curved' | 'elbow')[] = ['straight', 'curved', 'elbow'];
       const currentIdx = modes.indexOf(linear.routingMode);
       const nextMode = modes[(currentIdx + 1) % modes.length];
+      const updates: Partial<LinearElement> = { routingMode: nextMode };
+
+      // When leaving elbow mode, reset manual routing and collapse to 2 points
+      if (linear.routingMode === 'elbow' && linear.elbowManualRoute) {
+        updates.elbowManualRoute = false;
+        updates.points = [
+          [...linear.points[0]] as [number, number],
+          [...linear.points[linear.points.length - 1]] as [number, number],
+        ];
+      }
+
       this.callbacks.pushHistory();
-      this.callbacks.updateElement(linear.id, { routingMode: nextMode } as Partial<LinearElement>);
+      this.callbacks.updateElement(linear.id, updates as Partial<LinearElement>);
       this.callbacks.invalidateStatic();
       return;
     }
