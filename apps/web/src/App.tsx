@@ -149,7 +149,7 @@ export default function App() {
         // Load all diagrams for the project
         const response = await apiListDiagrams(projectId);
 
-        // Load diagrams into the store
+        const newDiagrams = new Map<string, Diagram>();
         for (const d of response.diagrams) {
           const diagram: Diagram = {
             id: d.id,
@@ -166,18 +166,7 @@ export default function App() {
             createdAt: new Date(d.createdAt).getTime(),
             updatedAt: new Date(d.updatedAt).getTime(),
           };
-
-          const diagramStore = useDiagramStore.getState();
-          const existing = diagramStore.getDiagram(d.id);
-          if (existing) {
-            diagramStore.updateDiagram(d.id, diagram);
-          } else {
-            useDiagramStore.setState((state) => {
-              const next = new Map(state.diagrams);
-              next.set(diagram.id, diagram);
-              return { diagrams: next };
-            });
-          }
+          newDiagrams.set(diagram.id, diagram);
         }
 
         // Load root diagram elements
@@ -186,8 +175,9 @@ export default function App() {
         const elements = rootResponse.diagram.elements as MavisElement[];
         elementsStore.setElements(elements);
 
-        // Navigate to root diagram
+        // Replace all diagrams with only this project's diagrams
         useDiagramStore.setState({
+          diagrams: newDiagrams,
           activeDiagramId: rootDiagramId,
           diagramPath: [rootDiagramId],
         });
