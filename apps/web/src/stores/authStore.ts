@@ -103,6 +103,21 @@ export const useAuthStore = create<AuthState>((set, _get) => {
           isLoading: false,
         });
       } catch {
+        // In dev mode, auto-login as demo user
+        if (import.meta.env.DEV) {
+          try {
+            const response = await apiLogin('demo@mavisdraw.dev', 'password123');
+            setAccessToken(response.accessToken);
+            set({
+              user: response.user,
+              isAuthenticated: true,
+              isLoading: false,
+            });
+            return;
+          } catch {
+            // Fall through to unauthenticated state if demo login fails
+          }
+        }
         set({
           user: null,
           isAuthenticated: false,
