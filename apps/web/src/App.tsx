@@ -6,9 +6,13 @@ import LayerPanel from './components/toolbar/LayerPanel';
 import Breadcrumb from './components/navigation/Breadcrumb';
 import DiagramTreeSidebar from './components/navigation/DiagramTreeSidebar';
 import PortalProperties from './components/elements/PortalProperties';
+import ExportDialog from './components/export/ExportDialog';
+import ImportHandler from './components/export/ImportHandler';
+import VersionHistoryPanel from './components/version/VersionHistoryPanel';
 import PresenceAvatars from './components/collaboration/PresenceAvatars';
 import ShareDialog from './components/collaboration/ShareDialog';
 import { useKeyboard } from './hooks/useKeyboard';
+import { useAutoSnapshot } from './hooks/useAutoSnapshot';
 import { useAutoSave, type SaveStatus } from './hooks/useAutoSave';
 import { useSelectionStore } from './stores/selectionStore';
 import { useElementsStore } from './stores/elementsStore';
@@ -40,6 +44,7 @@ function SaveIndicator({ status }: { status: SaveStatus }) {
 function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
   const interactionManagerRef = useRef<{ setSpacePressed: (p: boolean) => void } | null>(null);
   useKeyboard(interactionManagerRef);
+  useAutoSnapshot();
 
   const selectedIds = useSelectionStore((s) => s.selectedIds);
   const elements = useElementsStore((s) => s.elements);
@@ -123,7 +128,12 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
 
         <StylePanel />
         <LayerPanel />
+        <VersionHistoryPanel />
       </div>
+
+      {/* Overlays */}
+      <ExportDialog />
+      <ImportHandler />
     </div>
   );
 }

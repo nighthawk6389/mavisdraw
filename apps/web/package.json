@@ -14,8 +14,11 @@
   },
   "dependencies": {
     "@hocuspocus/provider": "^2.15.0",
+    "@mavisdraw/compat": "workspace:*",
+    "@mavisdraw/export": "workspace:*",
     "@mavisdraw/math": "workspace:*",
     "@mavisdraw/types": "workspace:*",
+    "idb": "^8.0.0",
     "nanoid": "^5.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

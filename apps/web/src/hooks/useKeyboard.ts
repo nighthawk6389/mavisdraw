@@ -4,6 +4,7 @@ import { useSelectionStore } from '../stores/selectionStore';
 import { useElementsStore } from '../stores/elementsStore';
 import { useDiagramStore } from '../stores/diagramStore';
 import { useUIStore } from '../stores/uiStore';
+import { openImportDialog } from '../components/export/ImportHandler';
 
 const KEY_TO_TOOL: Record<string, Tool> = {
   v: 'select',
@@ -167,6 +168,27 @@ export function useKeyboard(
       if (isCtrlOrMeta && event.shiftKey && key === 't') {
         event.preventDefault();
         useUIStore.getState().toggleDiagramTree();
+        return;
+      }
+
+      // Ctrl+S = save version snapshot
+      if (isCtrlOrMeta && key === 's' && !event.shiftKey) {
+        event.preventDefault();
+        useUIStore.getState().toggleVersionHistory();
+        return;
+      }
+
+      // Ctrl+Shift+E = export dialog
+      if (isCtrlOrMeta && event.shiftKey && key === 'e') {
+        event.preventDefault();
+        useUIStore.getState().toggleExportDialog();
+        return;
+      }
+
+      // Ctrl+O = import file
+      if (isCtrlOrMeta && key === 'o' && !event.shiftKey) {
+        event.preventDefault();
+        openImportDialog();
         return;
       }
 
