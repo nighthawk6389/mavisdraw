@@ -9,7 +9,7 @@ const store = new Map<string, RateLimitEntry>();
 
 const WINDOW_MS = 60 * 1000; // 1 minute
 const MAX_REQUESTS = 100;
-const AUTH_MAX_REQUESTS = 10;
+const AUTH_MAX_REQUESTS = 30;
 
 function getClientId(request: FastifyRequest): string {
   return request.ip ?? 'unknown';
