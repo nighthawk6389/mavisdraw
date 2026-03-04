@@ -184,6 +184,21 @@ export default function StylePanel() {
             </button>
           ))}
         </div>
+        <div className="flex items-center gap-1 mt-1">
+          <button
+            className="w-7 h-7 text-sm rounded border border-gray-200 text-gray-600 hover:bg-gray-50"
+            onClick={() => applyToAll({ strokeWidth: Math.max(1, (strokeWidth as number) - 1) })}
+          >
+            &minus;
+          </button>
+          <span className="text-xs text-gray-600 w-6 text-center">{strokeWidth}</span>
+          <button
+            className="w-7 h-7 text-sm rounded border border-gray-200 text-gray-600 hover:bg-gray-50"
+            onClick={() => applyToAll({ strokeWidth: Math.min(20, (strokeWidth as number) + 1) })}
+          >
+            +
+          </button>
+        </div>
       </Section>
 
       {/* Stroke Style */}

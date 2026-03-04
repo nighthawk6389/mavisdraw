@@ -1,5 +1,5 @@
 import type { MavisElement, Point, Bounds, LinearElement } from '@mavisdraw/types';
-import { getCubicControlPoints, cubicPoint } from '@mavisdraw/math';
+import { getCubicControlPoints, cubicPoint, calculateElbowRoute, getConnectionSide } from '@mavisdraw/math';
 
 const HANDLE_SIZE = 8;
 const HIT_TOLERANCE = 5;
@@ -94,7 +94,7 @@ function hitTestDiamond(local: Point, element: MavisElement): boolean {
 /**
  * Test if a point is near a polyline defined by points.
  */
-function hitTestPolyline(canvasPoint: Point, element: MavisElement): boolean {
+function hitTestPolyline(canvasPoint: Point, element: MavisElement, elementsMap?: Map<string, MavisElement>): boolean {
   const linear = element as LinearElement;
   if (!linear.points || linear.points.length < 2) return false;
 
@@ -105,7 +105,7 @@ function hitTestPolyline(canvasPoint: Point, element: MavisElement): boolean {
   }
 
   if (linear.routingMode === 'elbow') {
-    return hitTestElbowLine(canvasPoint, linear, tolerance);
+    return hitTestElbowLine(canvasPoint, linear, tolerance, elementsMap);
   }
 
   for (let i = 0; i < linear.points.length - 1; i++) {
@@ -201,7 +201,12 @@ function computeSmoothCurveSegments(
   return segments;
 }
 
-function hitTestElbowLine(canvasPoint: Point, linear: LinearElement, tolerance: number): boolean {
+function hitTestElbowLine(
+  canvasPoint: Point,
+  linear: LinearElement,
+  tolerance: number,
+  elementsMap?: Map<string, MavisElement>,
+): boolean {
   const start: [number, number] = [
     linear.x + linear.points[0][0],
     linear.y + linear.points[0][1],
@@ -211,7 +216,24 @@ function hitTestElbowLine(canvasPoint: Point, linear: LinearElement, tolerance: 
     linear.y + linear.points[linear.points.length - 1][1],
   ];
 
-  const elbowPoints = calculateElbowPointsForHitTest(start, end);
+  let startDir = null as ReturnType<typeof getConnectionSide> | null;
+  let endDir = null as ReturnType<typeof getConnectionSide> | null;
+
+  if (elementsMap && linear.startBinding) {
+    const bound = elementsMap.get(linear.startBinding.elementId);
+    if (bound) {
+      startDir = getConnectionSide(start[0], start[1], bound.x, bound.y, bound.width, bound.height);
+    }
+  }
+
+  if (elementsMap && linear.endBinding) {
+    const bound = elementsMap.get(linear.endBinding.elementId);
+    if (bound) {
+      endDir = getConnectionSide(end[0], end[1], bound.x, bound.y, bound.width, bound.height);
+    }
+  }
+
+  const elbowPoints = calculateElbowRoute(start, end, startDir, endDir);
 
   for (let i = 0; i < elbowPoints.length - 1; i++) {
     const a = { x: elbowPoints[i][0], y: elbowPoints[i][1] };
@@ -220,30 +242,6 @@ function hitTestElbowLine(canvasPoint: Point, linear: LinearElement, tolerance: 
     if (dist <= tolerance) return true;
   }
   return false;
-}
-
-function calculateElbowPointsForHitTest(
-  start: [number, number],
-  end: [number, number],
-): [number, number][] {
-  const dx = end[0] - start[0];
-  const dy = end[1] - start[1];
-  const ALIGN_THRESHOLD = 5;
-
-  if (Math.abs(dx) < ALIGN_THRESHOLD) {
-    return [start, end];
-  }
-  if (Math.abs(dy) < ALIGN_THRESHOLD) {
-    return [start, end];
-  }
-
-  if (Math.abs(dx) > Math.abs(dy)) {
-    const midX = start[0] + dx / 2;
-    return [start, [midX, start[1]], [midX, end[1]], end];
-  } else {
-    const midY = start[1] + dy / 2;
-    return [start, [start[0], midY], [end[0], midY], end];
-  }
 }
 
 /**
@@ -278,12 +276,12 @@ function hitTestText(local: Point, element: MavisElement): boolean {
 /**
  * Hit test a single element against a canvas-coordinate point.
  */
-export function hitTestElement(canvasPoint: Point, element: MavisElement): boolean {
+export function hitTestElement(canvasPoint: Point, element: MavisElement, elementsMap?: Map<string, MavisElement>): boolean {
   if (element.isDeleted) return false;
 
   // For linear elements, use polyline testing directly in canvas space
   if (element.type === 'line' || element.type === 'arrow' || element.type === 'freedraw') {
-    return hitTestPolyline(canvasPoint, element);
+    return hitTestPolyline(canvasPoint, element, elementsMap);
   }
 
   const local = toLocalCoords(canvasPoint, element);
@@ -313,9 +311,13 @@ export function hitTestElements(
   canvasPoint: Point,
   elements: MavisElement[],
 ): MavisElement | null {
+  // Build map for elbow routing lookups
+  const map = new Map<string, MavisElement>();
+  for (const el of elements) map.set(el.id, el);
+
   // Iterate in reverse to find topmost element first
   for (let i = elements.length - 1; i >= 0; i--) {
-    if (hitTestElement(canvasPoint, elements[i])) {
+    if (hitTestElement(canvasPoint, elements[i], map)) {
       return elements[i];
     }
   }
@@ -588,8 +590,11 @@ export function hitTestElementsWithGroups(
   elements: MavisElement[],
   enteredGroupIds: Set<string> = new Set(),
 ): MavisElement | null {
+  const map = new Map<string, MavisElement>();
+  for (const el of elements) map.set(el.id, el);
+
   for (let i = elements.length - 1; i >= 0; i--) {
-    if (hitTestElement(canvasPoint, elements[i])) {
+    if (hitTestElement(canvasPoint, elements[i], map)) {
       const el = elements[i];
 
       // If element has group IDs, find the outermost group that hasn't been entered

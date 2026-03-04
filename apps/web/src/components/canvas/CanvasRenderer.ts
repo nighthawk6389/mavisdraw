@@ -14,7 +14,7 @@ import type {
 import { ViewportManager } from './ViewportManager';
 import { GridRenderer } from './GridRenderer';
 import { renderPortalSketchy, renderPortalClean } from '../elements/PortalRenderer';
-import { getCubicControlPoints } from '@mavisdraw/math';
+import { getCubicControlPoints, calculateElbowRoute, getConnectionSide } from '@mavisdraw/math';
 
 /**
  * Smart guide line data for rendering alignment guides.
@@ -85,6 +85,9 @@ export class CanvasRenderer {
 
   // Image cache to prevent re-decoding
   private imageCache: Map<string, HTMLImageElement> = new Map();
+
+  // Elements map for looking up bound elements during elbow routing
+  private elementsMap: Map<string, MavisElement> = new Map();
 
   // Selection / handle visual constants
   private static readonly SELECTION_COLOR = '#4a90d9';
@@ -207,6 +210,12 @@ export class CanvasRenderer {
     const vp = this.viewport.getViewport();
 
     ctx.clearRect(0, 0, width, height);
+
+    // Build elements map for elbow routing lookups
+    this.elementsMap.clear();
+    for (const el of elements) {
+      this.elementsMap.set(el.id, el);
+    }
 
     // Apply viewport transform
     ctx.save();
@@ -722,11 +731,8 @@ export class CanvasRenderer {
 
     if (points.length < 2) return;
 
-    const start = points[0];
-    const end = points[points.length - 1];
-
-    // Calculate elbow routing intermediate points
-    const elbowPoints = this.calculateElbowPoints(start, end);
+    // Calculate elbow routing with anchor-aware directions
+    const elbowPoints = this.getElbowPointsForElement(element);
 
     if (renderMode === 'sketchy') {
       this.drawRoughShape(ctx, () => {
@@ -748,42 +754,39 @@ export class CanvasRenderer {
   }
 
   /**
-   * Calculate elbow routing points (right-angle path) between start and end.
-   * Uses L-shape or Z-shape depending on relative positions.
+   * Compute elbow routing points for a linear element, using anchor-aware
+   * directions when the element is bound to shapes.
+   * Returns points in element-local coordinate space (relative to element.x, element.y).
    */
-  private calculateElbowPoints(
-    start: [number, number],
-    end: [number, number],
-  ): [number, number][] {
-    const dx = end[0] - start[0];
-    const dy = end[1] - start[1];
-    const ALIGN_THRESHOLD = 5;
+  private getElbowPointsForElement(element: LinearElement): [number, number][] {
+    const pts = element.points;
+    const start = pts[0] as [number, number];
+    const end = pts[pts.length - 1] as [number, number];
 
-    if (Math.abs(dx) < ALIGN_THRESHOLD) {
-      return [start, end];
+    let startDir = null as ReturnType<typeof getConnectionSide> | null;
+    let endDir = null as ReturnType<typeof getConnectionSide> | null;
+
+    // Compute directions using absolute (world) coordinates
+    if (element.startBinding) {
+      const bound = this.elementsMap.get(element.startBinding.elementId);
+      if (bound) {
+        const absX = element.x + start[0];
+        const absY = element.y + start[1];
+        startDir = getConnectionSide(absX, absY, bound.x, bound.y, bound.width, bound.height);
+      }
     }
 
-    if (Math.abs(dy) < ALIGN_THRESHOLD) {
-      return [start, end];
+    if (element.endBinding) {
+      const bound = this.elementsMap.get(element.endBinding.elementId);
+      if (bound) {
+        const absX = element.x + end[0];
+        const absY = element.y + end[1];
+        endDir = getConnectionSide(absX, absY, bound.x, bound.y, bound.width, bound.height);
+      }
     }
 
-    if (Math.abs(dx) > Math.abs(dy)) {
-      const midX = start[0] + dx / 2;
-      return [
-        start,
-        [midX, start[1]],
-        [midX, end[1]],
-        end,
-      ];
-    } else {
-      const midY = start[1] + dy / 2;
-      return [
-        start,
-        [start[0], midY],
-        [end[0], midY],
-        end,
-      ];
-    }
+    // Route in local coordinates
+    return calculateElbowRoute(start, end, startDir, endDir);
   }
 
   private renderFreedraw(
@@ -856,7 +859,7 @@ export class CanvasRenderer {
 
     // For elbow routing, use the last segment direction
     if (routingMode === 'elbow') {
-      const elbowPoints = this.calculateElbowPoints(points[0], points[points.length - 1]);
+      const elbowPoints = this.getElbowPointsForElement(element);
 
       if (endArrowhead !== 'none') {
         const last = elbowPoints[elbowPoints.length - 1];
@@ -1570,7 +1573,7 @@ export class CanvasRenderer {
     if (!element.points || element.points.length < 2) return;
 
     const zoom = this.viewport.getViewport().zoom;
-    const radius = 10 / zoom;
+    const radius = 7 / zoom;
 
     ctx.save();
     for (let i = 0; i < element.points.length - 1; i++) {
@@ -1584,7 +1587,7 @@ export class CanvasRenderer {
       ctx.fillStyle = 'rgba(74, 144, 217, 0.2)';
       ctx.fill();
       ctx.strokeStyle = '#4a90d9';
-      ctx.lineWidth = 1.5 / zoom;
+      ctx.lineWidth = 1 / zoom;
       ctx.stroke();
 
       const cross = radius * 0.5;
@@ -1594,7 +1597,7 @@ export class CanvasRenderer {
       ctx.moveTo(mx, my - cross);
       ctx.lineTo(mx, my + cross);
       ctx.strokeStyle = '#4a90d9';
-      ctx.lineWidth = 2 / zoom;
+      ctx.lineWidth = 1.5 / zoom;
       ctx.stroke();
     }
     ctx.restore();
