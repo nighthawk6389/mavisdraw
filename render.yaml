@@ -3,7 +3,7 @@
 
 databases:
   - name: mavisdraw-db
-    plan: free
+    plan: basic-256mb
     databaseName: mavisdraw
     user: mavisdraw
 
@@ -12,7 +12,7 @@ services:
   - type: web
     name: mavisdraw-api
     runtime: node
-    plan: free
+    plan: standard
     buildCommand: pnpm install && pnpm --filter @mavisdraw/types build && pnpm --filter @mavisdraw/server build
     startCommand: node apps/server/dist/index.js
     envVars:
