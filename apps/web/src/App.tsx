@@ -17,6 +17,8 @@ import { useAutoSave, type SaveStatus } from './hooks/useAutoSave';
 import { useSelectionStore } from './stores/selectionStore';
 import { useElementsStore } from './stores/elementsStore';
 import { useAuthStore } from './stores/authStore';
+import { useUIStore } from './stores/uiStore';
+import { openImportDialog } from './components/export/ImportHandler';
 import { useDiagramStore } from './stores/diagramStore';
 import LoginPage from './routes/login';
 import Dashboard from './routes/dashboard';
@@ -81,6 +83,28 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
         </div>
         <div className="flex items-center gap-3 pr-3">
           <PresenceAvatars />
+          <button
+            onClick={openImportDialog}
+            className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 border border-gray-300 rounded"
+            title="Import file"
+          >
+            Import
+          </button>
+          <button
+            onClick={() => useUIStore.getState().toggleExportDialog()}
+            className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 border border-gray-300 rounded"
+            title="Export diagram"
+          >
+            Export
+          </button>
+          <button
+            onClick={() => useUIStore.getState().toggleVersionHistory()}
+            className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 border border-gray-300 rounded"
+            title="Version history"
+          >
+            History
+          </button>
+          <div className="w-px h-4 bg-gray-300" />
           <button
             onClick={() => setShowShareDialog(true)}
             className="text-xs text-white bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded"

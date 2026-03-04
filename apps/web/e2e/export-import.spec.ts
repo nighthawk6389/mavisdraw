@@ -46,6 +46,18 @@ test.describe('Export Dialog', () => {
     await expect(page.locator('h2:has-text("Export")')).not.toBeVisible();
   });
 
+  test('opens export dialog by clicking Export button in header', async ({ page }) => {
+    await expect(page.locator('h2:has-text("Export")')).not.toBeVisible();
+
+    // Click the Export button in the header bar
+    await page.locator('button[title="Export diagram"]').click();
+    await expect(page.locator('h2:has-text("Export")')).toBeVisible();
+
+    // Close with the X button
+    await page.locator('h2:has-text("Export")').locator('..').locator('button').click();
+    await expect(page.locator('h2:has-text("Export")')).not.toBeVisible();
+  });
+
   test('shows format selector with all options', async ({ page }) => {
     await page.keyboard.press('Control+Shift+E');
     const select = page.locator('select');
