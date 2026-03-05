@@ -251,8 +251,11 @@ export class InteractionManager {
       return;
     }
 
-    // Right click = ignore (context menu)
-    if (event.button === 2) return;
+    // Right click = pan (Miro-style)
+    if (event.button === 2) {
+      this.mode = 'panning';
+      return;
+    }
 
     const tool = this.callbacks.getActiveTool();
     const elements = this.callbacks.getElements();
@@ -1033,12 +1036,13 @@ export class InteractionManager {
   onWheel(screenX: number, screenY: number, deltaX: number, deltaY: number, ctrlKey: boolean): void {
     const viewport = this.callbacks.getViewport();
     if (ctrlKey) {
-      // Zoom
+      // Ctrl+scroll / pinch-to-zoom: use finer zoom factor for trackpad pinch
+      const factor = 1 - deltaY * 0.01;
+      viewport.zoomAt(screenX, screenY, Math.max(0.5, Math.min(2, factor)));
+    } else {
+      // Scroll wheel = zoom (Miro-style)
       const factor = deltaY > 0 ? 0.9 : 1.1;
       viewport.zoomAt(screenX, screenY, factor);
-    } else {
-      // Pan
-      viewport.pan(-deltaX, -deltaY);
     }
     this.callbacks.invalidateStatic();
   }

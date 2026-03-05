@@ -462,6 +462,9 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     const { width, height } = container.getBoundingClientRect();
     renderer.resize(width, height);
 
+    // Expose viewport getter for e2e tests
+    (window as any).__MAVISDRAW_GET_VIEWPORT__ = () => renderer.getViewport().getViewport();
+
     renderer.startRenderLoop(
       () => {
         const currentDiagramId = activeDiagramIdRef.current;
@@ -483,6 +486,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     );
 
     return () => {
+      delete (window as any).__MAVISDRAW_GET_VIEWPORT__;
       renderer.destroy();
       rendererRef.current = null;
     };

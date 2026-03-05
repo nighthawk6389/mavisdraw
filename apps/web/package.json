@@ -13,20 +13,22 @@
     "lint": "eslint src"
   },
   "dependencies": {
+    "@ai-sdk/react": "^3.0.118",
     "@hocuspocus/provider": "^2.15.0",
     "@mavisdraw/compat": "workspace:*",
     "@mavisdraw/export": "workspace:*",
     "@mavisdraw/llm": "workspace:*",
     "@mavisdraw/math": "workspace:*",
     "@mavisdraw/types": "workspace:*",
+    "ai": "^6.0.116",
     "idb": "^8.0.0",
+    "lib0": "^0.2.0",
     "nanoid": "^5.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "roughjs": "^4.6.0",
-    "yjs": "^13.6.0",
     "y-websocket": "^2.1.0",
-    "lib0": "^0.2.0",
+    "yjs": "^13.6.0",
     "zustand": "^5.0.0"
   },
   "devDependencies": {

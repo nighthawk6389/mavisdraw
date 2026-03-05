@@ -17,7 +17,7 @@ import {
 } from '../services/githubService.js';
 
 const REDIRECT_URI =
-  process.env.GITHUB_REDIRECT_URI ?? 'http://localhost:3000/api/github/callback';
+  process.env.GITHUB_REDIRECT_URI ?? 'http://localhost:3000/oauth/github/callback';
 
 const repoParamsSchema = z.object({
   owner: z.string().min(1),

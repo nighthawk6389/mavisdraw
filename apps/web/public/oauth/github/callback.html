@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GitHub OAuth - MavisDraw</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      background: #f9fafb;
+      color: #374151;
+    }
+    .container {
+      text-align: center;
+      padding: 2rem;
+    }
+    .spinner {
+      width: 24px;
+      height: 24px;
+      border: 3px solid #e5e7eb;
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      margin: 0 auto 1rem;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .error { color: #dc2626; }
+  </style>
+</head>
+<body>
+  <div class="container" id="status">
+    <div class="spinner"></div>
+    <p>Connecting to GitHub&hellip;</p>
+  </div>
+  <script>
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+      var code = params.get('code');
+      var state = params.get('state');
+      var error = params.get('error');
+      var statusEl = document.getElementById('status');
+
+      if (error || !code) {
+        statusEl.innerHTML =
+          '<p class="error">' +
+          (error === 'access_denied'
+            ? 'Authorization was denied.'
+            : 'Something went wrong. No authorization code received.') +
+          '</p><p>You can close this window.</p>';
+        return;
+      }
+
+      if (window.opener) {
+        window.opener.postMessage(
+          { type: 'github-oauth-callback', code: code, state: state },
+          window.location.origin
+        );
+        statusEl.innerHTML = '<p>Connected! This window will close shortly&hellip;</p>';
+        setTimeout(function () { window.close(); }, 1500);
+      } else {
+        statusEl.innerHTML =
+          '<p class="error">Unable to communicate with the main window.</p>' +
+          '<p>Please close this window and try again.</p>';
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -33,8 +33,10 @@ cd apps/web && pnpm run test:e2e
 
 ```
 apps/web/           → React frontend (Vite)
+apps/server/        → Fastify backend (auth, GitHub, AI agent, collaboration)
 packages/types/     → Shared TypeScript type definitions
 packages/math/      → Geometry & math utilities
+packages/llm/       → LLM-readable diagram serialization/deserialization
 ```
 
 ## Development Rules

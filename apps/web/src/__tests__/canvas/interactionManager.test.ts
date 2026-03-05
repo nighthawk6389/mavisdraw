@@ -239,5 +239,74 @@ describe('InteractionManager', () => {
       mgr.onPointerDown(200, 200, { button: 0, shiftKey: false });
       expect(mgr.getMode()).toBe('panning');
     });
+
+    it('enters panning mode on right-click (Miro-style)', () => {
+      const callbacks = createMockCallbacks();
+      const mgr = new InteractionManager(callbacks, 'd1');
+
+      mgr.onPointerDown(200, 200, { button: 2, shiftKey: false });
+      expect(mgr.getMode()).toBe('panning');
+    });
+
+    it('pans the viewport during right-click drag', () => {
+      const callbacks = createMockCallbacks();
+      const mgr = new InteractionManager(callbacks, 'd1');
+      const viewport = callbacks.getViewport();
+      const before = viewport.getViewport();
+
+      mgr.onPointerDown(200, 200, { button: 2, shiftKey: false });
+      mgr.onPointerMove(250, 300);
+
+      const after = viewport.getViewport();
+      expect(after.scrollX).toBe(before.scrollX + 50);
+      expect(after.scrollY).toBe(before.scrollY + 100);
+    });
+
+    it('returns to idle on pointer up after right-click pan', () => {
+      const callbacks = createMockCallbacks();
+      const mgr = new InteractionManager(callbacks, 'd1');
+
+      mgr.onPointerDown(200, 200, { button: 2, shiftKey: false });
+      mgr.onPointerMove(250, 300);
+      mgr.onPointerUp(250, 300);
+
+      expect(mgr.getMode()).toBe('idle');
+    });
+  });
+
+  describe('scroll-to-zoom', () => {
+    it('zooms on scroll wheel without Ctrl (Miro-style)', () => {
+      const callbacks = createMockCallbacks();
+      const mgr = new InteractionManager(callbacks, 'd1');
+      const viewport = callbacks.getViewport();
+      const before = viewport.getViewport().zoom;
+
+      // Scroll down = zoom out
+      mgr.onWheel(400, 300, 0, 100, false);
+      expect(viewport.getViewport().zoom).toBeLessThan(before);
+    });
+
+    it('zooms in on scroll up without Ctrl', () => {
+      const callbacks = createMockCallbacks();
+      const mgr = new InteractionManager(callbacks, 'd1');
+      const viewport = callbacks.getViewport();
+      const before = viewport.getViewport().zoom;
+
+      // Scroll up = zoom in
+      mgr.onWheel(400, 300, 0, -100, false);
+      expect(viewport.getViewport().zoom).toBeGreaterThan(before);
+    });
+
+    it('uses fine-grained zoom with Ctrl (trackpad pinch)', () => {
+      const callbacks = createMockCallbacks();
+      const mgr = new InteractionManager(callbacks, 'd1');
+      const viewport = callbacks.getViewport();
+
+      // Small Ctrl+scroll delta should produce a proportional zoom change
+      mgr.onWheel(400, 300, 0, 5, true);
+      const zoom = viewport.getViewport().zoom;
+      // factor = 1 - 5 * 0.01 = 0.95 → zoom should be 0.95
+      expect(zoom).toBeCloseTo(0.95, 2);
+    });
   });
 });

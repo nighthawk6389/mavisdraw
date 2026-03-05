@@ -9,6 +9,7 @@ function resetStore() {
     showExportDialog: false,
     showVersionHistory: false,
     showGitHubDialog: false,
+    showAgentChat: false,
     renderMode: 'sketchy',
     showGrid: true,
     snapToGrid: false,
@@ -89,6 +90,15 @@ describe('uiStore', () => {
       expect(useUIStore.getState().showGitHubDialog).toBe(true);
       useUIStore.getState().toggleGitHubDialog();
       expect(useUIStore.getState().showGitHubDialog).toBe(false);
+    });
+  });
+
+  describe('toggleAgentChat', () => {
+    it('toggles agent chat visibility', () => {
+      useUIStore.getState().toggleAgentChat();
+      expect(useUIStore.getState().showAgentChat).toBe(true);
+      useUIStore.getState().toggleAgentChat();
+      expect(useUIStore.getState().showAgentChat).toBe(false);
     });
   });
 
