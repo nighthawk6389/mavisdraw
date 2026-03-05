@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { mockAuthAndOpenEditor } from './helpers/auth';
 
 /** Click on the canvas area to ensure the page has focus for keyboard events.
  *  We use the last canvas (interactive layer on top) with force to avoid overlap issues. */
@@ -13,7 +14,7 @@ function toolButton(page: Page, label: string) {
 
 test.describe('MavisDraw Application', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
+    await mockAuthAndOpenEditor(page);
   });
 
   test('loads the application', async ({ page }) => {
@@ -38,7 +39,7 @@ test.describe('MavisDraw Application', () => {
 
 test.describe('Toolbar', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
+    await mockAuthAndOpenEditor(page);
   });
 
   test('displays all tool buttons', async ({ page }) => {
@@ -95,7 +96,7 @@ test.describe('Toolbar', () => {
 
 test.describe('Keyboard Shortcuts', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
+    await mockAuthAndOpenEditor(page);
     await focusPage(page);
   });
 
@@ -144,7 +145,7 @@ test.describe('Keyboard Shortcuts', () => {
 
 test.describe('Canvas Interactions', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
+    await mockAuthAndOpenEditor(page);
   });
 
   test('drawing a rectangle on the canvas', async ({ page }) => {
@@ -226,7 +227,7 @@ test.describe('Canvas Interactions', () => {
 
 test.describe('Element Selection', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
+    await mockAuthAndOpenEditor(page);
   });
 
   test('Ctrl+A on empty canvas does not break', async ({ page }) => {
@@ -260,13 +261,13 @@ test.describe('Element Selection', () => {
 
 test.describe('Responsive Layout', () => {
   test('app fills the full viewport', async ({ page }) => {
-    await page.goto('/');
+    await mockAuthAndOpenEditor(page);
     const appContainer = page.locator('div.flex.h-full.w-full');
     await expect(appContainer).toBeVisible();
   });
 
   test('toolbar is on the left side', async ({ page }) => {
-    await page.goto('/');
+    await mockAuthAndOpenEditor(page);
     const toolbar = page.getByTestId('toolbar');
     const box = await toolbar.boundingBox();
     expect(box).not.toBeNull();

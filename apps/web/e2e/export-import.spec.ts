@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
+import { mockAuthAndOpenEditor } from './helpers/auth';
 
 function toolButton(page: Page, titlePrefix: string) {
   return page.getByTestId('toolbar').locator(`button[title^="${titlePrefix}"]`);
@@ -25,13 +26,12 @@ async function drawRectangle(page: Page) {
 
 test.describe('Export Dialog', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await page.waitForSelector('canvas', { state: 'visible' });
+    await mockAuthAndOpenEditor(page);
   });
 
   test('opens export dialog with Ctrl+Shift+E and closes with Escape', async ({ page }) => {
-    // Dialog should not be visible initially
-    await expect(page.locator('text=Export')).not.toBeVisible();
+    // Export dialog heading should not be visible initially
+    await expect(page.locator('h2:has-text("Export")')).not.toBeVisible();
 
     // Open with keyboard shortcut
     await page.keyboard.press('Control+Shift+E');
@@ -84,7 +84,7 @@ test.describe('Export Dialog', () => {
 
     // Trigger download
     const downloadPromise = page.waitForEvent('download');
-    await page.locator('button:has-text("Export")').click();
+    await page.locator('button.bg-blue-600:has-text("Export")').click();
     const download = await downloadPromise;
 
     // Verify downloaded file
@@ -110,7 +110,7 @@ test.describe('Export Dialog', () => {
     await select.selectOption('svg');
 
     const downloadPromise = page.waitForEvent('download');
-    await page.locator('button:has-text("Export")').click();
+    await page.locator('button.bg-blue-600:has-text("Export")').click();
     const download = await downloadPromise;
 
     expect(download.suggestedFilename()).toMatch(/\.svg$/);
@@ -129,8 +129,7 @@ test.describe('Export Dialog', () => {
 
 test.describe('Import', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await page.waitForSelector('canvas', { state: 'visible' });
+    await mockAuthAndOpenEditor(page);
   });
 
   test('hidden file input exists for import', async ({ page }) => {
@@ -211,8 +210,7 @@ test.describe('Import', () => {
 
 test.describe('Version History Panel', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await page.waitForSelector('canvas', { state: 'visible' });
+    await mockAuthAndOpenEditor(page);
   });
 
   test('Ctrl+S opens version history panel', async ({ page }) => {
@@ -239,7 +237,7 @@ test.describe('Version History Panel', () => {
     // Type a label and save
     const input = page.locator('input[placeholder="Version label..."]');
     await input.fill('Test Version 1');
-    await page.locator('button:has-text("Save")').click();
+    await page.locator('button.bg-blue-600:has-text("Save")').click();
 
     // Wait for the snapshot to appear in the list
     await expect(page.locator('text=Test Version 1')).toBeVisible({ timeout: 5000 });
@@ -255,8 +253,7 @@ test.describe('Version History Panel', () => {
 
 test.describe('Keyboard Shortcuts', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await page.waitForSelector('canvas', { state: 'visible' });
+    await mockAuthAndOpenEditor(page);
   });
 
   test('Ctrl+S does not trigger browser save dialog', async ({ page }) => {

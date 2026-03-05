@@ -1,4 +1,5 @@
-import { test, expect, type Page, type ConsoleMessage } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
+import { mockAuthAndOpenEditor, collectErrors } from './helpers/auth';
 
 function toolButton(page: Page, titlePrefix: string) {
   return page.getByTestId('toolbar').locator(`button[title^="${titlePrefix}"]`);
@@ -42,16 +43,11 @@ async function ensureStylePanelOpen(page: Page) {
 
 test.describe('Arrow Routing Fixes (Phase 1)', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await page.waitForSelector('canvas', { state: 'visible' });
+    await mockAuthAndOpenEditor(page);
   });
 
   test('creating a curved arrow produces no errors', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
-    page.on('console', (msg: ConsoleMessage) => {
-      if (msg.type() === 'error') errors.push(msg.text());
-    });
+    const errors = collectErrors(page);
 
     const box = (await getCanvasBox(page))!;
     await drawArrow(page, box.x + 100, box.y + 200, box.x + 400, box.y + 200);
@@ -70,8 +66,7 @@ test.describe('Arrow Routing Fixes (Phase 1)', () => {
   });
 
   test('creating an elbow arrow produces no errors', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
+    const errors = collectErrors(page);
 
     const box = (await getCanvasBox(page))!;
     await drawArrow(page, box.x + 100, box.y + 200, box.x + 400, box.y + 200);
@@ -90,8 +85,7 @@ test.describe('Arrow Routing Fixes (Phase 1)', () => {
   });
 
   test('clicking on a curved arrow selects it', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
+    const errors = collectErrors(page);
 
     const box = (await getCanvasBox(page))!;
     await drawArrow(page, box.x + 100, box.y + 300, box.x + 500, box.y + 300);
@@ -122,8 +116,7 @@ test.describe('Arrow Routing Fixes (Phase 1)', () => {
 
 test.describe('Arrowhead Controls (Phase 2)', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await page.waitForSelector('canvas', { state: 'visible' });
+    await mockAuthAndOpenEditor(page);
   });
 
   test('arrowhead section appears when arrow is selected', async ({ page }) => {
@@ -142,8 +135,7 @@ test.describe('Arrowhead Controls (Phase 2)', () => {
   });
 
   test('changing arrowhead style produces no errors', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
+    const errors = collectErrors(page);
 
     const box = (await getCanvasBox(page))!;
     await drawArrow(page, box.x + 100, box.y + 200, box.x + 400, box.y + 200);
@@ -162,8 +154,7 @@ test.describe('Arrowhead Controls (Phase 2)', () => {
   });
 
   test('double-clicking arrow cycles routing mode', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
+    const errors = collectErrors(page);
 
     const box = (await getCanvasBox(page))!;
     await drawArrow(page, box.x + 100, box.y + 300, box.x + 400, box.y + 300);
@@ -183,16 +174,11 @@ test.describe('Arrowhead Controls (Phase 2)', () => {
 
 test.describe('Edge-Initiated Connections (Phase 3)', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await page.waitForSelector('canvas', { state: 'visible' });
+    await mockAuthAndOpenEditor(page);
   });
 
   test('creating arrow between two shapes works without errors', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
-    page.on('console', (msg: ConsoleMessage) => {
-      if (msg.type() === 'error') errors.push(msg.text());
-    });
+    const errors = collectErrors(page);
 
     const box = (await getCanvasBox(page))!;
 
@@ -206,8 +192,7 @@ test.describe('Edge-Initiated Connections (Phase 3)', () => {
   });
 
   test('hovering near shape edge produces no errors', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
+    const errors = collectErrors(page);
 
     const box = (await getCanvasBox(page))!;
     await drawRectangle(page, box.x + 200, box.y + 200, box.x + 400, box.y + 300);
@@ -223,8 +208,7 @@ test.describe('Edge-Initiated Connections (Phase 3)', () => {
   });
 
   test('drag from anchor to create arrow without errors', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
+    const errors = collectErrors(page);
 
     const box = (await getCanvasBox(page))!;
     await drawRectangle(page, box.x + 100, box.y + 200, box.x + 250, box.y + 300);
@@ -247,13 +231,11 @@ test.describe('Edge-Initiated Connections (Phase 3)', () => {
 
 test.describe('Endpoint Dragging (Phase 4)', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await page.waitForSelector('canvas', { state: 'visible' });
+    await mockAuthAndOpenEditor(page);
   });
 
   test('selecting arrow shows endpoint handles without errors', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
+    const errors = collectErrors(page);
 
     const box = (await getCanvasBox(page))!;
     await drawArrow(page, box.x + 100, box.y + 200, box.x + 400, box.y + 200);
@@ -265,8 +247,7 @@ test.describe('Endpoint Dragging (Phase 4)', () => {
   });
 
   test('dragging endpoint to new position works without errors', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
+    const errors = collectErrors(page);
 
     const box = (await getCanvasBox(page))!;
     await drawArrow(page, box.x + 100, box.y + 200, box.x + 400, box.y + 200);
@@ -285,8 +266,7 @@ test.describe('Endpoint Dragging (Phase 4)', () => {
   });
 
   test('dragging endpoint to rebind to a shape works without errors', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
+    const errors = collectErrors(page);
 
     const box = (await getCanvasBox(page))!;
 
@@ -312,13 +292,11 @@ test.describe('Endpoint Dragging (Phase 4)', () => {
 
 test.describe('Midpoint Manipulation (Phase 5)', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await page.waitForSelector('canvas', { state: 'visible' });
+    await mockAuthAndOpenEditor(page);
   });
 
   test('selecting arrow shows midpoint add handles without errors', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
+    const errors = collectErrors(page);
 
     const box = (await getCanvasBox(page))!;
     await drawArrow(page, box.x + 100, box.y + 300, box.x + 500, box.y + 300);
@@ -330,8 +308,7 @@ test.describe('Midpoint Manipulation (Phase 5)', () => {
   });
 
   test('clicking midpoint to add waypoint produces no errors', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
+    const errors = collectErrors(page);
 
     const box = (await getCanvasBox(page))!;
     await drawArrow(page, box.x + 100, box.y + 300, box.x + 500, box.y + 300);
@@ -350,11 +327,7 @@ test.describe('Midpoint Manipulation (Phase 5)', () => {
   });
 
   test('full waypoint workflow: add, drag, remove produces no errors', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
-    page.on('console', (msg: ConsoleMessage) => {
-      if (msg.type() === 'error') errors.push(msg.text());
-    });
+    const errors = collectErrors(page);
 
     const box = (await getCanvasBox(page))!;
 
@@ -378,8 +351,7 @@ test.describe('Midpoint Manipulation (Phase 5)', () => {
   });
 
   test('double-click on waypoint removes it (Excalidraw/draw.io style)', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
+    const errors = collectErrors(page);
 
     const box = (await getCanvasBox(page))!;
     await drawArrow(page, box.x + 100, box.y + 300, box.x + 500, box.y + 300);
@@ -401,8 +373,7 @@ test.describe('Midpoint Manipulation (Phase 5)', () => {
   });
 
   test('Delete key while dragging waypoint removes it', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
+    const errors = collectErrors(page);
 
     const box = (await getCanvasBox(page))!;
     await drawArrow(page, box.x + 100, box.y + 300, box.x + 500, box.y + 300);
@@ -430,16 +401,11 @@ test.describe('Midpoint Manipulation (Phase 5)', () => {
 
 test.describe('Arrow Routing Mode Integration', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await page.waitForSelector('canvas', { state: 'visible' });
+    await mockAuthAndOpenEditor(page);
   });
 
   test('switching routing modes via style panel produces no errors', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
-    page.on('console', (msg: ConsoleMessage) => {
-      if (msg.type() === 'error') errors.push(msg.text());
-    });
+    const errors = collectErrors(page);
 
     const box = (await getCanvasBox(page))!;
     await drawArrow(page, box.x + 100, box.y + 300, box.x + 400, box.y + 300);
@@ -473,8 +439,7 @@ test.describe('Arrow Routing Mode Integration', () => {
   });
 
   test('arrow with binding updates correctly when shape moves', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
+    const errors = collectErrors(page);
 
     const box = (await getCanvasBox(page))!;
 
