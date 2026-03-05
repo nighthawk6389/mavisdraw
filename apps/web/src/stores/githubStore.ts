@@ -73,6 +73,19 @@ export const useGitHubStore = create<GitHubState>((set) => ({
     set({ isLoading: true, error: null });
     try {
       const { url } = await apiGetGitHubAuthUrl(enterpriseUrl);
+
+      // Listen for the OAuth callback message from the popup
+      const onMessage = (event: MessageEvent) => {
+        if (event.origin !== window.location.origin) return;
+        if (event.data?.type !== 'github-oauth-callback') return;
+        window.removeEventListener('message', onMessage);
+        const { code } = event.data as { code: string };
+        if (code) {
+          useGitHubStore.getState().handleOAuthCallback(code, enterpriseUrl);
+        }
+      };
+      window.addEventListener('message', onMessage);
+
       // Open OAuth in a popup
       const width = 600;
       const height = 700;

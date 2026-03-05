@@ -12,6 +12,9 @@ interface UIState {
   showVersionHistory: boolean;
   showGitHubDialog: boolean;
 
+  // Agent chat
+  showAgentChat: boolean;
+
   // Diagram render mode
   renderMode: RenderMode;
 
@@ -27,6 +30,7 @@ interface UIState {
   toggleExportDialog: () => void;
   toggleVersionHistory: () => void;
   toggleGitHubDialog: () => void;
+  toggleAgentChat: () => void;
   setRenderMode: (mode: RenderMode) => void;
   toggleGrid: () => void;
   toggleSnapToGrid: () => void;
@@ -40,6 +44,7 @@ export const useUIStore = create<UIState>((set) => ({
   showExportDialog: false,
   showVersionHistory: false,
   showGitHubDialog: false,
+  showAgentChat: false,
   renderMode: 'clean',
   showGrid: true,
   snapToGrid: false,
@@ -67,6 +72,10 @@ export const useUIStore = create<UIState>((set) => ({
 
   toggleGitHubDialog: () => {
     set((state) => ({ showGitHubDialog: !state.showGitHubDialog }));
+  },
+
+  toggleAgentChat: () => {
+    set((state) => ({ showAgentChat: !state.showAgentChat }));
   },
 
   setRenderMode: (mode: RenderMode) => {

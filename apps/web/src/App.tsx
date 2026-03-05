@@ -10,6 +10,7 @@ import ExportDialog from './components/export/ExportDialog';
 import ImportHandler from './components/export/ImportHandler';
 import VersionHistoryPanel from './components/version/VersionHistoryPanel';
 import GitHubConnectDialog from './components/github/GitHubConnectDialog';
+import AgentPanel from './components/agent/AgentPanel';
 import PresenceAvatars from './components/collaboration/PresenceAvatars';
 import ShareDialog from './components/collaboration/ShareDialog';
 import { useKeyboard } from './hooks/useKeyboard';
@@ -112,6 +113,13 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
           >
             GitHub
           </button>
+          <button
+            onClick={() => useUIStore.getState().toggleAgentChat()}
+            className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 border border-gray-300 rounded"
+            title="AI Chat"
+          >
+            AI Chat
+          </button>
           <div className="w-px h-4 bg-gray-300" />
           <button
             onClick={() => setShowShareDialog(true)}
@@ -161,6 +169,7 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
         <StylePanel />
         <LayerPanel />
         <VersionHistoryPanel />
+        <AgentPanel />
       </div>
 
       {/* Overlays */}
