@@ -98,6 +98,79 @@ describe('portal creation flow', () => {
     expect(updated.portalStyle).toBe('badge');
   });
 
+  it('creates a portal with githubLink defaulting to null', () => {
+    const el = useElementsStore.getState().createElement(
+      'portal',
+      'root-diagram',
+      10,
+      20,
+      120,
+      100,
+    );
+
+    expect(el.type).toBe('portal');
+    if (el.type === 'portal') {
+      expect((el as PortalElement).githubLink).toBeNull();
+    }
+  });
+
+  it('links and unlinks a GitHub repo on a portal', () => {
+    const store = useElementsStore.getState();
+    const portal = store.createElement('portal', 'root-diagram', 0, 0, 100, 80);
+    store.addElement(portal);
+
+    // Link GitHub repo
+    useElementsStore.getState().updateElement(portal.id, {
+      githubLink: {
+        owner: 'acme',
+        repo: 'api-gateway',
+        path: 'src/',
+        ref: 'main',
+      },
+    } as Partial<PortalElement>);
+
+    const linked = useElementsStore.getState().getElementById(portal.id) as PortalElement;
+    expect(linked.githubLink).toEqual({
+      owner: 'acme',
+      repo: 'api-gateway',
+      path: 'src/',
+      ref: 'main',
+    });
+
+    // Unlink
+    useElementsStore.getState().updateElement(portal.id, {
+      githubLink: null,
+    } as Partial<PortalElement>);
+
+    const unlinked = useElementsStore.getState().getElementById(portal.id) as PortalElement;
+    expect(unlinked.githubLink).toBeNull();
+  });
+
+  it('portal can have both targetDiagramId and githubLink', () => {
+    const store = useElementsStore.getState();
+    const portal = store.createElement('portal', 'root-diagram', 0, 0, 100, 80);
+    store.addElement(portal);
+
+    useElementsStore.getState().updateElement(portal.id, {
+      targetDiagramId: 'child-diagram',
+      githubLink: {
+        owner: 'acme',
+        repo: 'user-service',
+        path: '',
+        ref: 'develop',
+      },
+    } as Partial<PortalElement>);
+
+    const updated = useElementsStore.getState().getElementById(portal.id) as PortalElement;
+    expect(updated.targetDiagramId).toBe('child-diagram');
+    expect(updated.githubLink).toEqual({
+      owner: 'acme',
+      repo: 'user-service',
+      path: '',
+      ref: 'develop',
+    });
+  });
+
   it('detaches portal from diagram', () => {
     const store = useElementsStore.getState();
     const portal = store.createElement('portal', 'root-diagram', 0, 0, 100, 80);

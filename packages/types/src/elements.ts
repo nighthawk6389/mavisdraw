@@ -115,12 +115,21 @@ export interface ImageElement extends BaseElement {
   aspectRatio: number;
 }
 
+export interface GitHubLink {
+  owner: string;
+  repo: string;
+  path: string;
+  ref: string;
+  enterpriseUrl?: string;
+}
+
 export interface PortalElement extends BaseElement {
   type: 'portal';
   targetDiagramId: string;
   label: string;
   thumbnailDataUrl: string | null;
   portalStyle: PortalStyle;
+  githubLink: GitHubLink | null;
 }
 
 export type MavisElement =

@@ -1,4 +1,5 @@
-import { test, expect, type Page, type ConsoleMessage } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
+import { mockAuthAndOpenEditor, collectErrors } from './helpers/auth';
 
 // ─── Helpers ───────────────────────────────────────────────────
 
@@ -24,41 +25,18 @@ async function drawRectangle(page: Page) {
 
 test.describe('Runtime Error Detection', () => {
   test('page loads without console errors', async ({ page }) => {
-    const errors: string[] = [];
+    const errors = collectErrors(page);
 
-    page.on('pageerror', (err) => {
-      errors.push(err.message);
-    });
-
-    page.on('console', (msg: ConsoleMessage) => {
-      if (msg.type() === 'error') {
-        errors.push(msg.text());
-      }
-    });
-
-    await page.goto('/');
-    // Wait for React to fully mount and settle
-    await page.waitForSelector('canvas', { state: 'visible' });
+    await mockAuthAndOpenEditor(page);
     await page.waitForTimeout(1000);
 
     expect(errors, 'Expected no console errors on page load').toEqual([]);
   });
 
   test('no errors after basic canvas interaction', async ({ page }) => {
-    const errors: string[] = [];
+    const errors = collectErrors(page);
 
-    page.on('pageerror', (err) => {
-      errors.push(err.message);
-    });
-
-    page.on('console', (msg: ConsoleMessage) => {
-      if (msg.type() === 'error') {
-        errors.push(msg.text());
-      }
-    });
-
-    await page.goto('/');
-    await page.waitForSelector('canvas', { state: 'visible' });
+    await mockAuthAndOpenEditor(page);
 
     await drawRectangle(page);
     await page.waitForTimeout(500);
@@ -67,20 +45,9 @@ test.describe('Runtime Error Detection', () => {
   });
 
   test('no errors when toggling all panels', async ({ page }) => {
-    const errors: string[] = [];
+    const errors = collectErrors(page);
 
-    page.on('pageerror', (err) => {
-      errors.push(err.message);
-    });
-
-    page.on('console', (msg: ConsoleMessage) => {
-      if (msg.type() === 'error') {
-        errors.push(msg.text());
-      }
-    });
-
-    await page.goto('/');
-    await page.waitForSelector('canvas', { state: 'visible' });
+    await mockAuthAndOpenEditor(page);
 
     // Toggle diagram tree
     await toolbarButton(page, 'Diagram tree').click();
@@ -102,8 +69,7 @@ test.describe('Runtime Error Detection', () => {
 
 test.describe('Diagram Tree Sidebar', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await page.waitForSelector('canvas', { state: 'visible' });
+    await mockAuthAndOpenEditor(page);
   });
 
   test('sidebar is visible by default', async ({ page }) => {
@@ -161,8 +127,7 @@ test.describe('Diagram Tree Sidebar', () => {
 
 test.describe('Breadcrumb Navigation', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await page.waitForSelector('canvas', { state: 'visible' });
+    await mockAuthAndOpenEditor(page);
   });
 
   test('breadcrumb is visible', async ({ page }) => {
@@ -186,8 +151,7 @@ test.describe('Breadcrumb Navigation', () => {
 
 test.describe('Portal and Drill-down', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await page.waitForSelector('canvas', { state: 'visible' });
+    await mockAuthAndOpenEditor(page);
   });
 
   test('drawing a portal creates a child diagram in the tree', async ({ page }) => {
@@ -215,11 +179,7 @@ test.describe('Portal and Drill-down', () => {
   });
 
   test('no errors after drawing a portal', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
-    page.on('console', (msg: ConsoleMessage) => {
-      if (msg.type() === 'error') errors.push(msg.text());
-    });
+    const errors = collectErrors(page);
 
     await toolbarButton(page, 'Portal').click();
     const canvas = page.locator('canvas').last();

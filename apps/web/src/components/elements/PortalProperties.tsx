@@ -1,8 +1,10 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { useElementsStore } from '../../stores/elementsStore';
 import { useSelectionStore } from '../../stores/selectionStore';
 import { useDiagramStore } from '../../stores/diagramStore';
-import type { PortalElement, PortalStyle } from '@mavisdraw/types';
+import { useGitHubStore } from '../../stores/githubStore';
+import RepoBrowser from '../github/RepoBrowser';
+import type { PortalElement, PortalStyle, GitHubLink } from '@mavisdraw/types';
 
 const PORTAL_STYLES: { value: PortalStyle; label: string }[] = [
   { value: 'card', label: 'Card' },
@@ -96,6 +98,24 @@ export default function PortalProperties() {
     if (!selectedPortal || !selectedPortal.targetDiagramId) return;
     navigateToDiagram(selectedPortal.targetDiagramId);
   }, [selectedPortal, navigateToDiagram]);
+
+  // GitHub link handlers
+  const connections = useGitHubStore((s) => s.connections);
+  const [showRepoBrowser, setShowRepoBrowser] = useState(false);
+
+  const handleLinkGitHub = useCallback(
+    (link: GitHubLink) => {
+      if (!selectedPortal) return;
+      updateElement(selectedPortal.id, { githubLink: link } as Partial<PortalElement>);
+      setShowRepoBrowser(false);
+    },
+    [selectedPortal, updateElement],
+  );
+
+  const handleUnlinkGitHub = useCallback(() => {
+    if (!selectedPortal) return;
+    updateElement(selectedPortal.id, { githubLink: null } as Partial<PortalElement>);
+  }, [selectedPortal, updateElement]);
 
   if (!selectedPortal) return null;
 
@@ -201,6 +221,70 @@ export default function PortalProperties() {
           </>
         )}
       </div>
+
+      {/* GitHub Link */}
+      <div className="mt-3 border-t pt-3">
+        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+          GitHub Link
+        </h4>
+
+        {selectedPortal.githubLink ? (
+          <div className="space-y-1.5">
+            <div className="px-2 py-1.5 bg-gray-50 rounded text-xs text-gray-700">
+              <span className="font-medium">
+                {selectedPortal.githubLink.owner}/{selectedPortal.githubLink.repo}
+              </span>
+              {selectedPortal.githubLink.path && (
+                <span className="text-gray-500"> / {selectedPortal.githubLink.path}</span>
+              )}
+              {selectedPortal.githubLink.ref &&
+                selectedPortal.githubLink.ref !== 'main' &&
+                selectedPortal.githubLink.ref !== 'HEAD' && (
+                  <span className="text-gray-400"> ({selectedPortal.githubLink.ref})</span>
+                )}
+            </div>
+            <button
+              className="w-full text-left px-2 py-1.5 text-xs bg-gray-50 text-gray-600
+                hover:bg-gray-100 rounded transition-colors"
+              onClick={() => setShowRepoBrowser(true)}
+            >
+              Browse Code
+            </button>
+            <button
+              className="w-full text-left px-2 py-1.5 text-xs text-red-600
+                hover:bg-red-50 rounded transition-colors"
+              onClick={handleUnlinkGitHub}
+            >
+              Unlink Repository
+            </button>
+          </div>
+        ) : connections.length > 0 ? (
+          <button
+            className="w-full text-left px-2 py-1.5 text-xs bg-gray-900 text-white
+              hover:bg-gray-800 rounded transition-colors"
+            onClick={() => setShowRepoBrowser(true)}
+          >
+            Link Repository
+          </button>
+        ) : (
+          <p className="text-xs text-gray-400">
+            Connect a GitHub account first via the GitHub button in the toolbar.
+          </p>
+        )}
+      </div>
+
+      {/* Repo Browser overlay */}
+      {showRepoBrowser && connections.length > 0 && (
+        <RepoBrowser
+          connectionId={connections[0].id}
+          initialOwner={selectedPortal.githubLink?.owner}
+          initialRepo={selectedPortal.githubLink?.repo}
+          initialPath={selectedPortal.githubLink?.path}
+          initialRef={selectedPortal.githubLink?.ref}
+          onSelect={handleLinkGitHub}
+          onClose={() => setShowRepoBrowser(false)}
+        />
+      )}
     </div>
   );
 }

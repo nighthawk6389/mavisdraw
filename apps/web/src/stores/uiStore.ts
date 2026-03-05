@@ -10,6 +10,7 @@ interface UIState {
   // Dialogs
   showExportDialog: boolean;
   showVersionHistory: boolean;
+  showGitHubDialog: boolean;
 
   // Diagram render mode
   renderMode: RenderMode;
@@ -25,6 +26,7 @@ interface UIState {
   toggleDiagramTree: () => void;
   toggleExportDialog: () => void;
   toggleVersionHistory: () => void;
+  toggleGitHubDialog: () => void;
   setRenderMode: (mode: RenderMode) => void;
   toggleGrid: () => void;
   toggleSnapToGrid: () => void;
@@ -37,6 +39,7 @@ export const useUIStore = create<UIState>((set) => ({
   showDiagramTree: true,
   showExportDialog: false,
   showVersionHistory: false,
+  showGitHubDialog: false,
   renderMode: 'clean',
   showGrid: true,
   snapToGrid: false,
@@ -60,6 +63,10 @@ export const useUIStore = create<UIState>((set) => ({
 
   toggleVersionHistory: () => {
     set((state) => ({ showVersionHistory: !state.showVersionHistory }));
+  },
+
+  toggleGitHubDialog: () => {
+    set((state) => ({ showGitHubDialog: !state.showGitHubDialog }));
   },
 
   setRenderMode: (mode: RenderMode) => {

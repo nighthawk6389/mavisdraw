@@ -1,4 +1,5 @@
-import { test, expect, type Page, type ConsoleMessage } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
+import { mockAuthAndOpenEditor, collectErrors } from './helpers/auth';
 
 function toolButton(page: Page, titlePrefix: string) {
   return page.getByTestId('toolbar').locator(`button[title^="${titlePrefix}"]`);
@@ -17,16 +18,11 @@ function getCanvasBox(page: Page) {
 
 test.describe('Shape Creation Preview', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await page.waitForSelector('canvas', { state: 'visible' });
+    await mockAuthAndOpenEditor(page);
   });
 
   test('no console errors during shape creation', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
-    page.on('console', (msg: ConsoleMessage) => {
-      if (msg.type() === 'error') errors.push(msg.text());
-    });
+    const errors = collectErrors(page);
 
     // Draw a rectangle
     await toolButton(page, 'Rectangle').click();
@@ -67,11 +63,7 @@ test.describe('Shape Creation Preview', () => {
   });
 
   test('created rectangle is visible and can be selected and deleted', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
-    page.on('console', (msg: ConsoleMessage) => {
-      if (msg.type() === 'error') errors.push(msg.text());
-    });
+    const errors = collectErrors(page);
 
     await toolButton(page, 'Rectangle').click();
     const box = (await getCanvasBox(page))!;
@@ -106,8 +98,7 @@ test.describe('Shape Creation Preview', () => {
   });
 
   test('arrow creation works without errors', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
+    const errors = collectErrors(page);
 
     await toolButton(page, 'Arrow').click();
     const box = (await getCanvasBox(page))!;
@@ -122,8 +113,7 @@ test.describe('Shape Creation Preview', () => {
   });
 
   test('freedraw tool works without errors', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
+    const errors = collectErrors(page);
 
     await toolButton(page, 'Freedraw').click();
     const box = (await getCanvasBox(page))!;
@@ -144,8 +134,7 @@ test.describe('Shape Creation Preview', () => {
 
 test.describe('Text Tool', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await page.waitForSelector('canvas', { state: 'visible' });
+    await mockAuthAndOpenEditor(page);
   });
 
   test('clicking with text tool shows editable text box', async ({ page }) => {
@@ -174,11 +163,7 @@ test.describe('Text Tool', () => {
   });
 
   test('text editor is visible and interactive', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
-    page.on('console', (msg) => {
-      if (msg.type() === 'error') errors.push(msg.text());
-    });
+    const errors = collectErrors(page);
 
     await toolButton(page, 'Text').click();
     const box = (await getCanvasBox(page))!;
@@ -196,11 +181,7 @@ test.describe('Text Tool', () => {
   });
 
   test('no console errors during text creation', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
-    page.on('console', (msg: ConsoleMessage) => {
-      if (msg.type() === 'error') errors.push(msg.text());
-    });
+    const errors = collectErrors(page);
 
     await toolButton(page, 'Text').click();
     const box = (await getCanvasBox(page))!;
@@ -218,16 +199,11 @@ test.describe('Text Tool', () => {
 
 test.describe('Portal Element', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await page.waitForSelector('canvas', { state: 'visible' });
+    await mockAuthAndOpenEditor(page);
   });
 
   test('portal creation works without errors', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (err) => errors.push(err.message));
-    page.on('console', (msg: ConsoleMessage) => {
-      if (msg.type() === 'error') errors.push(msg.text());
-    });
+    const errors = collectErrors(page);
 
     await toolButton(page, 'Portal').click();
     const box = (await getCanvasBox(page))!;

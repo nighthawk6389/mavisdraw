@@ -179,6 +179,7 @@ describe('exportToMiro', () => {
       label: 'Sub',
       thumbnailDataUrl: null,
       portalStyle: 'card',
+      githubLink: null,
     };
 
     const result = exportToMiro([portal]);

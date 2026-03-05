@@ -625,6 +625,7 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
           label: 'Portal',
           thumbnailDataUrl: null,
           portalStyle: 'card',
+          githubLink: null,
         } as PortalElement;
 
       default: {

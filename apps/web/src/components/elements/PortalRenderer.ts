@@ -539,6 +539,58 @@ function adjustAlpha(hexColor: string, alpha: number): string {
   return hexColor;
 }
 
+// ─── GitHub indicator ─────────────────────────────────────────────
+
+function drawGitHubIndicator(
+  ctx: CanvasRenderingContext2D,
+  element: PortalElement,
+): void {
+  if (!element.githubLink) return;
+
+  const { width, strokeColor } = element;
+  const y = element.portalStyle === 'badge' ? element.height + 4 : TITLE_BAR_HEIGHT + 4;
+  const iconSize = 10;
+  const padX = PADDING;
+
+  ctx.save();
+
+  // Small GitHub branch icon
+  ctx.strokeStyle = adjustAlpha(strokeColor, 0.5);
+  ctx.fillStyle = adjustAlpha(strokeColor, 0.5);
+  ctx.lineWidth = 1;
+  ctx.lineCap = 'round';
+
+  // Simple branch icon: circle with line
+  const cx = padX + iconSize / 2;
+  const cy = y + iconSize / 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(cx + 3, cy);
+  ctx.lineTo(cx + 6, cy);
+  ctx.stroke();
+
+  // Repo label
+  const label = `${element.githubLink.owner}/${element.githubLink.repo}`;
+  const labelX = padX + iconSize + 4;
+  const maxWidth = width - labelX - padX;
+  ctx.font = '10px "Segoe UI", system-ui, sans-serif';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+
+  let displayText = label;
+  if (ctx.measureText(displayText).width > maxWidth) {
+    while (displayText.length > 1 && ctx.measureText(displayText + '...').width > maxWidth) {
+      displayText = displayText.slice(0, -1);
+    }
+    displayText += '...';
+  }
+  ctx.fillText(displayText, labelX, cy);
+
+  ctx.restore();
+}
+
 // ─── Collaboration badge ──────────────────────────────────────────
 
 /**
@@ -604,6 +656,8 @@ export function renderPortalSketchy(
       renderCardSketchy(ctx, roughCanvas, element, drawRough);
       break;
   }
+  // Draw GitHub indicator
+  drawGitHubIndicator(ctx, element);
   // Draw collaboration badge on card and expanded styles
   if (activeUserCount > 0 && element.portalStyle !== 'badge') {
     drawCollaborationBadge(ctx, element.width, activeUserCount);
@@ -631,6 +685,8 @@ export function renderPortalClean(
       renderCardClean(ctx, element);
       break;
   }
+  // Draw GitHub indicator
+  drawGitHubIndicator(ctx, element);
   // Draw collaboration badge on card and expanded styles
   if (activeUserCount > 0 && element.portalStyle !== 'badge') {
     drawCollaborationBadge(ctx, element.width, activeUserCount);

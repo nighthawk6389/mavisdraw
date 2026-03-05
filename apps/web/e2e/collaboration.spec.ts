@@ -1,8 +1,9 @@
 import { test, expect } from '@playwright/test';
+import { mockAuthAndOpenEditor } from './helpers/auth';
 
 test.describe('Collaboration UI', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
+    await mockAuthAndOpenEditor(page);
   });
 
   test('app loads and shows login or editor', async ({ page }) => {
@@ -46,19 +47,19 @@ test.describe('Collaboration UI', () => {
 
 test.describe('Collaboration Components Structure', () => {
   test('CursorOverlay renders nothing when no remote cursors', async ({ page }) => {
-    await page.goto('/');
-    await page.waitForTimeout(500);
+    await mockAuthAndOpenEditor(page);
 
-    // The cursor overlay should not be visible without remote cursors
-    const cursorOverlay = page.locator('.pointer-events-none.z-50');
+    // The CursorOverlay renders an absolute div with these classes only when
+    // there are remote cursors. Use a more specific selector to avoid matching
+    // toolbar tooltips that share pointer-events-none + z-50.
+    const cursorOverlay = page.locator('canvas.pointer-events-none.z-50');
     const count = await cursorOverlay.count();
     // Should be 0 since no collaboration is active
     expect(count).toBe(0);
   });
 
   test('PresenceAvatars not visible when not connected', async ({ page }) => {
-    await page.goto('/');
-    await page.waitForTimeout(500);
+    await mockAuthAndOpenEditor(page);
 
     // The presence dot indicator should not be visible
     const greenDot = page.locator('[title="Connected"]');
