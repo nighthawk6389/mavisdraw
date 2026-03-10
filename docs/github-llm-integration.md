@@ -1,10 +1,6 @@
-# GitHub Integration & LLM-Readable Format
+# GitHub Integration, LLM-Readable Format & AI Chat
 
-This document describes how MavisDraw connects to GitHub repositories and how the LLM-readable export format works.
-
-## Overview
-
-MavisDraw's portal elements can now link to GitHub repositories in addition to nested diagrams. This enables architecture diagrams to reference actual source code. The LLM-readable export format produces a topology-only Markdown representation of diagrams that AI agents can parse and generate.
+This document describes how MavisDraw connects to GitHub repositories, how the LLM-readable export format works, and how the AI Chat interface lets an agent understand, create, and modify diagrams.
 
 ## Architecture
 
@@ -202,10 +198,156 @@ The parser is line-based and lenient:
 
 The `'llm-text'` format is available in the Export dialog as "LLM-Readable Text (.md)". It exports the full diagram hierarchy (when "Include nested diagrams" is checked) to a `.md` file.
 
+## AI Chat Interface
+
+### Overview
+
+The AI Chat panel lets users interact with a Claude-powered agent that can:
+
+1. **Read the current diagram** — the agent sees the LLM-readable Markdown representation of the diagram on every request.
+2. **Browse linked GitHub repos** — the agent uses server-side tools to navigate file trees and read source files from connected GitHub accounts.
+3. **Propose diagram changes** — instead of modifying the diagram directly, the agent proposes structured changes (adds, modifications, deletions, connections) that the user reviews and applies with one click.
+
+### User Workflow
+
+1. Click the **"AI Chat"** button in the editor header bar to open the chat panel on the right side.
+2. Type a message — for example:
+   - *"Describe this diagram"* — the agent reads the current diagram and summarizes its architecture.
+   - *"Add a database service connected to the API Gateway"* — the agent proposes adding a rectangle and an arrow.
+   - *"Look at the linked repo and suggest services based on the code structure"* — the agent browses the GitHub repo tree, reads key files, then proposes diagram changes.
+3. The agent streams its response. Tool usage is shown inline (e.g., "Browsing code...", "Reading file...").
+4. When the agent proposes changes, a **ProposalCard** appears showing:
+   - A description of the change
+   - A summary of each operation (`+ Add "Database"`, `~ Modify "API Gateway"`, `- Delete "Old Service"`, `→ "API" → "Database"`)
+   - **Apply** and **Dismiss** buttons
+5. Clicking **Apply** creates all elements and connections in a single undo step — pressing Ctrl+Z reverts the entire proposal.
+6. Clicking **Dismiss** hides the proposal without making changes.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Frontend (apps/web)                                        │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐  │
+│  │ AgentPanel    │  │ ChatMessage  │  │ ProposalCard     │  │
+│  │ (useChat)     │  │ (parts-based)│  │ (apply/dismiss)  │  │
+│  └──────┬────────┘  └──────────────┘  └────────┬─────────┘  │
+│         │                                       │           │
+│  ┌──────┴───────────────────────────────────────┘           │
+│  │ agentStore.ts (proposals)    uiStore.ts (toggle)         │
+│  └──────────────────────┬───────────────────────────────────┘
+│                         │ DefaultChatTransport
+│                         │ (streaming, auth headers)
+├─────────────────────────┼───────────────────────────────────┤
+│  Backend (apps/server)  │                                   │
+│  ┌──────────────────────┴─────────────────────────────┐     │
+│  │ routes/agent.ts (POST /api/agent/chat)             │     │
+│  └──────────────────────┬─────────────────────────────┘     │
+│  ┌──────────────────────┴─────────────────────────────┐     │
+│  │ services/agentService.ts                           │     │
+│  │  - Claude model (claude-sonnet-4-20250514)         │     │
+│  │  - System prompt (role + current diagram markdown) │     │
+│  │  - 4 tools (see below)                             │     │
+│  │  - Vercel AI SDK streamText → UIMessageStream      │     │
+│  └──────────────────────┬─────────────────────────────┘     │
+│                         │ Tool execution                    │
+│  ┌──────────────────────┴─────────────────────────────┐     │
+│  │ services/githubService.ts (reused)                 │     │
+│  │  - getDecryptedToken → getRepoTree / getFileContent│     │
+│  └────────────────────────────────────────────────────┘     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### How It Works Internally
+
+**Request flow:**
+
+1. The frontend's `AgentPanel` uses Vercel AI SDK's `useChat` hook with a `DefaultChatTransport` configured to POST to `/api/agent/chat`.
+2. On each request, the transport sends the conversation `messages` plus a `diagramMarkdown` string — the current diagram serialized via `serializeScene()` from `@mavisdraw/llm`.
+3. The server route validates the body, extracts the authenticated user, and calls `streamAgentChat()`.
+4. `streamAgentChat()` calls `streamText()` from the Vercel AI SDK with:
+   - The Claude model
+   - A system prompt containing the diagram markdown
+   - The 4 tool definitions
+   - `stopWhen: stepCountIs(10)` (max 10 tool-use round-trips)
+5. The response is streamed back as a `UIMessageStreamResponse` — the frontend `useChat` hook parses parts as they arrive.
+
+**Agent tools:**
+
+| Tool | Input | What It Does |
+|------|-------|-------------|
+| `browse_diagram` | _(none)_ | Returns the current diagram markdown passed from the client |
+| `browse_code` | `connectionId, owner, repo, path?, ref?` | Decrypts the user's GitHub token and calls `getRepoTree()` to list files/directories |
+| `read_file` | `connectionId, owner, repo, path, ref?` | Decrypts the token and calls `getFileContent()` — truncates files >50KB |
+| `propose_changes` | `description, changes[], connections[]` | Returns a structured `DiagramProposal` with a unique `proposalId` |
+
+All tool `execute` functions are wrapped in try/catch — errors are returned as `{ error: message }` so the LLM can explain the failure to the user.
+
+**Propose-then-apply:**
+
+The `propose_changes` tool returns a `DiagramProposal`:
+
+```typescript
+interface DiagramProposal {
+  proposalId: string;
+  description: string;
+  changes: ProposedChange[];   // add | modify | delete
+  connections: ProposedConnection[];  // fromLabel → toLabel
+  status: 'pending' | 'applied' | 'dismissed';
+}
+```
+
+When the user clicks **Apply** on a `ProposalCard`:
+
+1. `pushHistory()` is called once (single undo step).
+2. A `labelToId` map is built from existing elements (bound text labels → element IDs).
+3. Each `add` change creates a new element + bound text label via `createElement()`.
+4. Each `modify` change updates the element or its bound text.
+5. Each `delete` change soft-deletes the element (`isDeleted: true`).
+6. Each connection creates an arrow element with start/end bindings.
+7. The proposal status is set to `'applied'`.
+
+### API Endpoint
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/agent/chat` | Streaming AI chat endpoint |
+
+**Request body:**
+
+```json
+{
+  "messages": [...],
+  "diagramMarkdown": "# Architecture: My Project\n..."
+}
+```
+
+**Response:** Vercel AI SDK UIMessageStream (chunked streaming).
+
+**Auth:** Requires `Authorization: Bearer <token>` header (same JWT as all other endpoints).
+
+### SDK Details
+
+The AI Chat feature uses **Vercel AI SDK v6**:
+
+| Package | Where | Purpose |
+|---------|-------|---------|
+| `ai` | Server + Client | Core: `streamText`, `tool`, `zodSchema`, `stepCountIs`, `DefaultChatTransport` |
+| `@ai-sdk/react` | Client | `useChat` hook for streaming chat UI |
+| `@ai-sdk/anthropic` | Server | Claude provider adapter |
+
+**v6 API notes** (different from older documentation):
+- Tools use `inputSchema: zodSchema(z.object({...}))` (not `parameters`)
+- Multi-step tool use: `stopWhen: stepCountIs(10)` (not `maxSteps`)
+- Chat transport: `new DefaultChatTransport({...})` (not `api` option on `useChat`)
+- Server response: `result.toUIMessageStreamResponse()` (not `toDataStreamResponse`)
+- Messages use `parts[]` array (not `content` string)
+
 ## Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
+| `ANTHROPIC_API_KEY` | Yes (for AI Chat) | Anthropic API key — read automatically by `@ai-sdk/anthropic` |
 | `GITHUB_CLIENT_ID` | Yes (for GitHub) | OAuth App client ID |
 | `GITHUB_CLIENT_SECRET` | Yes (for GitHub) | OAuth App client secret |
 | `GITHUB_TOKEN_ENCRYPTION_KEY` | Yes (for GitHub) | 64-char hex string (32 bytes) for AES-256-GCM |
@@ -224,21 +366,32 @@ openssl rand -hex 32
 
 ## File Map
 
-### Backend
+### Backend — GitHub
 - `apps/server/src/routes/github.ts` — Fastify route plugin
 - `apps/server/src/services/githubService.ts` — OAuth + GitHub API + DB operations
 - `apps/server/src/utils/encryption.ts` — AES-256-GCM encrypt/decrypt
 - `apps/server/src/db/schema.ts` — `githubConnections` table + relations
 
-### Frontend
+### Backend — AI Chat
+- `apps/server/src/routes/agent.ts` — `POST /api/agent/chat` streaming endpoint
+- `apps/server/src/services/agentService.ts` — Claude model config, system prompt, tool definitions, `streamAgentChat()`
+
+### Frontend — GitHub
 - `apps/web/src/services/github.ts` — API client functions
 - `apps/web/src/stores/githubStore.ts` — Zustand store
 - `apps/web/src/components/github/GitHubConnectDialog.tsx` — OAuth UI
 - `apps/web/src/components/github/RepoBrowser.tsx` — File tree browser
 
+### Frontend — AI Chat
+- `apps/web/src/stores/agentStore.ts` — Zustand store for diagram proposals
+- `apps/web/src/components/agent/AgentPanel.tsx` — Chat panel with `useChat` hook
+- `apps/web/src/components/agent/ChatMessage.tsx` — Message rendering (text + tool parts)
+- `apps/web/src/components/agent/ProposalCard.tsx` — Apply/Dismiss change proposals
+
 ### Shared Types
 - `packages/types/src/elements.ts` — `GitHubLink`, extended `PortalElement`
 - `packages/types/src/export.ts` — `'llm-text'` added to `ExportFormat`
+- `packages/types/src/agent.ts` — `DiagramProposal`, `ProposedChange`, `ProposedConnection`
 
 ### LLM Package
 - `packages/llm/src/serialize.ts` — Scene → Markdown

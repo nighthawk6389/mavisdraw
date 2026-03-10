@@ -7,6 +7,7 @@ import { projectRoutes } from './routes/projects.js';
 import { diagramRoutes } from './routes/diagrams.js';
 import { sharingRoutes } from './routes/sharing.js';
 import { githubRoutes } from './routes/github.js';
+import { agentRoutes } from './routes/agent.js';
 import { createHocuspocusServer } from './ws/hocuspocus.js';
 
 export async function buildApp() {
@@ -47,6 +48,7 @@ export async function buildApp() {
   await app.register(diagramRoutes);
   await app.register(sharingRoutes);
   await app.register(githubRoutes);
+  await app.register(agentRoutes);
 
   // Global error handler
   app.setErrorHandler((error: Error & { statusCode?: number }, _request, reply) => {

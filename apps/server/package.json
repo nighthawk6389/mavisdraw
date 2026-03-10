@@ -17,11 +17,13 @@
     "db:seed": "tsx src/db/seed.ts"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.58",
     "@fastify/cookie": "^11.0.0",
     "@fastify/cors": "^10.0.0",
     "@fastify/websocket": "^11.0.0",
     "@hocuspocus/server": "^2.15.0",
     "@mavisdraw/types": "workspace:*",
+    "ai": "^6.0.116",
     "bcryptjs": "^2.4.3",
     "drizzle-orm": "^0.38.0",
     "fastify": "^5.2.0",
