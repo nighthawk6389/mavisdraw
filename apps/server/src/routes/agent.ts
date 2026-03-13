@@ -40,6 +40,8 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
         if (done) break;
         reply.raw.write(value);
       }
+    } catch (err) {
+      request.log.error({ err }, 'Error streaming agent response');
     } finally {
       reply.raw.end();
     }

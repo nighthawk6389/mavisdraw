@@ -131,7 +131,8 @@ export async function getUserById(userId: string): Promise<UserResponse | null> 
 export function verifyAccessToken(token: string): TokenPayload {
   try {
     return jwt.verify(token, JWT_SECRET) as TokenPayload;
-  } catch {
+  } catch (err) {
+    console.error('[authService] verifyAccessToken failed:', err instanceof Error ? err.message : err);
     throw new AuthError('Invalid or expired access token', 401);
   }
 }

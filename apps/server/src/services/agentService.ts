@@ -103,6 +103,7 @@ export function buildTools(userId: string, diagramMarkdown: string) {
         try {
           return { diagram: diagramMarkdown || '(empty diagram)' };
         } catch (err) {
+          console.error('[agentService] browse_diagram failed:', err);
           return { error: String(err) };
         }
       },
@@ -137,6 +138,7 @@ export function buildTools(userId: string, diagramMarkdown: string) {
             })),
           };
         } catch (err) {
+          console.error('[agentService] browse_code failed:', err);
           return { error: err instanceof Error ? err.message : String(err) };
         }
       },
@@ -169,6 +171,7 @@ export function buildTools(userId: string, diagramMarkdown: string) {
               : file.content;
           return { path, content, size: file.size };
         } catch (err) {
+          console.error('[agentService] read_file failed:', err);
           return { error: err instanceof Error ? err.message : String(err) };
         }
       },

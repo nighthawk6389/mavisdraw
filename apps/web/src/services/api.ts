@@ -27,6 +27,7 @@ async function refreshAccessToken(): Promise<boolean> {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
       });
 
       if (!response.ok) return false;
@@ -141,7 +142,7 @@ export async function apiGetMe(): Promise<{ user: AuthResponse['user'] }> {
 }
 
 export async function apiRefreshToken(): Promise<{ accessToken: string }> {
-  return apiFetch('/api/auth/refresh', { method: 'POST' });
+  return apiFetch('/api/auth/refresh', { method: 'POST', body: JSON.stringify({}) });
 }
 
 // ── Projects API ─────────────────────────────────────────

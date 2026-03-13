@@ -50,6 +50,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       if (err instanceof AuthError) {
         return reply.code(err.statusCode).send({ error: err.message });
       }
+      request.log.error({ err }, 'Unexpected error during registration');
       throw err;
     }
   });
@@ -77,6 +78,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       if (err instanceof AuthError) {
         return reply.code(err.statusCode).send({ error: err.message });
       }
+      request.log.error({ err }, 'Unexpected error during login');
       throw err;
     }
   });
@@ -108,6 +110,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       if (err instanceof AuthError) {
         return reply.code(err.statusCode).send({ error: err.message });
       }
+      request.log.error({ err }, 'Unexpected error during token refresh');
       throw err;
     }
   });
