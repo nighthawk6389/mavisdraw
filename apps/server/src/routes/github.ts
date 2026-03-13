@@ -45,8 +45,10 @@ export async function githubRoutes(app: FastifyInstance): Promise<void> {
       return reply.send({ url });
     } catch (err) {
       if (err instanceof GitHubError) {
+        request.log.warn({ err }, 'GitHub API error');
         return reply.code(err.statusCode).send({ error: err.message });
       }
+      request.log.error({ err }, 'Unexpected error in GitHub route');
       throw err;
     }
   });
@@ -77,8 +79,10 @@ export async function githubRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(200).send({ connection });
     } catch (err) {
       if (err instanceof GitHubError) {
+        request.log.warn({ err }, 'GitHub API error');
         return reply.code(err.statusCode).send({ error: err.message });
       }
+      request.log.error({ err }, 'Unexpected error in GitHub route');
       throw err;
     }
   });
@@ -108,8 +112,10 @@ export async function githubRoutes(app: FastifyInstance): Promise<void> {
       return reply.send({ repos });
     } catch (err) {
       if (err instanceof GitHubError) {
+        request.log.warn({ err }, 'GitHub API error');
         return reply.code(err.statusCode).send({ error: err.message });
       }
+      request.log.error({ err }, 'Unexpected error in GitHub route');
       throw err;
     }
   });

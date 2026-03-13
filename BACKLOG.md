@@ -2,6 +2,10 @@
 
 Items noticed during PR #9 review (arrow improvements) that weren't fixed immediately.
 
+## Observability
+
+- **Keep server-side logging** — All try/catch blocks in `apps/server/src/` must log caught exceptions using `request.log` (in routes/middleware) or `console.error` (in services). Never swallow errors silently. This is critical for debugging production issues.
+
 ## Code Quality
 
 - **Duplicate `AnchorPosition` type** — `AnchorPosition` is defined in both `packages/types/src/elements.ts` and `apps/web/src/components/canvas/HitTesting.ts`. Consolidate into `@mavisdraw/types` and import from there.

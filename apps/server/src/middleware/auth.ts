@@ -17,7 +17,8 @@ export async function requireAuth(request: FastifyRequest, reply: FastifyReply):
   const token = authHeader.slice(7);
   try {
     request.user = verifyAccessToken(token);
-  } catch {
+  } catch (err) {
+    request.log.warn({ err }, 'requireAuth: invalid or expired access token');
     reply.code(401).send({ error: 'Invalid or expired access token' });
   }
 }
@@ -31,7 +32,7 @@ export async function optionalAuth(request: FastifyRequest): Promise<void> {
   const token = authHeader.slice(7);
   try {
     request.user = verifyAccessToken(token);
-  } catch {
-    // Silently ignore invalid tokens for optional auth
+  } catch (err) {
+    request.log.debug({ err }, 'optionalAuth: ignoring invalid token');
   }
 }
