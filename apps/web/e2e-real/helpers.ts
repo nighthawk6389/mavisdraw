@@ -108,9 +108,7 @@ export async function dragOnCanvas(
 }
 
 /** Read elements of the active diagram from the dev-only test hook. */
-export async function getActiveElements(
-  page: Page,
-): Promise<
+export async function getActiveElements(page: Page): Promise<
   Array<{
     id: string;
     type: string;
@@ -220,4 +218,41 @@ export async function twoPeople(
   await isConnected(a);
   await isConnected(b);
   return { ctxA, ctxB, a, b, owner, guest, project };
+}
+
+// ── Email (the API runs with MAIL_PROVIDER=outbox) ──
+
+export interface SentEmail {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+}
+
+/** Wait for an email to `to` whose subject matches, and return it. */
+export async function waitForEmail(
+  request: APIRequestContext,
+  to: string,
+  subject: RegExp,
+): Promise<SentEmail> {
+  let found: SentEmail | undefined;
+  await expect
+    .poll(
+      async () => {
+        const res = await request.get(`${API_URL}/api/test/outbox`);
+        const { messages } = (await res.json()) as { messages: SentEmail[] };
+        found = messages.reverse().find((m) => m.to === to && subject.test(m.subject));
+        return !!found;
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(true);
+  return found!;
+}
+
+/** The first link in an email's text that points at the web app. */
+export function linkIn(email: SentEmail): string {
+  const match = /https?:\/\/\S+/.exec(email.text);
+  if (!match) throw new Error(`No link in email "${email.subject}"`);
+  return match[0];
 }

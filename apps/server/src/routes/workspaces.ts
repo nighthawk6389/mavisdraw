@@ -141,8 +141,8 @@ export async function workspaceRoutes(app: FastifyInstance): Promise<void> {
       .code(201)
       .send(
         result.status === 'added'
-          ? { status: 'added' }
-          : { status: 'invited', inviteUrl: inviteUrl(result.token) },
+          ? { status: 'added', emailed: result.emailed }
+          : { status: 'invited', inviteUrl: inviteUrl(result.token), emailed: result.emailed },
       );
   });
 
@@ -201,8 +201,8 @@ export async function workspaceRoutes(app: FastifyInstance): Promise<void> {
       .code(201)
       .send(
         result.status === 'added'
-          ? { status: 'added' }
-          : { status: 'invited', inviteUrl: inviteUrl(result.token) },
+          ? { status: 'added', emailed: result.emailed }
+          : { status: 'invited', inviteUrl: inviteUrl(result.token), emailed: result.emailed },
       );
   });
 

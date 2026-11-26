@@ -45,6 +45,9 @@ services:
       # GITHUB_TOKEN_ENCRYPTION_KEY (64 hex chars: openssl rand -hex 32)
       # and optionally GITHUB_ENTERPRISE_URL + GITHUB_ENTERPRISE_CLIENT_ID/SECRET
       # Error reporting (optional): SENTRY_DSN
+      # Email (invites, @mentions): MAIL_PROVIDER=resend|postmark, MAIL_FROM,
+      # RESEND_API_KEY or POSTMARK_SERVER_TOKEN; APP_URL = the web app's URL
+      # (defaults to CORS_ORIGIN). Without a provider, invite links are shown to copy.
     # Readiness (database reachable), so a deploy only takes traffic it can serve
     healthCheckPath: /api/ready
 

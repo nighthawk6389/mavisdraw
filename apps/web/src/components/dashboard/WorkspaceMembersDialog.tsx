@@ -65,10 +65,14 @@ export default function WorkspaceMembersDialog({
     try {
       const result = await apiInviteToWorkspace(workspace.id, email.trim(), role);
       if (result.status === 'added') {
-        setMessage({ text: `${email.trim()} was added to the workspace.` });
+        setMessage({
+          text: `${email.trim()} was added to the workspace${result.emailed ? ' (we let them know by email)' : ''}.`,
+        });
       } else {
         setMessage({
-          text: `${email.trim()} doesn't have an account yet. Send them this link — they'll join when they sign up:`,
+          text: result.emailed
+            ? `We emailed ${email.trim()} an invite — they'll join when they sign up. You can also share the link:`
+            : `${email.trim()} doesn't have an account yet. Send them this link — they'll join when they sign up:`,
           link: `${window.location.origin}${result.inviteUrl}`,
         });
       }

@@ -11,6 +11,8 @@ import {
   type PermissionRole,
   type WorkspaceRole,
 } from '../db/schema.js';
+import { config } from '../config.js';
+import { addedEmail, inviteEmail, isMailEnabled, sendMail } from './mailer.js';
 
 const PROJECT_RANK: Record<PermissionRole, number> = { viewer: 0, editor: 1, admin: 2 };
 const WORKSPACE_RANK: Record<WorkspaceRole, number> = { member: 0, admin: 1, owner: 2 };
@@ -181,12 +183,16 @@ export async function inviteByEmail(input: {
   email: string;
   role: string;
   invitedBy: string;
-}): Promise<{ status: 'added'; userId: string } | { status: 'invited'; token: string }> {
+}): Promise<
+  | { status: 'added'; userId: string; emailed: boolean }
+  | { status: 'invited'; token: string; emailed: boolean }
+> {
   const email = normalizeEmail(input.email);
   const user = await db.query.users.findFirst({ where: eq(users.email, email) });
   if (user) {
     await grant(input.kind, input.targetId, user.id, input.role);
-    return { status: 'added', userId: user.id };
+    const emailed = await emailAbout(input, email, null);
+    return { status: 'added', userId: user.id, emailed };
   }
   const pending = await db.query.invites.findFirst({
     where: and(
@@ -198,7 +204,11 @@ export async function inviteByEmail(input: {
   });
   if (pending) {
     await db.update(invites).set({ role: input.role }).where(eq(invites.id, pending.id));
-    return { status: 'invited', token: pending.token };
+    return {
+      status: 'invited',
+      token: pending.token,
+      emailed: await emailAbout(input, email, pending.token),
+    };
   }
   const token = nanoid(32);
   await db.insert(invites).values({
@@ -211,7 +221,36 @@ export async function inviteByEmail(input: {
     invitedBy: input.invitedBy,
     createdAt: new Date(),
   });
-  return { status: 'invited', token };
+  return { status: 'invited', token, emailed: await emailAbout(input, email, token) };
+}
+
+/** Tell them by email: an invite link (no account yet) or "you've been added". */
+async function emailAbout(
+  input: { kind: InviteKind; targetId: string; invitedBy: string },
+  to: string,
+  token: string | null,
+): Promise<boolean> {
+  if (!isMailEnabled()) return false;
+  const inviter = await db.query.users.findFirst({
+    where: eq(users.id, input.invitedBy),
+    columns: { name: true },
+  });
+  const targetName =
+    input.kind === 'workspace'
+      ? (await db.query.workspaces.findFirst({ where: eq(workspaces.id, input.targetId) }))?.name
+      : (await db.query.projects.findFirst({ where: eq(projects.id, input.targetId) }))?.name;
+  const details = {
+    to,
+    inviterName: inviter?.name ?? 'Someone',
+    kind: input.kind,
+    targetName: targetName ?? (input.kind === 'workspace' ? 'a workspace' : 'a project'),
+  };
+  const link = token
+    ? `${config.appUrl}/invite/${token}`
+    : input.kind === 'project'
+      ? `${config.appUrl}/p/${input.targetId}`
+      : `${config.appUrl}/?workspace=${encodeURIComponent(input.targetId)}`;
+  return sendMail(token ? inviteEmail({ ...details, link }) : addedEmail({ ...details, link }));
 }
 
 export async function listPendingInvites(kind: InviteKind, targetId: string) {

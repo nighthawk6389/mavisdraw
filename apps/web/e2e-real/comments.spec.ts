@@ -1,6 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 import {
   apiGetDiagram,
+  linkIn,
+  waitForEmail,
   dragOnCanvas,
   dragPage,
   getActiveElements,
@@ -20,7 +22,7 @@ test.describe('Comments', () => {
   test('a viewer comments on a shape, @mentions the owner, and they talk it through live', async ({
     browser,
   }) => {
-    const { ctxA, ctxB, a, b } = await twoPeople(browser, 'viewer', {
+    const { ctxA, ctxB, a, b, owner } = await twoPeople(browser, 'viewer', {
       owner: 'Olivia Owner',
       guest: 'Victor Viewer',
     });
@@ -48,6 +50,12 @@ test.describe('Comments', () => {
     await expect(b.getByTestId('comment-thread').locator('.text-blue-700')).toHaveText(
       '@Olivia Owner',
     );
+
+    // The mention also reaches Olivia by email, linking straight to the thread
+    const mail = await waitForEmail(ctxA.request, owner.email, /Victor Viewer mentioned you in /);
+    expect(mail.text).toContain('Should this call be async?');
+    const threadLink = linkIn(mail);
+    expect(threadLink).toMatch(/\/p\/[^/]+\/d\/[^/]+\?thread=/);
 
     // Olivia sees the pin appear without reloading, and gets a mention notification
     await expect(pins(a)).toHaveCount(1);
@@ -89,6 +97,10 @@ test.describe('Comments', () => {
     await expect(b.getByTestId('comments-panel-item')).toHaveCount(0);
     await b.getByTestId('comments-panel').getByLabel('Resolved').check();
     await expect(b.getByTestId('comments-panel-item')).toContainText('Should this call be async?');
+
+    // Later, Olivia opens the link from the email: straight to the thread
+    await a.goto(new URL(threadLink).pathname + new URL(threadLink).search);
+    await expect(a.getByTestId('comment-thread')).toContainText('Should this call be async?');
 
     await ctxA.close();
     await ctxB.close();

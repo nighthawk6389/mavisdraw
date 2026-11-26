@@ -22,6 +22,16 @@ async function goOffline(context: BrowserContext, page: Page) {
     provider?.configuration.websocketProvider.disconnect();
   });
   await context.setOffline(true);
+  // Really offline: the live connection is down too
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (
+          window as unknown as { __MAVISDRAW__?: { getConnectionStatus: () => string } }
+        ).__MAVISDRAW__?.getConnectionStatus(),
+      ),
+    )
+    .toBe('disconnected');
 }
 
 test.describe('Offline', () => {
@@ -47,7 +57,9 @@ test.describe('Offline', () => {
     await page.keyboard.press('e');
     await dragOnCanvas(page, { x: 400, y: 150 }, { x: 520, y: 250 });
     await expect(page.getByTestId('offline-indicator')).toContainText('kept on this device');
-    // Then the tab is killed outright (no unload events, like a crash)
+    // The edit exists only in this tab (and its journal)…
+    expect(await serverCount()).toBe(1);
+    // …then the tab is killed outright (no unload events, like a crash)
     await page.close();
 
     // Later, back online, the project is opened again

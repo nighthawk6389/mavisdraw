@@ -60,6 +60,9 @@ export default defineConfig({
         AUTH_RATE_LIMIT_MAX: '10000',
         // Deterministic stand-in for the LLM (never active in production)
         AGENT_MOCK: '1',
+        // Emails are kept in memory and read back by the tests (GET /api/test/outbox)
+        MAIL_PROVIDER: 'outbox',
+        APP_URL: WEB_URL,
         LOG_LEVEL: 'warn',
         NODE_ENV: 'test',
       },

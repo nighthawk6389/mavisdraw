@@ -1,5 +1,12 @@
 import { test, expect } from '@playwright/test';
-import { API_URL, apiCreateProject, openProject, registerUser } from './helpers';
+import {
+  API_URL,
+  apiCreateProject,
+  linkIn,
+  openProject,
+  registerUser,
+  waitForEmail,
+} from './helpers';
 
 const uniq = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
@@ -58,11 +65,17 @@ test.describe('Workspaces, invites and folders', () => {
     await a.getByRole('button', { name: 'Share' }).click();
     await a.getByLabel('Email to invite').fill(email);
     await a.getByRole('button', { name: 'Invite', exact: true }).click();
-    const link = await a.getByLabel('Invite link').inputValue();
-    expect(link).toMatch(/\/invite\/[A-Za-z0-9_-]+$/);
+    await expect(a.getByTestId('invite-result')).toContainText(`We emailed ${email} an invite`);
+    const shown = await a.getByLabel('Invite link').inputValue();
+    expect(shown).toMatch(/\/invite\/[A-Za-z0-9_-]+$/);
     await expect(a.getByTestId('pending-invite')).toContainText(email);
 
-    // The newcomer opens the link: told what it's for, and signs up
+    // The invitation arrives by email, with the same link
+    const sent = await waitForEmail(ctxA.request, email, /Olivia Owner invited you to Invite Map/);
+    const link = linkIn(sent);
+    expect(link).toBe(shown);
+
+    // The newcomer clicks it: told what it's for, and signs up
     const ctxN = await browser.newContext();
     const n = await ctxN.newPage();
     await n.goto(new URL(link).pathname);
@@ -113,7 +126,9 @@ test.describe('Workspaces, invites and folders', () => {
     await apiCreateProject(ctx.request, user, 'Search');
     await page.goto('/');
     // Folders organise a space (Recent is one list across everything)
-    const yours = page.getByRole('navigation', { name: 'Spaces' }).getByRole('button', { name: /Your projects/ });
+    const yours = page
+      .getByRole('navigation', { name: 'Spaces' })
+      .getByRole('button', { name: /Your projects/ });
     await yours.click();
 
     const card = page.getByTestId('project-card').filter({ hasText: 'Billing' });

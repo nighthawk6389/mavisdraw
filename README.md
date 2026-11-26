@@ -148,6 +148,9 @@ Create three Render resources:
 - Error reporting is optional: set `SENTRY_DSN` (server) and `VITE_SENTRY_DSN` (web). The browser
   SDK loads after startup, so it isn't in the main bundle.
 - In production the server refuses to start without real secrets — see `apps/server/src/config.ts`.
+- Email (invites and @mentions): `MAIL_PROVIDER=resend` or `postmark` with `MAIL_FROM` and
+  `RESEND_API_KEY` / `POSTMARK_SERVER_TOKEN`. Development prints emails to the server log;
+  without a provider in production, invite links are shown in the app to copy instead.
 
 ## CI/CD
 

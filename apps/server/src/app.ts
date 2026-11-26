@@ -7,6 +7,7 @@ import { sql } from 'drizzle-orm';
 import { config } from './config.js';
 import { db } from './db/client.js';
 import { acceptRequestId, checkReadiness, errorResponse, reportError } from './observability.js';
+import { readOutbox } from './services/mailer.js';
 import { authRoutes } from './routes/auth.js';
 import { projectRoutes } from './routes/projects.js';
 import { diagramRoutes } from './routes/diagrams.js';
@@ -142,6 +143,11 @@ export async function buildApp() {
     }
     reply.code(status).send(body);
   });
+
+  // End-to-end tests read "sent" email here (MAIL_PROVIDER=outbox, NODE_ENV=test only)
+  if (process.env.NODE_ENV === 'test' && config.mail.provider === 'outbox') {
+    app.get('/api/test/outbox', async () => ({ messages: readOutbox() }));
+  }
 
   // Register routes
   await app.register(authRoutes);

@@ -23,6 +23,13 @@ export interface Config {
   /** Fastify trustProxy: false, true, a hop count, or a list of addresses/CIDRs. */
   trustProxy: boolean | number | string;
   logLevel: string;
+  /** Public URL of the web app (links in emails). */
+  appUrl: string;
+  mail: {
+    provider: 'resend' | 'postmark' | 'log' | 'outbox' | 'none';
+    from: string;
+    apiKey: string;
+  };
   github: {
     redirectUri: string;
     /** github.com OAuth app (empty when not configured). */
@@ -114,6 +121,25 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     );
   }
 
+  const provider = (env.MAIL_PROVIDER ?? (isProduction ? 'none' : 'log')).toLowerCase();
+  if (!['resend', 'postmark', 'log', 'outbox', 'none'].includes(provider)) {
+    problems.push('MAIL_PROVIDER must be resend, postmark, log, outbox or none');
+  }
+  const mailKey =
+    provider === 'resend'
+      ? env.RESEND_API_KEY
+      : provider === 'postmark'
+        ? env.POSTMARK_SERVER_TOKEN
+        : '';
+  if ((provider === 'resend' || provider === 'postmark') && !mailKey) {
+    problems.push(
+      `MAIL_PROVIDER=${provider} needs ${provider === 'resend' ? 'RESEND_API_KEY' : 'POSTMARK_SERVER_TOKEN'}`,
+    );
+  }
+  if ((provider === 'resend' || provider === 'postmark') && !env.MAIL_FROM) {
+    problems.push('MAIL_FROM must be set (e.g. "MavisDraw <notifications@yourdomain.com>")');
+  }
+
   const config: Config = {
     isProduction,
     databaseUrl: required('DATABASE_URL', DEV.databaseUrl),
@@ -122,6 +148,12 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     corsOrigin: required('CORS_ORIGIN', 'http://localhost:3000'),
     trustProxy: parseTrustProxy(env.TRUST_PROXY),
     logLevel: env.LOG_LEVEL ?? 'info',
+    appUrl: (env.APP_URL ?? env.CORS_ORIGIN ?? 'http://localhost:3000').replace(/\/+$/, ''),
+    mail: {
+      provider: provider as Config['mail']['provider'],
+      from: env.MAIL_FROM ?? 'MavisDraw <notifications@localhost>',
+      apiKey: mailKey ?? '',
+    },
     github: {
       redirectUri: env.GITHUB_REDIRECT_URI ?? 'http://localhost:3000/oauth/github/callback.html',
       cloud: {

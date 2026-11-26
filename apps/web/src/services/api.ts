@@ -585,7 +585,9 @@ export interface PendingInvite {
   createdAt: string;
 }
 
-export type InviteResult = { status: 'added' } | { status: 'invited'; inviteUrl: string };
+export type InviteResult =
+  | { status: 'added'; emailed?: boolean }
+  | { status: 'invited'; inviteUrl: string; emailed?: boolean };
 
 export function apiListWorkspaces(): Promise<{ workspaces: WorkspaceResponse[] }> {
   return apiFetch('/api/workspaces');

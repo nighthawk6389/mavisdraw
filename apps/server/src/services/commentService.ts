@@ -12,6 +12,8 @@ import {
   workspaceMembers,
   type NotificationType,
 } from '../db/schema.js';
+import { config } from '../config.js';
+import { isMailEnabled, mentionEmail, sendMail } from './mailer.js';
 
 export const MAX_COMMENT_LENGTH = 5000;
 
@@ -187,6 +189,13 @@ async function notify(
   );
   const recipients = notificationRecipients({ authorId, mentions, participants, memberIds });
   if (recipients.length === 0) return;
+  // Mentions also go out by email (replies stay in the app: less noise)
+  void emailMentions(
+    thread,
+    commentId,
+    authorId,
+    recipients.filter((r) => r.type === 'mention').map((r) => r.userId),
+  );
   const now = new Date();
   await db.insert(notifications).values(
     recipients.map((r) => ({
@@ -201,6 +210,42 @@ async function notify(
       createdAt: now,
     })),
   );
+}
+
+async function emailMentions(
+  thread: { id: string; projectId: string; diagramId: string },
+  commentId: string,
+  authorId: string,
+  userIds: string[],
+): Promise<void> {
+  if (userIds.length === 0 || !isMailEnabled()) return;
+  const [people, actor, project, diagram, comment] = await Promise.all([
+    db.query.users.findMany({ where: inArray(users.id, userIds), columns: { email: true } }),
+    db.query.users.findFirst({ where: eq(users.id, authorId), columns: { name: true } }),
+    db.query.projects.findFirst({
+      where: eq(projects.id, thread.projectId),
+      columns: { name: true },
+    }),
+    db.query.diagrams.findFirst({
+      where: eq(diagrams.id, thread.diagramId),
+      columns: { title: true },
+    }),
+    db.query.comments.findFirst({ where: eq(comments.id, commentId), columns: { body: true } }),
+  ]);
+  const body = comment?.body ?? '';
+  const link = `${config.appUrl}/p/${thread.projectId}/d/${thread.diagramId}?thread=${encodeURIComponent(thread.id)}`;
+  for (const person of people) {
+    await sendMail(
+      mentionEmail({
+        to: person.email,
+        actorName: actor?.name ?? 'Someone',
+        projectName: project?.name ?? 'a project',
+        diagramTitle: diagram?.title ?? 'a diagram',
+        excerpt: body.length > 280 ? `${body.slice(0, 279)}…` : body,
+        link,
+      }),
+    );
+  }
 }
 
 export async function createThread(input: {

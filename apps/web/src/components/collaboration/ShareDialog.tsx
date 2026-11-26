@@ -100,9 +100,13 @@ export default function ShareDialog({ projectId, isOpen, onClose }: ShareDialogP
       const result = await apiInviteToProject(projectId, email, inviteRole);
       setInviteResult(
         result.status === 'added'
-          ? { text: `${email} now has access.` }
+          ? {
+              text: `${email} now has access${result.emailed ? ' (we let them know by email)' : ''}.`,
+            }
           : {
-              text: `${email} doesn't have an account yet. Send them this link — they'll get access when they sign up:`,
+              text: result.emailed
+                ? `We emailed ${email} an invite — they'll get access when they sign up. You can also share the link:`
+                : `${email} doesn't have an account yet. Send them this link — they'll get access when they sign up:`,
               link: `${window.location.origin}${result.inviteUrl}`,
             },
       );
