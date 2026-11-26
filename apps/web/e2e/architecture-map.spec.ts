@@ -99,6 +99,16 @@ test.describe('Living architecture map', () => {
       'Orders Service',
       'gRPC',
     ]);
+    await expect(page).toHaveURL(new RegExp(`/d/${portal.targetDiagramId}$`));
+
+    // The browser's Back button goes back up a level (not out of the project)…
+    const root = top[0].diagramId;
+    await page.goBack();
+    await expect.poll(() => h.diagram(page)).toBe(root);
+    await expect(page).toHaveURL(/\/p\/test-project-id$/);
+    // …and Forward drills back in
+    await page.goForward();
+    await expect.poll(() => h.diagram(page)).toBe(portal.targetDiagramId);
     expect(errors).toEqual([]);
   });
 

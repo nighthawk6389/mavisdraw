@@ -30,6 +30,11 @@ function addRect(x = 0, y = 0, w = 100, h = 60): MavisElement {
   return el;
 }
 
+/** Removed from the canvas: absent, or soft-deleted (a tombstone collaborators can see). */
+function isGone(id: string): boolean {
+  return store().elements.get(id)?.isDeleted ?? true;
+}
+
 function get(id: string): MavisElement {
   return store().elements.get(id)!;
 }
@@ -112,6 +117,17 @@ describe('patch-based history', () => {
     expect(get(shape.id).version).toBe(version);
   });
 
+  it('undoing a creation leaves a newer tombstone, not a missing element', () => {
+    const el = addRect();
+    store().undo();
+    const tomb = store().elements.get(el.id)!;
+    expect(tomb.isDeleted).toBe(true);
+    expect(tomb.version).toBeGreaterThan(el.version);
+    store().redo();
+    expect(get(el.id).isDeleted).toBe(false);
+    expect(get(el.id).version).toBeGreaterThan(tomb.version);
+  });
+
   it('undo never deletes elements a collaborator added', () => {
     addRect();
     const theirs = store().createElement('diamond', D, 10, 10, 20, 20);
@@ -140,7 +156,7 @@ describe('patch-based history', () => {
     expect(get(el.id).x).toBe(0);
     // One more undo removes the rectangle (its creation step)
     store().undo();
-    expect(store().elements.has(el.id)).toBe(false);
+    expect(isGone(el.id)).toBe(true);
   });
 
   it('a click that changes nothing does not create an undo step', () => {
@@ -150,7 +166,7 @@ describe('patch-based history', () => {
     store().beginHistoryBatch();
     store().endHistoryBatch();
     store().undo();
-    expect(store().elements.has(el.id)).toBe(false);
+    expect(isGone(el.id)).toBe(true);
   });
 
   it('coalesces rapid changes with the same key (slider drags)', () => {
@@ -190,7 +206,7 @@ describe('patch-based history', () => {
     withoutHistory(() => store().updateElementSilent(el.id, { opacity: 10 }));
     store().undo();
     // Undo removed the rectangle (the only recorded step); the silent change wasn't a step
-    expect(store().elements.has(el.id)).toBe(false);
+    expect(isGone(el.id)).toBe(true);
   });
 
   it('amendLastHistoryEntry folds typing into the creation step', () => {
@@ -202,7 +218,7 @@ describe('patch-based history', () => {
       store().updateElement(el.id, { text: 'Hello' } as Partial<MavisElement>),
     );
     store().undo();
-    expect(store().elements.has(el.id)).toBe(false);
+    expect(isGone(el.id)).toBe(true);
     expect(store().canUndo()).toBe(false);
   });
 

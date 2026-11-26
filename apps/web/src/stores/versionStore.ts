@@ -25,7 +25,7 @@ interface VersionState {
   load: (diagramId: string) => Promise<void>;
   saveSnapshot: (label: string) => Promise<void>;
   /** Called by the auto-snapshot hook after bursts of edits. */
-  autoSnapshot: () => Promise<void>;
+  autoSnapshot: (diagramId?: string) => Promise<void>;
   restoreSnapshot: (snapshotId: string) => Promise<void>;
 }
 
@@ -54,8 +54,8 @@ export const useVersionStore = create<VersionState>((set, get) => ({
     await get().load(diagramId);
   },
 
-  autoSnapshot: async () => {
-    const diagramId = useDiagramStore.getState().activeDiagramId;
+  autoSnapshot: async (target) => {
+    const diagramId = target ?? useDiagramStore.getState().activeDiagramId;
     try {
       if (!isLiveSynced(diagramId)) await flushPendingSaves();
       await apiSaveDiagram(diagramId, 'auto', 'Auto-save');

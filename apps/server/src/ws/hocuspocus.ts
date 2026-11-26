@@ -16,6 +16,51 @@ export function documentNameFor(diagramId: string): string {
   return `${DOCUMENT_PREFIX}${diagramId}`;
 }
 
+/** Per-socket state shared with onAuthenticate through the connection context. */
+export interface SocketGate {
+  authenticated: boolean;
+}
+
+type ProjectRole = 'owner' | 'admin' | 'editor' | 'viewer';
+
+/**
+ * Apply a permission change to connections that are already open (access is
+ * otherwise only checked when a socket connects): someone removed from the
+ * project is disconnected, someone downgraded to viewer stops being able to
+ * write, and everyone in the project's rooms is told to refresh their role.
+ */
+export function applyAccessChange(
+  server: Pick<Hocuspocus, 'documents'>,
+  projectId: string,
+  userId: string,
+  access: ProjectRole | null,
+): number {
+  let affected = 0;
+  server.documents.forEach((document) => {
+    let inProject = false;
+    document.connections.forEach(({ connection }) => {
+      const user = (connection.context as { user?: { id?: string; projectId?: string } }).user;
+      if (user?.projectId !== projectId) return;
+      inProject = true;
+      if (user.id !== userId) return;
+      affected++;
+      if (access === null) {
+        // Connection.close() only detaches from the document (the client would
+        // never know, and could keep sending): close the socket itself
+        connection.close({ code: 4403, reason: 'Access revoked' });
+        connection.webSocket.close(4403, 'Access revoked');
+      } else {
+        connection.readOnly = access === 'viewer';
+      }
+    });
+    if (inProject) {
+      const signals = document.getMap('signals');
+      signals.set('permissions', Number(signals.get('permissions') ?? 0) + 1);
+    }
+  });
+  return affected;
+}
+
 /**
  * Nudge everyone in a diagram's live room that some side data changed
  * (e.g. comments), so they refetch it right away instead of polling.
@@ -62,7 +107,7 @@ export function createHocuspocusServer(): Hocuspocus {
   const server = new Hocuspocus({
     port: 0, // Don't listen on its own port — we attach to Fastify
 
-    async onAuthenticate({ token, documentName, connection }) {
+    async onAuthenticate({ token, documentName, connection, context }) {
       if (!token) {
         throw new Error('Authentication required');
       }
@@ -82,12 +127,16 @@ export function createHocuspocusServer(): Hocuspocus {
 
       // Viewers can watch live but their updates are rejected server-side
       connection.readOnly = access === 'viewer';
+      // The socket may now send document data freely (see the pre-auth cap)
+      const gate = (context as { gate?: SocketGate }).gate;
+      if (gate) gate.authenticated = true;
 
       return {
         user: {
           id: payload.userId,
           email: payload.email,
           role: access,
+          projectId: diagram.projectId,
         },
       };
     },

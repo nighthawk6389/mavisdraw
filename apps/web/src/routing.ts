@@ -48,9 +48,15 @@ export function navigate(path: string, options: { replace?: boolean } = {}): voi
   refresh();
 }
 
-/** Update the address bar without notifying listeners (e.g. tracking the open diagram). */
-export function reflectPath(path: string): void {
-  if (window.location.pathname !== path) window.history.replaceState(null, '', path);
+/**
+ * Update the address bar without notifying listeners (e.g. tracking the open
+ * diagram). With `push`, it's a new history entry, so Back returns to it.
+ */
+export function reflectPath(path: string, options: { push?: boolean } = {}): void {
+  if (window.location.pathname !== path) {
+    if (options.push) window.history.pushState(null, '', path);
+    else window.history.replaceState(null, '', path);
+  }
   current = parseRoute(path);
 }
 

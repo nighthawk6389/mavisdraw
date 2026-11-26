@@ -18,6 +18,34 @@ export function setOnUnauthorized(callback: () => void): void {
 /** Deduplicates concurrent refresh attempts — only one inflight at a time. */
 let refreshPromise: Promise<boolean> | null = null;
 
+/** Seconds until a JWT expires (0 if unknown or already expired). */
+export function tokenSecondsLeft(token: string | null, now = Date.now()): number {
+  if (!token) return 0;
+  try {
+    const payload = token.split('.')[1];
+    const json = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))) as { exp?: number };
+    return json.exp ? Math.max(0, json.exp - now / 1000) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * An access token good for at least `minSeconds` more, refreshing first if
+ * needed. Long-lived connections (the collaboration socket) call this on
+ * every (re)connect instead of holding on to the token they started with.
+ */
+export async function getFreshAccessToken(minSeconds = 60): Promise<string | null> {
+  if (accessToken && tokenSecondsLeft(accessToken) > minSeconds) return accessToken;
+  await refreshAccessToken();
+  return accessToken;
+}
+
+/** Force a refresh (e.g. the server rejected the token we had). */
+export async function forceRefreshAccessToken(): Promise<boolean> {
+  return refreshAccessToken();
+}
+
 async function refreshAccessToken(): Promise<boolean> {
   if (refreshPromise) return refreshPromise;
 
@@ -217,8 +245,13 @@ export async function apiGetDiagram(id: string): Promise<{ diagram: DiagramRespo
 
 export async function apiUpdateDiagram(
   id: string,
-  updates: Partial<Pick<DiagramResponse, 'title' | 'elements' | 'viewBackgroundColor' | 'gridEnabled' | 'gridSize' | 'renderMode' | 'layers'>>,
-): Promise<{ diagram: DiagramResponse }> {
+  updates: Partial<Pick<DiagramResponse, 'title' | 'elements' | 'viewBackgroundColor' | 'gridEnabled' | 'gridSize' | 'renderMode' | 'layers'>> & {
+    /** Version of each element the edits are based on (lets the server detect conflicts). */
+    baseVersions?: Record<string, number>;
+    /** Elements deleted since the base. */
+    deletedIds?: string[];
+  },
+): Promise<{ diagram: DiagramResponse; conflicts?: string[] }> {
   return apiFetch(`/api/diagrams/${id}`, {
     method: 'PUT',
     body: JSON.stringify(updates),

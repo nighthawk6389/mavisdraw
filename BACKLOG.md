@@ -18,6 +18,30 @@
 - **AI agent:** the diagram now goes in a delimited data message, client system messages are dropped, and turns are rate-limited/size-capped — but `browse_code`/`read_file` can still read any repo the user's GitHub token can see; restrict them to repos linked in the diagram.
 - OAuth `state` never verified (`githubService.ts:94`); no env validation and a hard-coded JWT fallback secret (`authService.ts:8`); `trustProxy` unset so IP rate limiting is shared by all users behind the proxy (`app.ts:14`).
 
+### Independent collaboration review (2026-11) — status
+
+Fixed (each with a regression test; two-browser e2e in `apps/web/e2e-real/sync-integrity.spec.ts` and `access.spec.ts`):
+- ~~Expired token → silent "Connected" with nothing saved~~ — the socket asks for a fresh token on every (re)connect; an auth rejection drops live status, checks access over REST, refreshes and rejoins with backoff. "Live" now requires authenticated + synced.
+- ~~Deleted shapes come back~~ — every delete (including undo-of-create) is a tombstone with a newer version; nothing is written to a fresh doc before its first sync.
+- ~~REST saves merge whole elements by edit count~~ — saves carry each element's base version and explicit deletes; an edit applies only if nobody changed the element since, otherwise the client is told and adopts the newer version. Same rules when no room is live (merged through the stored CRDT state). Reads/merges wait for a room that's still loading.
+- ~~Unauthenticated memory DoS~~ — 16MB WS message cap, 256KB pre-auth cap, 15s auth timeout.
+- ~~Removed members keep editing~~ — permission changes apply to open sockets (revoked: closed with 4403 and sent to the dashboard; downgraded: read-only immediately, UI follows).
+- ~~Share link → admin; existing viewer stays viewer on an editor link; public projects 403~~ — fixed.
+- ~~Snapshot version race (500); restore backup pruned; auto-snapshots stop after 100 undo steps / snapshot the wrong diagram~~ — fixed.
+- ~~Browser Back leaves the project~~ — drill in/out are history entries.
+- ~~Diagram list returns every diagram's elements~~ — summaries only.
+- ~~Cursor/viewport awareness unthrottled; colour changes on every drill-in~~ — ≤20 updates/s per field; stable colour per user.
+
+Still open:
+- **Presence identity is client-asserted** (awareness `user.id`/`name`): someone can show up as someone else in the avatar list. Fix: stamp identity server-side (e.g. relay presence through a server-validated stateless channel).
+- **Y.Doc growth**: tombstones are kept forever; state is stored base64 and rewritten whole on every persist. Needs tombstone compaction (e.g. drop tombstones older than N days on load, re-encode), binary storage, incremental persistence.
+- **No migrations** (`db:push` only) — Phase 0 item 0.9.
+- **Single process assumed**: no Redis extension, so two instances during a deploy overlap can both host a room (last persist wins). Add `@hocuspocus/extension-redis` before scaling out.
+- **Version history is per diagram**: restoring a parent doesn't restore its nested levels; no preview before restore.
+- **Follow mode doesn't follow across nested diagrams**; there's no project-wide "who's where".
+- **Title/background/layers aren't live** (REST only, last writer wins for those fields).
+- **Off-screen undo**: undo after drilling into a child can change parent elements you can't see (Figma/tldraw scope or reveal it).
+
 ### Roadmap Phase 3 items not done yet
 
 - ~~Comments & @mentions~~ — done: threads pinned to shapes (pins follow them), replies, resolve/reopen, @mention autocomplete, in-app notifications, a panel across every nested level, `?thread=` deep links, live updates through the room. Still missing: email/Slack delivery of notifications, comment reactions, and lazy-loading the comments UI (it added ~7 KB gzip to the main bundle).

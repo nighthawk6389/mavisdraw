@@ -69,6 +69,17 @@ export async function getDiagramsByProject(projectId: string) {
   });
 }
 
+/**
+ * The project's diagram hierarchy without contents: elements and the CRDT
+ * state can be megabytes per diagram and are loaded per diagram on open.
+ */
+export async function getDiagramSummaries(projectId: string) {
+  return db.query.diagrams.findMany({
+    where: eq(diagrams.projectId, projectId),
+    columns: { elements: false, yjsState: false },
+  });
+}
+
 export async function updateDiagram(id: string, updates: UpdateDiagramInput) {
   const [diagram] = await db
     .update(diagrams)
@@ -97,32 +108,40 @@ export async function createSnapshot(
   const diagram = await getDiagram(diagramId);
   if (!diagram) throw new Error('Diagram not found');
 
-  // Get the latest version number
-  const latestSnapshot = await db.query.diagramSnapshots.findFirst({
-    where: eq(diagramSnapshots.diagramId, diagramId),
-    orderBy: [desc(diagramSnapshots.version)],
-  });
-  const nextVersion = (latestSnapshot?.version ?? 0) + 1;
-
-  const [snapshot] = await db
-    .insert(diagramSnapshots)
-    .values({
-      id: nanoid(),
-      diagramId,
-      version: nextVersion,
-      elements: liveElements ?? diagram.elements,
-      appState: {
-        viewBackgroundColor: diagram.viewBackgroundColor,
-        gridEnabled: diagram.gridEnabled,
-        gridSize: diagram.gridSize,
-        renderMode: diagram.renderMode,
-        layers: diagram.layers,
-      },
-      createdBy: userId,
-      trigger,
-      label: label ?? null,
-    })
-    .returning();
+  // Version numbers are max+1 per diagram (unique). Two people saving a
+  // version at the same moment race for the same number: retry, don't 500.
+  let snapshot: typeof diagramSnapshots.$inferSelect | undefined;
+  for (let attempt = 0; !snapshot; attempt++) {
+    const latestSnapshot = await db.query.diagramSnapshots.findFirst({
+      where: eq(diagramSnapshots.diagramId, diagramId),
+      orderBy: [desc(diagramSnapshots.version)],
+      columns: { version: true },
+    });
+    try {
+      [snapshot] = await db
+        .insert(diagramSnapshots)
+        .values({
+          id: nanoid(),
+          diagramId,
+          version: (latestSnapshot?.version ?? 0) + 1,
+          elements: liveElements ?? diagram.elements,
+          appState: {
+            viewBackgroundColor: diagram.viewBackgroundColor,
+            gridEnabled: diagram.gridEnabled,
+            gridSize: diagram.gridSize,
+            renderMode: diagram.renderMode,
+            layers: diagram.layers,
+          },
+          createdBy: userId,
+          trigger,
+          label: label ?? null,
+        })
+        .returning();
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code !== '23505' || attempt >= 4) throw err;
+    }
+  }
 
   // Keep the history useful: automatic snapshots are capped per diagram
   if (trigger === 'auto') await pruneAutoSnapshots(diagramId);
@@ -163,7 +182,8 @@ export async function checkProjectAccess(
     ),
   });
 
-  return permission?.role ?? null;
+  // Public projects can be opened (read-only) by anyone signed in
+  return permission?.role ?? (project.isPublic ? 'viewer' : null);
 }
 
 const MAX_AUTO_SNAPSHOTS = 50;

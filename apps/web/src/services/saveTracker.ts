@@ -25,6 +25,11 @@ export function recordSaved(
   if (metaUpdatedAt !== undefined) savedMeta.set(diagramId, metaUpdatedAt);
 }
 
+/** Element versions the server had at the last save/load (the base for the next save). */
+export function savedVersions(diagramId: string): ReadonlyMap<string, number> | undefined {
+  return savedElements.get(diagramId);
+}
+
 // ── Flushing pending saves ─────────────────────────────────────────────
 // The autosave hook registers its "save everything dirty now" function so
 // other code (e.g. taking a version snapshot) can make sure the server has

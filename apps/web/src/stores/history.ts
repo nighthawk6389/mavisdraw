@@ -110,13 +110,23 @@ export function applyValues(
     const current = next.get(id);
     const mine = expected.get(id);
 
-    // Undoing a creation (or redoing a discard) removes the element
+    // Undoing a creation (or redoing a discard) deletes the element. It's a
+    // soft delete with a newer version, so collaborators (and any stale copy
+    // of it elsewhere) see it as deleted rather than missing.
     if (value === undefined) {
-      next.delete(id);
+      if (current && !current.isDeleted) {
+        next.set(id, {
+          ...current,
+          isDeleted: true,
+          version: current.version + 1,
+          updatedAt: now,
+        } as MavisElement);
+      }
       continue;
     }
-    // Bringing back an element that no longer exists, or a fast path when
-    // nothing else touched it since: restore the whole recorded value
+    // Bringing back an element that no longer exists (or was soft-deleted by
+    // the undo of its creation), or a fast path when nothing else touched it
+    // since: restore the whole recorded value
     if (current === undefined || mine === undefined || current === mine) {
       const version = Math.max(current?.version ?? 0, value.version) + 1;
       next.set(id, { ...value, version, updatedAt: now } as MavisElement);

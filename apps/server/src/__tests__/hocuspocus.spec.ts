@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as Y from 'yjs';
 import type { Hocuspocus } from '@hocuspocus/server';
-import { createHocuspocusServer, persistOpenDocuments } from '../ws/hocuspocus.js';
+import {
+  applyAccessChange,
+  createHocuspocusServer,
+  persistOpenDocuments,
+} from '../ws/hocuspocus.js';
 import { seedElements } from '../ws/ydocElements.js';
 import { updateDiagram } from '../services/diagramService.js';
 
@@ -67,5 +71,54 @@ describe('persistOpenDocuments (graceful shutdown)', () => {
     ).resolves.toBeUndefined();
     expect(updateDiagram).toHaveBeenCalledTimes(2);
     errors.mockRestore();
+  });
+});
+
+describe('applyAccessChange (permissions change while connected)', () => {
+  function room(users: Array<{ id: string; projectId: string }>) {
+    const doc = new Y.Doc() as Y.Doc & { connections: Map<unknown, { connection: unknown }> };
+    doc.connections = new Map();
+    const conns = users.map((user) => {
+      const connection = {
+        context: { user },
+        readOnly: false,
+        close: vi.fn(),
+        webSocket: { close: vi.fn() },
+      };
+      doc.connections.set(connection, { connection });
+      return connection;
+    });
+    return { doc, conns };
+  }
+
+  it('disconnects a removed member and tells the room', () => {
+    const { doc, conns } = room([
+      { id: 'bob', projectId: 'p1' },
+      { id: 'alice', projectId: 'p1' },
+    ]);
+    const server = { documents: new Map([['diagram:d1', doc]]) } as unknown as Pick<
+      Hocuspocus,
+      'documents'
+    >;
+    expect(applyAccessChange(server, 'p1', 'bob', null)).toBe(1);
+    expect(conns[0].webSocket.close).toHaveBeenCalledWith(4403, 'Access revoked');
+    expect(conns[1].webSocket.close).not.toHaveBeenCalled();
+    expect(doc.getMap('signals').get('permissions')).toBe(1);
+  });
+
+  it('makes a downgraded member read-only, and leaves other projects alone', () => {
+    const { doc, conns } = room([
+      { id: 'bob', projectId: 'p1' },
+      { id: 'bob', projectId: 'p2' },
+    ]);
+    const server = { documents: new Map([['diagram:d1', doc]]) } as unknown as Pick<
+      Hocuspocus,
+      'documents'
+    >;
+    applyAccessChange(server, 'p1', 'bob', 'viewer');
+    expect(conns[0].readOnly).toBe(true);
+    expect(conns[1].readOnly).toBe(false);
+    applyAccessChange(server, 'p1', 'bob', 'editor');
+    expect(conns[0].readOnly).toBe(false);
   });
 });

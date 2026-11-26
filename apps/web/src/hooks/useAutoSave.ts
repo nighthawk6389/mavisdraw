@@ -5,9 +5,11 @@ import {
   isMetaDirty,
   recordSaved,
   registerSaveFlusher,
+  savedVersions,
 } from '../services/saveTracker';
+import { toast } from '../stores/toastStore';
 import { isLiveSynced } from '../stores/collaborationStore';
-import { useElementsStore } from '../stores/elementsStore';
+import { useElementsStore, applyRemoteChanges } from '../stores/elementsStore';
 import { useDiagramStore } from '../stores/diagramStore';
 import { useAuthStore } from '../stores/authStore';
 import { ApiError, apiUpdateDiagram, apiSaveDiagram } from '../services/api';
@@ -35,8 +37,15 @@ async function saveDiagram(diagram: Diagram, elements: MavisElement[]): Promise<
     return;
   }
 
+  // Every element write is checked against the version this tab last got
+  // from the server, so an old copy can never overwrite a teammate's newer
+  // edit (and deletes are sent explicitly rather than implied by absence)
+  const base = savedVersions(diagram.id);
+  const liveIds = new Set(elements.map((el) => el.id));
   const body = {
     elements,
+    baseVersions: base ? Object.fromEntries(base) : {},
+    deletedIds: base ? Array.from(base.keys()).filter((id) => !liveIds.has(id)) : [],
     title: diagram.title,
     viewBackgroundColor: diagram.viewBackgroundColor,
     gridEnabled: diagram.gridEnabled,
@@ -44,18 +53,49 @@ async function saveDiagram(diagram: Diagram, elements: MavisElement[]): Promise<
     renderMode: diagram.renderMode,
     layers: diagram.layers,
   };
+  let response;
   try {
-    await apiUpdateDiagram(diagram.id, body);
+    response = await apiUpdateDiagram(diagram.id, body);
   } catch (err) {
     // A nested diagram that never reached the server: create it, then save
     if (err instanceof ApiError && err.statusCode === 404) {
       await ensureDiagramOnServer(diagram);
-      await apiUpdateDiagram(diagram.id, body);
+      response = await apiUpdateDiagram(diagram.id, body);
     } else {
       throw err;
     }
   }
-  recordSaved(diagram.id, elements, diagram.updatedAt);
+  const serverElements = (response.diagram?.elements ?? elements) as MavisElement[];
+  const conflicts = response.conflicts ?? [];
+  if (conflicts.length > 0) adoptServerVersions(conflicts, serverElements);
+  // What the server now has is the base for the next save
+  recordSaved(diagram.id, serverElements, diagram.updatedAt);
+}
+
+/**
+ * Someone changed these elements after this tab's copy: keep their version
+ * (shown immediately) and say so, rather than silently losing either side.
+ */
+function adoptServerVersions(ids: string[], serverElements: MavisElement[]): void {
+  const byId = new Map(serverElements.map((el) => [el.id, el]));
+  applyRemoteChanges(() =>
+    useElementsStore.setState((prev) => {
+      const next = new Map(prev.elements);
+      for (const id of ids) {
+        const theirs = byId.get(id);
+        const mine = next.get(id);
+        if (theirs) next.set(id, theirs);
+        else if (mine) next.set(id, { ...mine, isDeleted: true } as MavisElement);
+      }
+      return { elements: next };
+    }),
+  );
+  toast(
+    ids.length === 1
+      ? 'A teammate changed a shape you also edited — kept their newer version.'
+      : `Teammates changed ${ids.length} shapes you also edited — kept their newer versions.`,
+    'info',
+  );
 }
 
 /**

@@ -55,30 +55,136 @@ export function seedElements(doc: Y.Doc, elements: ElementJSON[]): void {
   });
 }
 
+/** A save from a REST client (an editor tab not in the live room, or an API user). */
+export interface RestWrite {
+  elements: ElementJSON[];
+  /**
+   * Version of each element as this client last got it from the server —
+   * the base its edits were made on. Lets the server tell "you changed it"
+   * from "you have an old copy".
+   */
+  baseVersions?: Record<string, number>;
+  /** Elements this client deleted since its base. */
+  deletedIds?: string[];
+}
+
+export interface MergeOutcome {
+  written: number;
+  /** Elements not applied because someone else changed them after the client's base. */
+  conflicts: string[];
+}
+
+type Decision = 'apply' | 'unchanged' | 'conflict';
+
 /**
- * Merge elements coming from a REST save into a live document: an element is
- * written only if it's new or has a higher version than what's live, so a
- * stale client can't roll back someone else's newer edit. Nothing is removed.
+ * Should an incoming element overwrite what the server has?
+ * - With a base: only if nobody changed it since (current version == base);
+ *   an untouched element (incoming == base) is skipped.
+ * - Without a base (legacy/API writers): new elements apply; existing ones
+ *   only with a higher version.
+ */
+export function decideWrite(
+  current: { version?: number } | undefined,
+  incomingVersion: number,
+  base: number | undefined,
+): Decision {
+  if (base !== undefined) {
+    if (incomingVersion === base) return 'unchanged';
+    return current !== undefined && Number(current.version ?? 0) === base ? 'apply' : 'conflict';
+  }
+  if (current === undefined) return 'apply';
+  const version = Number(current.version ?? 0);
+  if (incomingVersion === version) return 'unchanged';
+  return incomingVersion > version ? 'apply' : 'conflict';
+}
+
+/** Should a client's delete apply? Only if it saw the element and nobody changed it since. */
+export function decideDelete(
+  current: { version?: number; isDeleted?: unknown } | undefined,
+  base: number | undefined,
+): Decision {
+  if (base === undefined || current === undefined || current.isDeleted === true) return 'unchanged';
+  return Number(current.version ?? 0) === base ? 'apply' : 'conflict';
+}
+
+/**
+ * Merge a REST save into a live document. Edits apply per property (only
+ * what changed is written); deletes become tombstones so every replica
+ * converges; anything a teammate changed after the client's base is left
+ * alone and reported back as a conflict.
  */
 export function mergeElements(
   doc: Y.Doc,
-  elements: ElementJSON[],
+  input: ElementJSON[] | RestWrite,
   origin: unknown = 'rest',
-): number {
+): MergeOutcome {
+  const write: RestWrite = Array.isArray(input) ? { elements: input } : input;
   const map = doc.getMap('elements');
+  const conflicts: string[] = [];
   let written = 0;
+  const now = Date.now();
   doc.transact(() => {
-    for (const el of elements) {
+    for (const el of write.elements) {
       if (!el || typeof el.id !== 'string') continue;
       const live = map.get(el.id);
-      const liveVersion = live instanceof Y.Map ? Number(live.get('version') ?? 0) : -1;
-      if (Number(el.version ?? 0) > liveVersion) {
-        writeElement(map, el);
-        written++;
-      }
+      const current = live instanceof Y.Map ? (live.toJSON() as ElementJSON) : undefined;
+      const incoming = Number(el.version ?? 0);
+      const decision = decideWrite(current, incoming, write.baseVersions?.[el.id]);
+      if (decision === 'conflict') conflicts.push(el.id);
+      if (decision !== 'apply') continue;
+      const version = Math.max(incoming, Number(current?.version ?? 0) + 1);
+      writeElement(map, { ...el, version });
+      written++;
+    }
+    for (const id of write.deletedIds ?? []) {
+      const live = map.get(id);
+      const current = live instanceof Y.Map ? (live.toJSON() as ElementJSON) : undefined;
+      const decision = decideDelete(current, write.baseVersions?.[id]);
+      if (decision === 'conflict') conflicts.push(id);
+      if (decision !== 'apply' || !(live instanceof Y.Map)) continue;
+      live.set('isDeleted', true);
+      live.set('version', Number(current!.version ?? 0) + 1);
+      live.set('updatedAt', now);
+      written++;
     }
   }, origin);
-  return written;
+  return { written, conflicts };
+}
+
+/**
+ * The same rules for a diagram with no live room: merge into the stored
+ * element list (which holds only live elements, so a deleted element simply
+ * isn't there and is never resurrected by a stale save).
+ */
+export function mergeElementList(
+  current: ElementJSON[],
+  write: RestWrite,
+): MergeOutcome & { elements: ElementJSON[] } {
+  const byId = new Map(current.map((el) => [el.id, el]));
+  const conflicts: string[] = [];
+  let written = 0;
+  for (const el of write.elements) {
+    if (!el || typeof el.id !== 'string') continue;
+    const existing = byId.get(el.id);
+    const incoming = Number(el.version ?? 0);
+    const decision = decideWrite(existing, incoming, write.baseVersions?.[el.id]);
+    if (decision === 'conflict') conflicts.push(el.id);
+    if (decision !== 'apply') continue;
+    byId.set(el.id, { ...el, version: Math.max(incoming, Number(existing?.version ?? 0) + 1) });
+    written++;
+  }
+  for (const id of write.deletedIds ?? []) {
+    const decision = decideDelete(byId.get(id), write.baseVersions?.[id]);
+    if (decision === 'conflict') conflicts.push(id);
+    if (decision !== 'apply') continue;
+    byId.delete(id);
+    written++;
+  }
+  return {
+    elements: Array.from(byId.values()).filter((el) => el.isDeleted !== true),
+    written,
+    conflicts,
+  };
 }
 
 /**

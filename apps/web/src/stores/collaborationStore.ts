@@ -14,9 +14,45 @@ let applyingRemote = false;
 /** True when the diagram's elements are persisted by the live collaboration room. */
 export function isLiveSynced(diagramId: string): boolean {
   const s = useCollaborationStore.getState();
-  return s.connectionStatus === 'connected' && s.syncedDiagramId === diagramId;
+  return (
+    s.connectionStatus === 'connected' &&
+    s.syncedDiagramId === diagramId &&
+    s.provider?.isAuthenticated === true
+  );
 }
-import { getAccessToken } from '../services/api';
+
+const MAX_AUTH_RETRIES = 3;
+
+/**
+ * Re-read our role in the open project (after a permission change or a
+ * refused connection). Removed from the project: say so and leave.
+ */
+async function refreshProjectRole(): Promise<boolean> {
+  const projectId = useCommentsStore.getState().projectId;
+  if (!projectId) return true;
+  try {
+    const { project } = await apiGetProject(projectId);
+    usePermissionStore.getState().setRole((project.role as ProjectRole | undefined) ?? 'viewer');
+    return true;
+  } catch (err) {
+    if (err instanceof ApiError && (err.statusCode === 403 || err.statusCode === 404)) {
+      useCollaborationStore.getState().disconnect();
+      toast('You no longer have access to this project.', 'error');
+      navigate('/');
+      return false;
+    }
+    return true; // offline or a server hiccup: keep trying
+  }
+}
+import {
+  ApiError,
+  apiGetProject,
+  forceRefreshAccessToken,
+  getFreshAccessToken,
+} from '../services/api';
+import { usePermissionStore, type ProjectRole } from './permissionStore';
+import { toast } from './toastStore';
+import { navigate } from '../routing';
 import type { MavisElement, Viewport, ConnectionStatus } from '@mavisdraw/types';
 
 /**
@@ -93,13 +129,57 @@ interface CollaborationState {
 }
 
 const USER_COLORS = [
-  '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A',
-  '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9',
-  '#F8C471', '#82E0AA', '#F0B27A', '#AED6F1',
+  '#FF6B6B',
+  '#4ECDC4',
+  '#45B7D1',
+  '#FFA07A',
+  '#98D8C8',
+  '#F7DC6F',
+  '#BB8FCE',
+  '#85C1E9',
+  '#F8C471',
+  '#82E0AA',
+  '#F0B27A',
+  '#AED6F1',
 ];
 
-function getRandomColor(): string {
-  return USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)];
+/**
+ * Pointer moves and pans fire up to 60+ times a second; every awareness
+ * change is broadcast to (and re-rendered by) everyone in the room. Send at
+ * most ~20 per second per field, always ending with the latest value.
+ */
+const AWARENESS_INTERVAL_MS = 50;
+const pendingAwareness = new Map<
+  string,
+  { value: unknown; timer: ReturnType<typeof setTimeout> | null; last: number }
+>();
+
+function throttledAwareness(provider: HocuspocusProvider, field: string, value: unknown): void {
+  const entry = pendingAwareness.get(field) ?? { value, timer: null, last: 0 };
+  entry.value = value;
+  pendingAwareness.set(field, entry);
+  const wait = AWARENESS_INTERVAL_MS - (Date.now() - entry.last);
+  if (wait <= 0 && !entry.timer) {
+    entry.last = Date.now();
+    provider.setAwarenessField(field, value);
+    return;
+  }
+  if (entry.timer) return;
+  entry.timer = setTimeout(
+    () => {
+      entry.timer = null;
+      entry.last = Date.now();
+      provider.setAwarenessField(field, entry.value);
+    },
+    Math.max(0, wait),
+  );
+}
+
+/** A stable colour per person, so it doesn't change every time they drill in. */
+export function colorFor(userId: string): string {
+  let hash = 0;
+  for (let i = 0; i < userId.length; i++) hash = (hash * 31 + userId.charCodeAt(i)) | 0;
+  return USER_COLORS[Math.abs(hash) % USER_COLORS.length];
 }
 
 export const useCollaborationStore = create<CollaborationState>((set, get) => ({
@@ -124,24 +204,60 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
     set({ connectionStatus: 'connecting', localUserId: userId });
 
     const doc = new Y.Doc();
-    const token = getAccessToken();
-    const userColor = getRandomColor();
+    const userColor = colorFor(userId);
+    // Local edits are written to the doc only after the first sync: writing
+    // into a fresh, empty doc would duplicate every element already on the
+    // server. Reconnects keep writing (the doc holds the state; Y merges).
+    let initialSyncDone = false;
+    let authFailures = 0;
 
     const provider = new HocuspocusProvider({
       url: WS_URL,
       name: `diagram:${diagramId}`,
       document: doc,
-      token: token ?? undefined,
+      // Asked for on every (re)connect, so a long session never presents an
+      // expired token after a server restart or a network drop
+      token: async () => (await getFreshAccessToken()) ?? '',
 
       onConnect() {
-        set({ connectionStatus: 'connected' });
+        // The socket is open; we're not live until authenticated and synced
+        set({ connectionStatus: 'connecting' });
+      },
+
+      onAuthenticationFailed() {
+        set({ connectionStatus: 'disconnected', syncedDiagramId: null });
+        // The provider gives up after a rejection. Either we lost access to
+        // the project (then leave), or our token went stale (then refresh it
+        // and rejoin, a few times with backoff).
+        void refreshProjectRole().then((stillMember) => {
+          if (!stillMember || authFailures >= MAX_AUTH_RETRIES) return;
+          authFailures += 1;
+          const delay = 250 * 2 ** authFailures;
+          void forceRefreshAccessToken().then(() => {
+            setTimeout(() => {
+              if (get().provider === provider) void provider.connect();
+            }, delay);
+          });
+        });
       },
 
       onDisconnect() {
         set({ connectionStatus: 'disconnected', syncedDiagramId: null });
       },
 
+      onClose({ event }) {
+        set({ connectionStatus: 'disconnected', syncedDiagramId: null });
+        // 4403: the server closed us because our access changed. The provider
+        // won't retry on its own; find out where we stand.
+        if (event?.code === 4403) {
+          void refreshProjectRole().then((stillMember) => {
+            if (stillMember && get().provider === provider) void provider.connect();
+          });
+        }
+      },
+
       onSynced() {
+        authFailures = 0;
         // Two-way initial sync, newest version wins per element:
         // remote → store, then local-only / newer local → doc
         const yElements = doc.getMap('elements');
@@ -172,6 +288,7 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
             if (el.version > docVersion(yElements, el.id)) writeElement(yElements, el);
           }
         });
+        initialSyncDone = true;
         set({ connectionStatus: 'connected', syncedDiagramId: diagramId });
       },
 
@@ -185,9 +302,7 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
         const existingCursors = get().remoteCursors;
 
         for (const state of states) {
-          const user = state.user as
-            | { id?: string; name?: string; color?: string }
-            | undefined;
+          const user = state.user as { id?: string; name?: string; color?: string } | undefined;
           if (!user?.id || user.id === userId) continue;
 
           const cursor = state.cursor as { x?: number; y?: number } | undefined;
@@ -199,10 +314,7 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
             id: user.id,
             name: user.name ?? 'Unknown',
             color: user.color ?? '#999',
-            cursor:
-              cursor?.x != null && cursor?.y != null
-                ? { x: cursor.x, y: cursor.y }
-                : null,
+            cursor: cursor?.x != null && cursor?.y != null ? { x: cursor.x, y: cursor.y } : null,
             selectedElementIds: selectedIds,
             viewport: viewport ?? null,
             diagramId: remoteDiagramId ?? null,
@@ -252,7 +364,9 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
       // A teammate drew a portal: fetch the nested diagram behind it
       const diagrams = useDiagramStore.getState().diagrams;
       for (const id of changed) {
-        const target = (elementsMap.get(id) as Y.Map<unknown> | undefined)?.get?.('targetDiagramId');
+        const target = (elementsMap.get(id) as Y.Map<unknown> | undefined)?.get?.(
+          'targetDiagramId',
+        );
         if (typeof target === 'string' && target && !diagrams.has(target)) {
           void refreshDiagramList();
           break;
@@ -283,11 +397,13 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
         void useCommentsStore.getState().refresh();
         void useNotificationStore.getState().load();
       }
+      // Someone's access to the project changed (maybe ours)
+      if (event.keysChanged.has('permissions')) void refreshProjectRole();
     });
 
     // Store → Y.js: write only the elements (and properties) that changed
     const unsubscribe = useElementsStore.subscribe((newState, prevState) => {
-      if (applyingRemote || newState.elements === prevState.elements) return;
+      if (applyingRemote || !initialSyncDone || newState.elements === prevState.elements) return;
       const currentDiagramId = get().currentDiagramId;
       const yElements = doc.getMap('elements');
       const prevElements = prevState.elements;
@@ -296,9 +412,15 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
           if (el.diagramId !== currentDiagramId || prevElements.get(id) === el) continue;
           writeElement(yElements, el);
         }
+        // An element that vanished locally becomes a tombstone, never a
+        // missing key: otherwise a teammate's stale copy brings it back
         for (const [id, el] of prevElements) {
           if (el.diagramId !== currentDiagramId || newState.elements.has(id)) continue;
-          yElements.delete(id);
+          const entry = yElements.get(id);
+          if (!(entry instanceof Y.Map) || entry.get('isDeleted') === true) continue;
+          entry.set('isDeleted', true);
+          entry.set('version', Math.max(Number(entry.get('version') ?? 0), el.version) + 1);
+          entry.set('updatedAt', Date.now());
         }
       });
     });
@@ -351,7 +473,7 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
   updateCursor: (x: number, y: number) => {
     const { provider } = get();
     if (!provider) return;
-    provider.setAwarenessField('cursor', { x, y });
+    throttledAwareness(provider, 'cursor', { x, y });
   },
 
   updateSelection: (elementIds: string[]) => {
@@ -363,7 +485,7 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
   updateViewport: (viewport: Viewport) => {
     const { provider } = get();
     if (!provider) return;
-    provider.setAwarenessField('viewport', viewport);
+    throttledAwareness(provider, 'viewport', viewport);
   },
 
   followUser: (userId: string | null) => {
@@ -379,7 +501,13 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
   deleteElementFromYjs: (elementId: string) => {
     const { doc } = get();
     if (!doc) return;
-    doc.getMap('elements').delete(elementId);
+    const entry = doc.getMap('elements').get(elementId);
+    if (!(entry instanceof Y.Map)) return;
+    doc.transact(() => {
+      entry.set('isDeleted', true);
+      entry.set('version', Number(entry.get('version') ?? 0) + 1);
+      entry.set('updatedAt', Date.now());
+    });
   },
 
   getRemoteSelectionsForElement: (elementId: string): CollaborationUser[] => {

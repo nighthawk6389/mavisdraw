@@ -4,6 +4,8 @@ import { db } from '../db/client.js';
 import { projectPermissions, projects, users } from '../db/schema.js';
 import type { PermissionRole } from '../db/schema.js';
 
+const ROLE_RANK: Record<PermissionRole, number> = { viewer: 0, editor: 1, admin: 2 };
+
 export interface ShareLinkResult {
   id: string;
   shareToken: string;
@@ -59,6 +61,14 @@ export async function resolveShareToken(
   });
 
   if (existing) {
+    // Opening an editor link as a viewer upgrades you (it never downgrades)
+    if (ROLE_RANK[permission.role] > ROLE_RANK[existing.role]) {
+      await db
+        .update(projectPermissions)
+        .set({ role: permission.role, updatedAt: new Date() })
+        .where(eq(projectPermissions.id, existing.id));
+      return { projectId: permission.projectId, role: permission.role };
+    }
     return { projectId: permission.projectId, role: existing.role };
   }
 

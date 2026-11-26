@@ -9,6 +9,11 @@ function resetStore() {
   });
 }
 
+/** Elements still on the canvas (undoing a creation leaves a soft-deleted tombstone). */
+function liveCount(): number {
+  return Array.from(useElementsStore.getState().elements.values()).filter((e) => !e.isDeleted).length;
+}
+
 describe('elementsStore', () => {
   beforeEach(() => {
     resetStore();
@@ -259,10 +264,10 @@ describe('elementsStore', () => {
       const el = store.createElement('rectangle', 'd1', 0, 0, 10, 10);
       store.addElement(el);
 
-      expect(useElementsStore.getState().elements.size).toBe(1);
+      expect(liveCount()).toBe(1);
 
       useElementsStore.getState().undo();
-      expect(useElementsStore.getState().elements.size).toBe(0);
+      expect(liveCount()).toBe(0);
     });
 
     it('redo restores undone state', () => {
@@ -271,15 +276,15 @@ describe('elementsStore', () => {
       store.addElement(el);
 
       useElementsStore.getState().undo();
-      expect(useElementsStore.getState().elements.size).toBe(0);
+      expect(liveCount()).toBe(0);
 
       useElementsStore.getState().redo();
-      expect(useElementsStore.getState().elements.size).toBe(1);
+      expect(liveCount()).toBe(1);
     });
 
     it('undo does nothing when no history', () => {
       useElementsStore.getState().undo();
-      expect(useElementsStore.getState().elements.size).toBe(0);
+      expect(liveCount()).toBe(0);
     });
 
     it('redo does nothing when at latest state', () => {
@@ -287,7 +292,7 @@ describe('elementsStore', () => {
       const el = store.createElement('rectangle', 'd1', 0, 0, 10, 10);
       store.addElement(el);
       useElementsStore.getState().redo();
-      expect(useElementsStore.getState().elements.size).toBe(1);
+      expect(liveCount()).toBe(1);
     });
 
     it('new action after undo discards redo history', () => {
@@ -300,7 +305,7 @@ describe('elementsStore', () => {
 
       // Undo the second add
       useElementsStore.getState().undo();
-      expect(useElementsStore.getState().elements.size).toBe(1);
+      expect(liveCount()).toBe(1);
 
       // Add a new element (should discard redo)
       const el3 = useElementsStore.getState().createElement('diamond', 'd1', 40, 40, 10, 10);

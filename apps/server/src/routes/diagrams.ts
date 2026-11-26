@@ -1,12 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import * as Y from 'yjs';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { diagrams } from '../db/schema.js';
 import {
   createDiagram,
   getDiagram,
-  getDiagramsByProject,
+  getDiagramSummaries,
   updateDiagram,
   deleteDiagram,
   createSnapshot,
@@ -20,6 +21,9 @@ import {
   mergeElements,
   readLiveElements,
   replaceElements,
+  mergeElementList,
+  applyState,
+  encodeState,
   type ElementJSON,
 } from '../ws/ydocElements.js';
 import type { Document } from '@hocuspocus/server';
@@ -27,6 +31,27 @@ import type { Document } from '@hocuspocus/server';
 /** The open collaboration document for a diagram, if anyone is editing it live. */
 function liveDocument(documents: Map<string, Document>, diagramId: string): Document | undefined {
   return documents.get(documentNameFor(diagramId));
+}
+
+/**
+ * The live document for a diagram, waiting for it if the collaboration
+ * server is still loading it (reading or merging into a half-loaded,
+ * empty document would lose data).
+ */
+async function openDocument(
+  server: FastifyInstance['hocuspocus'],
+  diagramId: string,
+): Promise<Document | undefined> {
+  const name = documentNameFor(diagramId);
+  const loading = server.loadingDocuments.get(name);
+  if (loading) {
+    try {
+      return await loading;
+    } catch {
+      return undefined;
+    }
+  }
+  return server.documents.get(name);
 }
 
 /** Never send the CRDT blob to REST clients. */
@@ -67,6 +92,10 @@ const MAX_ELEMENTS_PER_DIAGRAM = 20_000;
 const updateDiagramSchema = z.object({
   title: z.string().min(1).max(255).optional(),
   elements: z.array(z.any()).max(MAX_ELEMENTS_PER_DIAGRAM).optional(),
+  /** Version of each element the client's edits are based on (enables conflict checks). */
+  baseVersions: z.record(z.string(), z.number()).optional(),
+  /** Elements the client deleted since its base. */
+  deletedIds: z.array(z.string().max(64)).max(MAX_ELEMENTS_PER_DIAGRAM).optional(),
   viewBackgroundColor: z.string().max(20).optional(),
   gridEnabled: z.boolean().optional(),
   gridSize: z.number().int().positive().optional(),
@@ -144,6 +173,7 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(403).send({ error: 'Access denied' });
     }
 
+    await openDocument(app.hocuspocus, id);
     return reply.code(200).send({
       diagram: currentDiagram(app.hocuspocus.documents, diagram),
     });
@@ -162,9 +192,13 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(403).send({ error: 'Access denied' });
       }
 
-      const diagramList = await getDiagramsByProject(projectId);
+      const diagramList = await getDiagramSummaries(projectId);
       return reply.code(200).send({
-        diagrams: diagramList.map((d) => currentDiagram(app.hocuspocus.documents, d)),
+        diagrams: diagramList.map((d) => ({
+          ...d,
+          createdAt: d.createdAt.toISOString(),
+          updatedAt: d.updatedAt.toISOString(),
+        })),
       });
     },
   );
@@ -192,17 +226,38 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(403).send({ error: 'Access denied' });
       }
 
+      // Element writes are conflict-checked against each element's base
+      // version: an edit applies only if nobody changed that element since
+      // the client last saw it; otherwise it's reported back as a conflict.
       // While people are editing live, the collaboration document is the
-      // source of truth: merge into it (newer versions win) and let it persist,
-      // instead of writing the row and being overwritten moments later.
-      const { elements, ...metadata } = parsed.data;
-      const live = liveDocument(app.hocuspocus.documents, id);
+      // source of truth, so the write goes into it and it persists itself.
+      const { elements, baseVersions, deletedIds, ...metadata } = parsed.data;
+      const write = { elements: (elements ?? []) as ElementJSON[], baseVersions, deletedIds };
+      const live = elements ? await openDocument(app.hocuspocus, id) : undefined;
       let diagram;
+      let conflicts: string[] = [];
       if (elements && live) {
-        mergeElements(live, elements as ElementJSON[]);
+        conflicts = mergeElements(live, write).conflicts;
         diagram = await updateDiagram(id, metadata);
+      } else if (elements && baseVersions) {
+        if (existing.yjsState) {
+          // Merge through the stored CRDT state so tombstones and history survive
+          const doc = new Y.Doc();
+          applyState(doc, existing.yjsState);
+          conflicts = mergeElements(doc, write).conflicts;
+          diagram = await updateDiagram(id, {
+            ...metadata,
+            elements: readLiveElements(doc),
+            yjsState: encodeState(doc),
+          });
+        } else {
+          const merged = mergeElementList((existing.elements ?? []) as ElementJSON[], write);
+          conflicts = merged.conflicts;
+          diagram = await updateDiagram(id, { ...metadata, elements: merged.elements });
+        }
       } else {
-        // Direct write: the stored CRDT state is now stale, re-seed next session
+        // Legacy whole-diagram replace (API clients without base versions):
+        // the stored CRDT state is now stale, re-seed next session
         diagram = await updateDiagram(id, {
           ...metadata,
           ...(elements ? { elements, yjsState: null } : {}),
@@ -213,7 +268,8 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
       }
 
       return reply.code(200).send({
-        diagram: publicDiagram(diagram!),
+        diagram: currentDiagram(app.hocuspocus.documents, diagram),
+        conflicts,
       });
     },
   );
@@ -257,7 +313,7 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(403).send({ error: 'Access denied' });
     }
 
-    const live = liveDocument(app.hocuspocus.documents, id);
+    const live = await openDocument(app.hocuspocus, id);
     const snapshot = await createSnapshot(
       id,
       userId,
@@ -332,12 +388,20 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(404).send({ error: 'Snapshot not found' });
       }
 
-      const live = liveDocument(app.hocuspocus.documents, id);
+      const live = await openDocument(app.hocuspocus, id);
       const liveElements = () =>
         live ? readLiveElements(live) : undefined;
 
       // Create a new snapshot of current state before restoring
-      await createSnapshot(id, userId, 'auto', 'Pre-restore backup', liveElements());
+      // Kept as a named version (automatic ones get pruned) so a restore can
+      // always be undone
+      await createSnapshot(
+        id,
+        userId,
+        'manual',
+        `Before restoring “${snapshot.label ?? `version ${snapshot.version}`}”`,
+        liveElements(),
+      );
 
       // Restore the diagram from the snapshot
       const appState = snapshot.appState as Record<string, unknown>;

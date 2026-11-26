@@ -10,6 +10,8 @@ vi.mock('@hocuspocus/provider', () => {
         document: opts.document,
         destroy: vi.fn(),
         setAwarenessField: vi.fn(),
+        connect: vi.fn(),
+        isAuthenticated: true,
         _opts: opts,
         // Simulate connect
         triggerConnect() {
@@ -20,6 +22,10 @@ vi.mock('@hocuspocus/provider', () => {
         },
         triggerSync() {
           opts.onSynced?.();
+        },
+        triggerAuthFailed() {
+          instance.isAuthenticated = false;
+          opts.onAuthenticationFailed?.({ reason: 'permission-denied' });
         },
         triggerAwarenessUpdate(states: Record<string, unknown>[]) {
           opts.onAwarenessUpdate?.({ states });
@@ -35,9 +41,20 @@ vi.mock('@hocuspocus/provider', () => {
 // Mock getAccessToken
 vi.mock('../../services/api', () => ({
   getAccessToken: vi.fn(() => 'mock-token'),
+  getFreshAccessToken: vi.fn(async () => 'mock-token'),
+  forceRefreshAccessToken: vi.fn(async () => true),
+  apiGetProject: vi.fn(async () => ({ project: { role: 'editor' } })),
+  ApiError: class ApiError extends Error {
+    constructor(
+      message: string,
+      public statusCode: number,
+    ) {
+      super(message);
+    }
+  },
 }));
 
-import { useCollaborationStore } from '../collaborationStore';
+import { useCollaborationStore, isLiveSynced, colorFor } from '../collaborationStore';
 import { useElementsStore } from '../elementsStore';
 
 describe('collaborationStore', () => {
@@ -349,6 +366,77 @@ describe('collaborationStore', () => {
 
     // Delete it
     store.deleteElementFromYjs('elem-to-delete');
-    expect(elementsMap.has('elem-to-delete')).toBe(false);
+    // A tombstone with a newer version, so stale copies can't bring it back
+    const tomb = elementsMap.get('elem-to-delete') as { get: (k: string) => unknown };
+    expect(tomb.get('isDeleted')).toBe(true);
+    expect(tomb.get('version')).toBe(2);
+  });
+
+  describe('sync integrity', () => {
+    type MockProvider = {
+      triggerConnect: () => void;
+      triggerSync: () => void;
+      triggerAuthFailed: () => void;
+      connect: ReturnType<typeof vi.fn>;
+    };
+    const mock = () => useCollaborationStore.getState().provider as unknown as MockProvider;
+    const rect = (id: string, extra: Record<string, unknown> = {}) =>
+      ({
+        ...useElementsStore.getState().createElement('rectangle', 'diagram-1', 0, 0, 10, 10),
+        id,
+        ...extra,
+      }) as never;
+
+    it('is not "live" until authenticated and synced', () => {
+      useCollaborationStore.getState().connect('diagram-1', 'user-1', 'Alice');
+      const provider = mock();
+      provider.triggerConnect();
+      expect(useCollaborationStore.getState().connectionStatus).toBe('connecting');
+      expect(isLiveSynced('diagram-1')).toBe(false);
+      provider.triggerSync();
+      expect(isLiveSynced('diagram-1')).toBe(true);
+    });
+
+    it('an auth rejection drops live status and retries with a fresh token', async () => {
+      vi.useFakeTimers();
+      try {
+        useCollaborationStore.getState().connect('diagram-1', 'user-1', 'Alice');
+        const provider = mock();
+        provider.triggerSync();
+        provider.triggerAuthFailed();
+        expect(useCollaborationStore.getState().connectionStatus).toBe('disconnected');
+        expect(isLiveSynced('diagram-1')).toBe(false);
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(provider.connect).toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('writes nothing into a fresh doc before the first sync', () => {
+      useCollaborationStore.getState().connect('diagram-1', 'user-1', 'Alice');
+      const doc = useCollaborationStore.getState().doc!;
+      useElementsStore.getState().addElement(rect('early'));
+      expect(doc.getMap('elements').has('early')).toBe(false);
+      // …the first sync pushes it (it's newer than anything on the server)
+      mock().triggerSync();
+      expect(doc.getMap('elements').has('early')).toBe(true);
+    });
+
+    it('an element removed locally becomes a tombstone in the doc', () => {
+      useCollaborationStore.getState().connect('diagram-1', 'user-1', 'Alice');
+      mock().triggerSync();
+      const doc = useCollaborationStore.getState().doc!;
+      useElementsStore.getState().addElement(rect('gone', { version: 3 }));
+      useElementsStore.getState().discardElements(['gone']);
+      const entry = doc.getMap('elements').get('gone') as { get: (k: string) => unknown };
+      expect(entry.get('isDeleted')).toBe(true);
+      expect(entry.get('version')).toBe(4);
+    });
+
+    it('gives each person a stable colour', () => {
+      expect(colorFor('user-1')).toBe(colorFor('user-1'));
+      expect(new Set(['a', 'b', 'c', 'd', 'e'].map(colorFor)).size).toBeGreaterThan(1);
+    });
   });
 });

@@ -98,11 +98,27 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
   const role = usePermissionStore((s) => s.role);
   const canShare = role === 'owner' || role === 'admin';
 
-  // The address bar always points at what's on screen (shareable deep link)
+  // The address bar always points at what's on screen (shareable deep link).
+  // Drilling in or out adds a history entry, so the browser's Back button
+  // goes back up a level instead of leaving the project.
+  const reflectedRef = useRef(false);
   useEffect(() => {
     if (!projectId) return;
-    reflectPath(projectPath(projectId, activeDiagramId === rootDiagramId ? null : activeDiagramId));
+    const path = projectPath(projectId, activeDiagramId === rootDiagramId ? null : activeDiagramId);
+    reflectPath(path, { push: reflectedRef.current });
+    reflectedRef.current = true;
   }, [projectId, activeDiagramId, rootDiagramId]);
+
+  // Back/Forward: show the diagram the address names
+  const route = useRoute();
+  useEffect(() => {
+    if (route.name !== 'project' || route.projectId !== projectId) return;
+    const target = route.diagramId ?? rootDiagramId;
+    const store = useDiagramStore.getState();
+    if (target && target !== store.activeDiagramId && store.diagrams.has(target)) {
+      store.navigateToDiagram(target);
+    }
+  }, [route, projectId, rootDiagramId]);
 
   // Nested diagrams load their contents the first time they're opened
   useEffect(() => {
