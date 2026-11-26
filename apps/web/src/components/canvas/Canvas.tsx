@@ -15,11 +15,13 @@ import { generateThumbnail } from '../../utils/thumbnailGenerator';
 import { installTestHooks } from '../../utils/testHooks';
 import { cssFont, measureText, whenFontsReady } from '../../utils/fonts';
 import { insertImageFile } from '../../utils/imageInsert';
+import { registerNewDiagram } from '../../services/diagramSync';
 import { useViewportStore } from '../../stores/viewportStore';
 import { sortByStacking, withoutHistory } from '../../stores/elementsStore';
 import { WheelInterpreter } from './wheel';
 import { registerCanvasController } from './canvasController';
 import { elementWorldBounds } from './CanvasRenderer';
+import { ViewportManager } from './ViewportManager';
 import ContextMenu, { type ContextMenuState } from './ContextMenu';
 import ZoomControls from './ZoomControls';
 import type { MavisElement, TextElement, PortalElement, RenderMode, Point } from '@mavisdraw/types';
@@ -201,6 +203,27 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     (element: MavisElement, isNew: boolean) => {
       textEditStartTimeRef.current = Date.now();
 
+      // Connectors: edit the existing label or start a new one at the midpoint
+      if (element.type === 'arrow' || element.type === 'line') {
+        const existing = element.boundElements
+          .filter((b) => b.type === 'text')
+          .map((b) => useElementsStore.getState().elements.get(b.id))
+          .find((el) => el && !el.isDeleted);
+        if (existing) {
+          useSelectionStore.getState().select(element.id);
+          setTextEditState({ elementId: existing.id, isNew: false, isShapeBinding: false });
+          return;
+        }
+        const label = createBoundText(element.id, '');
+        setTextEditState({
+          elementId: label.id,
+          isNew: true,
+          isShapeBinding: true,
+          shapeId: element.id,
+        });
+        return;
+      }
+
       // If element is a shape (not text), we need to create bound text
       const shapeTypes = new Set(['rectangle', 'ellipse', 'diamond', 'triangle']);
       if (shapeTypes.has(element.type)) {
@@ -263,8 +286,12 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         const el = useElementsStore.getState().getElementById(textEditState.elementId);
         if (!el || el.type !== 'text') return;
         const updates: Partial<TextElement> = { text };
-        if (!el.containerId) {
-          // Auto-size standalone text to its content
+        const container = el.containerId
+          ? useElementsStore.getState().elements.get(el.containerId)
+          : undefined;
+        const isConnectorLabel = container?.type === 'arrow' || container?.type === 'line';
+        if (!el.containerId || isConnectorLabel) {
+          // Standalone text and connector labels fit their content
           const size = measureText(text, el.fontSize, el.fontFamily, el.lineHeight);
           updates.width = Math.max(size.width + 10, 20);
           updates.height = Math.max(size.height, el.fontSize * el.lineHeight);
@@ -382,7 +409,8 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
           // Animation complete — switch diagrams
           animatingRef.current = false;
 
-          // Navigate to child diagram
+          // Navigate to child diagram (this handler owns the viewport change)
+          drillingRef.current = true;
           navigateToDiagram(portal.targetDiagramId);
 
           // Restore cached viewport for child, or reset
@@ -413,6 +441,9 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     [clearSelection, navigateToDiagram, saveViewport, generateThumbnailForDiagram],
   );
 
+  const startTextEditingRef = useRef(startTextEditing);
+  startTextEditingRef.current = startTextEditing;
+
   const handlePortalDrillDownRef = useRef(handlePortalDrillDown);
   handlePortalDrillDownRef.current = handlePortalDrillDown;
 
@@ -429,6 +460,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         portal.id,
         portal.label || 'New Diagram',
       );
+      registerNewDiagram(diagram);
 
       // Link portal to the new diagram
       useElementsStore.getState().updateElement(portal.id, {
@@ -438,58 +470,101 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     [createDiagram],
   );
 
-  // ─── Navigate back handler ────────────────────────────────
+  // ─── Leaving a diagram (any navigation path) ────────────────
+  // Drill-down animates itself before navigating; for every other route
+  // (Backspace, breadcrumb, tree, ⌘K) remember where we were, refresh the
+  // portal preview, and when going up a level, zoom out of the portal.
 
-  const handleNavigateBack = useCallback(() => {
-    const diagramStore = useDiagramStore.getState();
-    if (diagramStore.diagramPath.length <= 1) return;
+  const previousDiagramRef = useRef<string | null>(null);
+  const drillingRef = useRef(false);
 
+  useEffect(() => {
+    const previous = previousDiagramRef.current;
+    previousDiagramRef.current = activeDiagramId;
     const renderer = rendererRef.current;
     const container = containerRef.current;
-    if (!renderer || !container) return;
+    if (!previous || previous === activeDiagramId || !renderer || !container) return;
 
     const viewport = renderer.getViewport();
-    const currentDiagramId = activeDiagramIdRef.current;
+    if (drillingRef.current) {
+      // Drill-down already saved state and set the child's viewport
+      drillingRef.current = false;
+      return;
+    }
 
-    // Save current viewport
-    saveViewport(currentDiagramId, viewport.getViewport());
-
-    // Generate thumbnail before leaving
-    const thumbnailDataUrl = generateThumbnailForDiagram(currentDiagramId);
-
-    // Find portal element in parent diagram that points to current diagram
-    if (thumbnailDataUrl) {
+    saveViewport(previous, viewport.getViewport());
+    const thumbnail = generateThumbnailForDiagram(previous);
+    if (thumbnail) {
       for (const el of elementsRef.current.values()) {
-        if (
-          el.type === 'portal' &&
-          (el as PortalElement).targetDiagramId === currentDiagramId &&
-          !el.isDeleted
-        ) {
+        if (el.type === 'portal' && (el as PortalElement).targetDiagramId === previous && !el.isDeleted) {
           withoutHistory(() =>
             useElementsStore.getState().updateElementSilent(el.id, {
-              thumbnailDataUrl,
+              thumbnailDataUrl: thumbnail,
             } as Partial<PortalElement>),
           );
         }
       }
     }
+    // Keep a selection made for the destination (e.g. ⌘K jump); drop the rest
+    const selection = useSelectionStore.getState().selectedIds;
+    const kept = Array.from(selection).filter(
+      (id) => useElementsStore.getState().elements.get(id)?.diagramId === activeDiagramId,
+    );
+    if (kept.length !== selection.size) useSelectionStore.getState().selectMultiple(kept);
 
-    // Clear selection
-    clearSelection();
+    const { width: w, height: h } = container.getBoundingClientRect();
+    const cached = useDiagramStore.getState().getViewport(activeDiagramId);
+    const target = (() => {
+      if (cached) return cached;
+      const probe = new ViewportManager();
+      const els = Array.from(useElementsStore.getState().elements.values()).filter(
+        (el) => el.diagramId === activeDiagramId && !el.isDeleted,
+      );
+      if (els.length > 0) probe.zoomToFit(getContentBounds(els), w, h, 64);
+      return probe.getViewport();
+    })();
 
-    // Navigate up
-    diagramStore.navigateUp();
+    // Going up one level: start "inside" the portal and pull back out
+    const left = useDiagramStore.getState().diagrams.get(previous);
+    const portal =
+      left?.parentDiagramId === activeDiagramId
+        ? (Array.from(elementsRef.current.values()).find(
+            (el) =>
+              el.type === 'portal' &&
+              !el.isDeleted &&
+              (el as PortalElement).targetDiagramId === previous,
+          ) as PortalElement | undefined)
+        : undefined;
 
-    // Restore parent viewport
-    const parentId = diagramStore.activeDiagramId;
-    const cachedVP = diagramStore.getViewport(parentId);
-    if (cachedVP) {
-      viewport.setViewport(cachedVP);
-    } else {
-      viewport.reset();
+    if (!portal || animatingRef.current) {
+      viewport.setViewport(target);
+      renderer.invalidateStatic();
+      return;
     }
-    renderer.invalidateStatic();
-  }, [clearSelection, saveViewport, generateThumbnailForDiagram]);
+
+    const insideZoom = Math.min(w / portal.width, h / portal.height) * 0.8;
+    const start = {
+      zoom: insideZoom,
+      scrollX: w / 2 - (portal.x + portal.width / 2) * insideZoom,
+      scrollY: h / 2 - (portal.y + portal.height / 2) * insideZoom,
+    };
+    animatingRef.current = true;
+    const startTime = performance.now();
+    const step = (time: number) => {
+      const t = Math.min((time - startTime) / DRILL_DOWN_DURATION, 1);
+      const ease = 1 - Math.pow(1 - t, 3);
+      viewport.setViewport({
+        scrollX: start.scrollX + (target.scrollX - start.scrollX) * ease,
+        scrollY: start.scrollY + (target.scrollY - start.scrollY) * ease,
+        zoom: start.zoom + (target.zoom - start.zoom) * ease,
+      });
+      renderer.invalidateStatic();
+      if (t < 1) requestAnimationFrame(step);
+      else animatingRef.current = false;
+    };
+    requestAnimationFrame(step);
+  }, [activeDiagramId, saveViewport, generateThumbnailForDiagram]);
+
 
   // ─── Initialize renderer + interaction manager ────────────
 
@@ -600,6 +675,12 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
       renderer.invalidateStatic();
     };
 
+    // Opening a diagram for the first time: frame its content
+    if (!useDiagramStore.getState().getViewport(activeDiagramIdRef.current)) {
+      const initial = computeElementList(false);
+      if (initial.length > 0) fitBounds(initial);
+    }
+
     registerCanvasController({
       zoomIn: () => zoomAtCenter(1.2),
       zoomOut: () => zoomAtCenter(1 / 1.2),
@@ -622,6 +703,23 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
       openPortal: (portalId: string) => {
         const portal = useElementsStore.getState().elements.get(portalId);
         if (portal) handlePortalDrillDownRef.current(portal);
+      },
+      editLabel: (elementId: string) => {
+        const el = useElementsStore.getState().elements.get(elementId);
+        if (!el || el.isDeleted || el.isLocked) return;
+        if (el.type === 'text') {
+          startTextEditingRef.current(el, false);
+          return;
+        }
+        const label = el.boundElements
+          .filter((b) => b.type === 'text')
+          .map((b) => useElementsStore.getState().elements.get(b.id))
+          .find((t) => t && !t.isDeleted);
+        if (label && el.type !== 'arrow' && el.type !== 'line') {
+          startTextEditingRef.current(label, false);
+        } else {
+          startTextEditingRef.current(el, !label);
+        }
       },
     });
 

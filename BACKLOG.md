@@ -4,7 +4,6 @@
 
 ### Data integrity (P0)
 
-- **Child diagrams are never persisted** — `apiCreateDiagram` (`apps/web/src/services/api.ts:224`) has no call sites; `diagramStore.createDiagram` only creates a client-side ID. Autosave of a child `PUT`s a non-existent diagram (404), Hocuspocus rejects the room (`apps/server/src/ws/hocuspocus.ts:19`), and child elements are never fetched (`apiGetDiagram` only for the root in `App.tsx:225`). Nested content is lost on reload.
 - **REST autosave and Hocuspocus both write `diagrams.elements`** — last writer wins between collaborators (`useAutoSave.ts:52`, `hocuspocus.ts:88`). Snapshot restore (`routes/diagrams.ts:272`) never reaches the live Y.Doc.
 - **Whole-element `Y.Map` replacement on every change** (`collaborationStore.ts:255-261`) — concurrent edits to different properties of one element don't merge; doc bloat. Remote deletes hard-delete while local deletes are soft (`collaborationStore.ts:224-229`).
 - **Version history is IndexedDB-only** (`utils/versionDb.ts`) — not shared with collaborators or across devices.
@@ -15,15 +14,20 @@
 - **Viewers can write over WebSocket** — no `connection.readOnly` for viewers; access only checked at connect (`ws/hocuspocus.ts:9-35`).
 - **Production seeds `demo@mavisdraw.dev` / `password123`** (`render.yaml:16`, `db/seed.ts`).
 - **Share tokens returned to every collaborator** (`routes/sharing.ts:62-77`); links never expire.
-- **AI agent:** client-supplied diagram markdown interpolated into the system prompt and client system messages accepted (`agentService.ts:15-20`, `routes/agent.ts:8-9`); no quotas/limits on `/api/agent/chat`.
+- **AI agent:** the diagram now goes in a delimited data message, client system messages are dropped, and turns are rate-limited/size-capped — but `browse_code`/`read_file` can still read any repo the user's GitHub token can see; restrict them to repos linked in the diagram.
 - OAuth `state` never verified (`githubService.ts:94`); no env validation and a hard-coded JWT fallback secret (`authService.ts:8`); `trustProxy` unset so IP rate limiting is shared by all users behind the proxy (`app.ts:14`).
 
 ### Broken features
 
 - **Share links lead nowhere** — `ShareDialog` builds `/share/:token` but there is no router and `apiJoinViaShareLink` (`api.ts:275`) is never called.
-- **AI chat likely fails at runtime** — UI messages aren't passed through `convertToModelMessages`, and `reply.raw.writeHead` bypasses CORS headers (`routes/agent.ts:22,33`).
-- **AI proposals overlap existing content** — fixed grid placement at (100,100) (`ProposalCard.tsx:74-81`); needs auto-layout.
 - **No graceful shutdown** — Hocuspocus debounced writes are lost on deploy (`apps/server/src/index.ts`).
+
+### Roadmap Phase 2 items not done yet
+
+- **Repo → map generation, drift detection (GitHub App + PR comments), MCP server, embeds** — not started; Mermaid import and the AI agent are the current entry points.
+- **Model + views** (one component shown at several levels) — not started; still the key data-model decision before the hierarchy grows.
+- **Cylinder/queue shapes** — Mermaid `[(db)]` maps to a rounded rectangle for now.
+- **LLM-markdown paste** — the `packages/llm` format can be exported but pasting it doesn't import with auto-layout yet (Mermaid does).
 
 ### Roadmap Phase 1 items not done yet
 

@@ -74,6 +74,7 @@ const ARROWHEAD_OPTIONS: { value: Arrowhead; label: string; icon: string }[] = [
 export default function StylePanel() {
   const showStylePanel = useUIStore((s) => s.showStylePanel);
   const selectedIds = useSelectionStore((s) => s.selectedIds);
+  const settledSelectedIds = useSelectionStore((s) => s.settledSelectedIds);
   const elements = useElementsStore((s) => s.elements);
   const alignElements = useElementsStore((s) => s.alignElements);
   const distributeElements = useElementsStore((s) => s.distributeElements);
@@ -161,7 +162,7 @@ export default function StylePanel() {
     (el) => el.type === 'arrow' || el.type === 'line',
   );
 
-  if (!showStylePanel || selectedElements.length === 0) {
+  if (!showStylePanel || selectedElements.length === 0 || settledSelectedIds.size === 0) {
     return null;
   }
 

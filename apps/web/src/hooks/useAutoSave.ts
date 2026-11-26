@@ -1,112 +1,143 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
+import type { Diagram, MavisElement } from '@mavisdraw/types';
+import { findDirtyDiagrams, recordSaved } from '../services/saveTracker';
 import { useElementsStore } from '../stores/elementsStore';
 import { useDiagramStore } from '../stores/diagramStore';
 import { useAuthStore } from '../stores/authStore';
-import { apiUpdateDiagram, apiSaveDiagram } from '../services/api';
-import type { MavisElement } from '@mavisdraw/types';
+import { ApiError, apiUpdateDiagram, apiSaveDiagram } from '../services/api';
+import { ensureDiagramOnServer } from '../services/diagramSync';
 
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
-const DEBOUNCE_MS = 2000;
+const DEBOUNCE_MS = 1500;
 
-export function useAutoSave(diagramId: string | null) {
+async function saveDiagram(diagram: Diagram, elements: MavisElement[]): Promise<void> {
+  const body = {
+    elements,
+    title: diagram.title,
+    viewBackgroundColor: diagram.viewBackgroundColor,
+    gridEnabled: diagram.gridEnabled,
+    gridSize: diagram.gridSize,
+    renderMode: diagram.renderMode,
+    layers: diagram.layers,
+  };
+  try {
+    await apiUpdateDiagram(diagram.id, body);
+  } catch (err) {
+    // A nested diagram that never reached the server: create it, then save
+    if (err instanceof ApiError && err.statusCode === 404) {
+      await ensureDiagramOnServer(diagram);
+      await apiUpdateDiagram(diagram.id, body);
+    } else {
+      throw err;
+    }
+  }
+  recordSaved(diagram.id, elements, diagram.updatedAt);
+}
+
+/**
+ * Debounced autosave of every diagram with unsaved changes (not just the one
+ * on screen, so navigating away mid-debounce never loses work).
+ */
+export function useAutoSave(activeDiagramId: string | null) {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const elements = useElementsStore((s) => s.elements);
   const diagrams = useDiagramStore((s) => s.diagrams);
 
-  const lastSavedVersionRef = useRef<Map<string, number>>(new Map());
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isSavingRef = useRef(false);
+  const savingRef = useRef<Promise<void> | null>(null);
+  const againRef = useRef(false);
+  const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const save = useCallback(async () => {
-    if (!diagramId || !isAuthenticated || isSavingRef.current) return;
+  const saveDirty = useCallback(async (): Promise<void> => {
+    if (!useAuthStore.getState().isAuthenticated) return;
+    if (savingRef.current) {
+      againRef.current = true;
+      return savingRef.current;
+    }
 
-    const diagram = diagrams.get(diagramId);
-    if (!diagram) return;
+    const run = async () => {
+      do {
+        againRef.current = false;
+        const dirty = findDirtyDiagrams(
+          useElementsStore.getState().elements,
+          useDiagramStore.getState().diagrams,
+        );
+        if (dirty.length === 0) return;
 
-    // Collect elements for this diagram
-    const diagramElements: MavisElement[] = [];
-    let hasChanges = false;
-    for (const el of elements.values()) {
-      if (el.diagramId === diagramId && !el.isDeleted) {
-        diagramElements.push(el);
-        const savedVersion = lastSavedVersionRef.current.get(el.id);
-        if (savedVersion === undefined || savedVersion !== el.version) {
-          hasChanges = true;
+        setSaveStatus('saving');
+        try {
+          // Parents before children so server-side parent checks pass
+          dirty.sort((a, b) => depth(a.diagram) - depth(b.diagram));
+          for (const { diagram, elements: els } of dirty) {
+            await saveDiagram(diagram, els);
+          }
+          setSaveStatus('saved');
+          if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
+          statusTimerRef.current = setTimeout(
+            () => setSaveStatus((s) => (s === 'saved' ? 'idle' : s)),
+            3000,
+          );
+        } catch (err) {
+          console.error('Auto-save failed:', err);
+          setSaveStatus('error');
+          return;
         }
-      }
-    }
-
-    // Also detect deletions (element count changed)
-    if (!hasChanges && diagramElements.length !== lastSavedVersionRef.current.size) {
-      hasChanges = true;
-    }
-
-    if (!hasChanges) return;
-
-    isSavingRef.current = true;
-    setSaveStatus('saving');
-
-    try {
-      await apiUpdateDiagram(diagramId, {
-        elements: diagramElements,
-        title: diagram.title,
-        viewBackgroundColor: diagram.viewBackgroundColor,
-        gridEnabled: diagram.gridEnabled,
-        gridSize: diagram.gridSize,
-        renderMode: diagram.renderMode,
-        layers: diagram.layers,
-      });
-
-      const snapshot = new Map<string, number>();
-      for (const el of diagramElements) {
-        snapshot.set(el.id, el.version);
-      }
-      lastSavedVersionRef.current = snapshot;
-      setSaveStatus('saved');
-
-      // Reset status after 3 seconds
-      setTimeout(() => {
-        setSaveStatus((s) => (s === 'saved' ? 'idle' : s));
-      }, 3000);
-    } catch (err) {
-      console.error('Auto-save failed:', err);
-      setSaveStatus('error');
-    } finally {
-      isSavingRef.current = false;
-    }
-  }, [diagramId, isAuthenticated, elements, diagrams]);
-
-  // Debounced auto-save when elements or diagram state changes
-  useEffect(() => {
-    if (!diagramId || !isAuthenticated) return;
-
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-    }
-
-    timerRef.current = setTimeout(() => {
-      save();
-    }, DEBOUNCE_MS);
-
-    return () => {
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
-      }
+      } while (againRef.current);
     };
-  }, [save, diagramId, isAuthenticated]);
 
-  // Manual save
+    savingRef.current = run().finally(() => {
+      savingRef.current = null;
+    });
+    return savingRef.current;
+  }, []);
+
+  // Debounce after any change to elements or diagram metadata
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => void saveDirty(), DEBOUNCE_MS);
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [elements, diagrams, isAuthenticated, saveDirty]);
+
+  // Don't lose the last edits when the tab is hidden or closed
+  useEffect(() => {
+    const flush = () => {
+      if (document.visibilityState === 'hidden') void saveDirty();
+    };
+    document.addEventListener('visibilitychange', flush);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', flush);
+      window.removeEventListener('pagehide', flush);
+      // Leaving the editor (back to dashboard): save whatever is pending
+      void saveDirty();
+    };
+  }, [saveDirty]);
+
   const manualSave = useCallback(async () => {
-    if (!diagramId || !isAuthenticated) return;
-    await save();
+    if (!activeDiagramId || !isAuthenticated) return;
+    await saveDirty();
     try {
-      await apiSaveDiagram(diagramId, 'manual');
+      await apiSaveDiagram(activeDiagramId, 'manual');
     } catch (err) {
       console.error('Manual save snapshot failed:', err);
     }
-  }, [diagramId, isAuthenticated, save]);
+  }, [activeDiagramId, isAuthenticated, saveDirty]);
 
-  return { saveStatus, manualSave };
+  return { saveStatus, manualSave, saveNow: saveDirty };
+}
+
+function depth(diagram: Diagram): number {
+  const diagrams = useDiagramStore.getState().diagrams;
+  let d = 0;
+  let current: Diagram | undefined = diagram;
+  while (current?.parentDiagramId && d < 50) {
+    current = diagrams.get(current.parentDiagramId);
+    d++;
+  }
+  return d;
 }

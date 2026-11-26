@@ -5,6 +5,8 @@ import { diagrams, diagramSnapshots, projects, projectPermissions } from '../db/
 import type { PermissionRole } from '../db/schema.js';
 
 export interface CreateDiagramInput {
+  /** Client-chosen id (validated by the route); generated when omitted. */
+  id?: string;
   projectId: string;
   parentDiagramId?: string | null;
   parentPortalId?: string | null;
@@ -23,7 +25,7 @@ export interface UpdateDiagramInput {
 }
 
 export async function createDiagram(input: CreateDiagramInput) {
-  const id = nanoid();
+  const id = input.id ?? nanoid();
   const now = new Date();
 
   const [diagram] = await db

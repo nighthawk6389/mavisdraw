@@ -1,8 +1,9 @@
-import React from 'react';
-import type { DiagramProposal, ProposedChange, ElementType } from '@mavisdraw/types';
+import React, { useState } from 'react';
+import type { DiagramProposal, ProposedChange } from '@mavisdraw/types';
 import { useAgentStore } from '../../stores/agentStore';
 import { useElementsStore } from '../../stores/elementsStore';
-import { useDiagramStore } from '../../stores/diagramStore';
+import { toast } from '../../stores/toastStore';
+import { applyProposal } from './applyProposal';
 
 function changeIcon(change: ProposedChange): string {
   switch (change.action) {
@@ -40,253 +41,28 @@ function changeColor(change: ProposedChange): string {
 export default function ProposalCard({ proposal }: { proposal: DiagramProposal }) {
   const updateProposalStatus = useAgentStore((s) => s.updateProposalStatus);
 
-  const handleApply = () => {
-    const elementsStore = useElementsStore.getState();
-    const activeDiagramId = useDiagramStore.getState().activeDiagramId;
+  const [applying, setApplying] = useState(false);
 
-    // Single history push for one undo step
-    elementsStore.pushHistory();
-
-    // Build label→id map from existing elements
-    const labelToId = new Map<string, string>();
-    for (const [id, el] of elementsStore.elements) {
-      if (el.isDeleted) continue;
-      // Check bound text for label
-      for (const bound of el.boundElements) {
-        if (bound.type === 'text') {
-          const textEl = elementsStore.elements.get(bound.id);
-          if (textEl && textEl.type === 'text' && 'text' in textEl) {
-            const text = (textEl as { text: string }).text.trim();
-            if (text) labelToId.set(text, id);
-          }
-        }
-      }
-      // Portal labels
-      if (el.type === 'portal' && 'label' in el) {
-        const label = (el as { label: string }).label;
-        if (label) labelToId.set(label, id);
-      }
-    }
-
-    // Track newly created elements by label for connections
-    const newLabelToId = new Map<string, string>(labelToId);
-
-    // Apply changes
-    const GRID = 120;
-    let addIndex = 0;
-
-    for (const change of proposal.changes) {
-      switch (change.action) {
-        case 'add': {
-          const x = 100 + (addIndex % 4) * (GRID + 40);
-          const y = 100 + Math.floor(addIndex / 4) * (GRID + 40);
-          const elementType = change.elementType as ElementType;
-          const el = elementsStore.createElement(elementType, activeDiagramId, x, y, GRID, 80);
-          // Add without pushing history (we already pushed once)
-          useElementsStore.setState((prev) => {
-            const next = new Map(prev.elements);
-            next.set(el.id, el);
-            return { elements: next };
-          });
-
-          // Create bound text label
-          if (change.label && elementType !== 'arrow') {
-            const textEl = elementsStore.createElement(
-              'text',
-              activeDiagramId,
-              el.x + 10,
-              el.y + 10,
-              el.width - 20,
-              el.height - 20,
-            );
-            const boundText = {
-              ...textEl,
-              type: 'text' as const,
-              text: change.label,
-              fontSize: 16,
-              fontFamily: 'hand-drawn' as const,
-              textAlign: 'center' as const,
-              verticalAlign: 'middle' as const,
-              containerId: el.id,
-              lineHeight: 1.25,
-              strokeWidth: 0,
-            };
-            useElementsStore.setState((prev) => {
-              const next = new Map(prev.elements);
-              next.set(boundText.id, boundText as never);
-              // Add text to container's boundElements
-              const container = next.get(el.id);
-              if (container) {
-                next.set(el.id, {
-                  ...container,
-                  boundElements: [...container.boundElements, { id: boundText.id, type: 'text' }],
-                } as never);
-              }
-              return { elements: next };
-            });
-          }
-
-          newLabelToId.set(change.label, el.id);
-          addIndex++;
-          break;
-        }
-
-        case 'modify': {
-          const targetId = change.elementId || labelToId.get(change.label ?? '');
-          if (!targetId) break;
-          if (change.properties) {
-            useElementsStore.setState((prev) => {
-              const next = new Map(prev.elements);
-              const current = next.get(targetId);
-              if (current) {
-                next.set(targetId, {
-                  ...current,
-                  ...change.properties,
-                  version: current.version + 1,
-                  updatedAt: Date.now(),
-                } as never);
-              }
-              return { elements: next };
-            });
-          }
-          if (change.label) {
-            // Update bound text
-            const el = elementsStore.elements.get(targetId);
-            if (el) {
-              const textBound = el.boundElements.find((b) => b.type === 'text');
-              if (textBound) {
-                useElementsStore.setState((prev) => {
-                  const next = new Map(prev.elements);
-                  const textEl = next.get(textBound.id);
-                  if (textEl && textEl.type === 'text') {
-                    next.set(textBound.id, {
-                      ...textEl,
-                      text: change.label,
-                      version: textEl.version + 1,
-                      updatedAt: Date.now(),
-                    } as never);
-                  }
-                  return { elements: next };
-                });
-              }
-            }
-          }
-          break;
-        }
-
-        case 'delete': {
-          const targetId = change.elementId || labelToId.get(change.elementId);
-          if (!targetId) break;
-          useElementsStore.setState((prev) => {
-            const next = new Map(prev.elements);
-            const el = next.get(targetId);
-            if (el) {
-              next.set(targetId, {
-                ...el,
-                isDeleted: true,
-                version: el.version + 1,
-                updatedAt: Date.now(),
-              } as never);
-            }
-            return { elements: next };
-          });
-          break;
-        }
-      }
-    }
-
-    // Apply connections
-    for (const conn of proposal.connections) {
-      const fromId = newLabelToId.get(conn.fromLabel);
-      const toId = newLabelToId.get(conn.toLabel);
-      if (!fromId || !toId) continue;
-
-      const fromEl = useElementsStore.getState().elements.get(fromId);
-      const toEl = useElementsStore.getState().elements.get(toId);
-      if (!fromEl || !toEl) continue;
-
-      // Create arrow between the two elements
-      const startX = fromEl.x + fromEl.width;
-      const startY = fromEl.y + fromEl.height / 2;
-      const endX = toEl.x;
-      const endY = toEl.y + toEl.height / 2;
-
-      const arrow = elementsStore.createElement(
-        'arrow',
-        activeDiagramId,
-        startX,
-        startY,
-        endX - startX,
-        endY - startY,
-      );
-
-      useElementsStore.setState((prev) => {
-        const next = new Map(prev.elements);
-        // Set arrow with bindings
-        next.set(arrow.id, {
-          ...arrow,
-          startBinding: { elementId: fromId, gap: 0 },
-          endBinding: { elementId: toId, gap: 0 },
-        } as never);
-        // Update source boundElements
-        const source = next.get(fromId);
-        if (source) {
-          next.set(fromId, {
-            ...source,
-            boundElements: [...source.boundElements, { id: arrow.id, type: 'arrow' }],
-          } as never);
-        }
-        // Update target boundElements
-        const target = next.get(toId);
-        if (target) {
-          next.set(toId, {
-            ...target,
-            boundElements: [...target.boundElements, { id: arrow.id, type: 'arrow' }],
-          } as never);
-        }
-        return { elements: next };
+  const handleApply = async () => {
+    setApplying(true);
+    try {
+      const result = await applyProposal(proposal);
+      updateProposalStatus(proposal.proposalId, 'applied');
+      const parts = [
+        result.added && `${result.added} added`,
+        result.connected && `${result.connected} connected`,
+        result.modified && `${result.modified} changed`,
+        result.deleted && `${result.deleted} removed`,
+      ].filter(Boolean);
+      toast(`Applied: ${parts.join(', ') || 'no changes'}`, 'success', {
+        label: 'Undo',
+        run: () => useElementsStore.getState().undo(),
       });
-
-      // Add connection label if provided
-      if (conn.label) {
-        const midX = (startX + endX) / 2;
-        const midY = (startY + endY) / 2;
-        const labelEl = elementsStore.createElement(
-          'text',
-          activeDiagramId,
-          midX - 30,
-          midY - 10,
-          60,
-          20,
-        );
-        useElementsStore.setState((prev) => {
-          const next = new Map(prev.elements);
-          next.set(labelEl.id, {
-            ...labelEl,
-            type: 'text',
-            text: conn.label,
-            fontSize: 14,
-            fontFamily: 'hand-drawn',
-            textAlign: 'center',
-            verticalAlign: 'middle',
-            containerId: arrow.id,
-            lineHeight: 1.25,
-            strokeWidth: 0,
-          } as never);
-          // Add to arrow's boundElements
-          const arrowEl = next.get(arrow.id);
-          if (arrowEl) {
-            next.set(arrow.id, {
-              ...arrowEl,
-              boundElements: [...arrowEl.boundElements, { id: labelEl.id, type: 'text' }],
-            } as never);
-          }
-          return { elements: next };
-        });
-      }
+    } catch (err) {
+      toast(`Couldn't apply proposal: ${err instanceof Error ? err.message : String(err)}`, 'error');
+    } finally {
+      setApplying(false);
     }
-
-    updateProposalStatus(proposal.proposalId, 'applied');
   };
 
   const handleDismiss = () => {
@@ -330,10 +106,11 @@ export default function ProposalCard({ proposal }: { proposal: DiagramProposal }
       ) : (
         <div className="flex gap-2">
           <button
-            onClick={handleApply}
-            className="px-3 py-1 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded"
+            onClick={() => void handleApply()}
+            disabled={applying}
+            className="px-3 py-1 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded disabled:opacity-50"
           >
-            Apply
+            {applying ? 'Applying…' : 'Apply'}
           </button>
           <button
             onClick={handleDismiss}

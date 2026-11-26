@@ -172,6 +172,18 @@ See `.github/workflows/ci.yml` for the full configuration.
 | `Mod+Shift+L` | Lock / unlock |
 | `Delete` / `Backspace` | Delete selected (labels go with their shape) |
 | `Mod+A` / `Escape` | Select all / deselect |
+| `Mod+K` | Search: jump to any shape or diagram at any depth, or run a command |
+| `Enter` | Drill into the selected portal, or edit the selected shape's / connector's label |
+| `Backspace` (nothing selected) | Zoom back out to the parent diagram |
+| Double-click a connector | Add or edit its label ("REST", "publishes"...) |
+| `Shift+Alt+T` | Tidy up: auto-layout the diagram (or the selection) along its connections |
+
+### Diagram as code
+
+Paste a Mermaid flowchart (from a README, PR or design doc) straight onto the canvas, or use
+**Search → Import from Mermaid…**, or import a `.mmd` file. Every `subgraph` becomes a portal you can
+drill into, links that cross subgraphs are drawn between the right portals, and every level is
+auto-laid out — a flat README diagram becomes a navigable, multi-level map.
 
 ## License
 

@@ -34,23 +34,39 @@ function buildDiagramMarkdown(): string {
   return serializeScene(scene);
 }
 
+/** Turn transport errors (often a JSON body) into a sentence for the user. */
+function friendlyError(error: Error): string {
+  try {
+    const body = JSON.parse(error.message) as { error?: string };
+    if (body.error) return body.error;
+  } catch {
+    // Not JSON
+  }
+  if (/fetch|network/i.test(error.message)) return 'Could not reach the AI service. Check your connection.';
+  return error.message || 'The AI request failed.';
+}
+
 export default function AgentPanel() {
   const showAgentChat = useUIStore((s) => s.showAgentChat);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [inputText, setInputText] = useState('');
 
-  const { messages, sendMessage, status } = useChat({
-    transport: new DefaultChatTransport({
-      api: `${API_BASE}/api/agent/chat`,
-      headers: (): Record<string, string> => {
-        const token = getAccessToken();
-        return token ? { Authorization: `Bearer ${token}` } : {};
-      },
-      body: () => ({
-        diagramMarkdown: buildDiagramMarkdown(),
+  // One transport for the panel's lifetime (not a new one per render)
+  const [transport] = useState(
+    () =>
+      new DefaultChatTransport({
+        api: `${API_BASE}/api/agent/chat`,
+        credentials: 'include',
+        headers: (): Record<string, string> => {
+          const token = getAccessToken();
+          return token ? { Authorization: `Bearer ${token}` } : {};
+        },
+        body: () => ({
+          diagramMarkdown: buildDiagramMarkdown(),
+        }),
       }),
-    }),
-  });
+  );
+  const { messages, sendMessage, status, error, clearError } = useChat({ transport });
 
   const isStreaming = status === 'streaming' || status === 'submitted';
 
@@ -94,6 +110,14 @@ export default function AgentPanel() {
         {messages.map((m) => (
           <ChatMessage key={m.id} message={m} />
         ))}
+        {error && (
+          <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700">
+            {friendlyError(error)}
+            <button type="button" className="ml-2 underline" onClick={() => clearError()}>
+              Dismiss
+            </button>
+          </div>
+        )}
         <div ref={messagesEndRef} />
       </div>
 

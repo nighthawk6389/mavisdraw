@@ -33,6 +33,7 @@ export type InteractionMode =
   | 'drawing-freedraw'
   | 'rebinding-endpoint'
   | 'moving-waypoint'
+  | 'pending-waypoint'
   | 'dragging-elbow-segment';
 
 export interface InteractionCallbacks {
@@ -161,6 +162,9 @@ export class InteractionManager {
   private movingWaypointIndex: number = -1;
   private movingWaypointArrowId: string = '';
   private waypointOriginalPoints: [number, number][] = [];
+
+  /** Segment whose "+" handle was pressed; a bend is inserted once the pointer moves. */
+  private pendingWaypointSegment = -1;
 
   // Elbow segment drag state
   private elbowSegmentArrowId: string = '';
@@ -344,22 +348,27 @@ export class InteractionManager {
             return;
           }
 
-          // Phase 5: Midpoint + handle hit (add new waypoint) — skip for elbow arrows
+          // Phase 5: Midpoint + handle — drag it to add a bend; double-click
+          // there (where the label sits) edits the connector's label
           if (linear.routingMode !== 'elbow') {
             const midpointHit = hitTestMidpointHandle(canvasPoint, linear, handleRadius);
             if (midpointHit >= 0) {
-              const [x1, y1] = linear.points[midpointHit];
-              const [x2, y2] = linear.points[midpointHit + 1];
-              const newPoint: [number, number] = [(x1 + x2) / 2, (y1 + y2) / 2];
-              const newPoints = [...linear.points];
-              newPoints.splice(midpointHit + 1, 0, newPoint);
-              this.callbacks.pushHistory();
-              this.callbacks.updateElement(linear.id, { points: newPoints } as Partial<LinearElement>);
-              this.callbacks.invalidateStatic();
-              this.mode = 'moving-waypoint';
-              this.movingWaypointIndex = midpointHit + 1;
+              const now = Date.now();
+              const isDoubleClick =
+                now - this.lastClickTime < InteractionManager.DOUBLE_CLICK_THRESHOLD &&
+                this.lastClickId === linear.id &&
+                Math.hypot(screenX - this.lastClickPoint.x, screenY - this.lastClickPoint.y) <=
+                  InteractionManager.DOUBLE_CLICK_SLOP_PX;
+              this.lastClickTime = now;
+              this.lastClickId = linear.id;
+              this.lastClickPoint = { x: screenX, y: screenY };
+              if (isDoubleClick) {
+                this.handleDoubleClick(linear, canvasPoint);
+                return;
+              }
+              this.mode = 'pending-waypoint';
+              this.pendingWaypointSegment = midpointHit;
               this.movingWaypointArrowId = linear.id;
-              this.waypointOriginalPoints = newPoints.map((p) => [...p] as [number, number]);
               this.startCanvasPoint = canvasPoint;
               return;
             }
@@ -815,6 +824,26 @@ export class InteractionManager {
         break;
       }
 
+      case 'pending-waypoint': {
+        const moved = Math.hypot(screenX - this.startScreenPoint.x, screenY - this.startScreenPoint.y);
+        if (moved < InteractionManager.DOUBLE_CLICK_SLOP_PX) break;
+        const elements = this.callbacks.getElements();
+        const arrow = elements.find((e) => e.id === this.movingWaypointArrowId) as LinearElement | undefined;
+        if (!arrow) break;
+        const newPoints = arrow.points.map((p) => [...p] as [number, number]);
+        newPoints.splice(this.pendingWaypointSegment + 1, 0, [
+          canvasPoint.x - arrow.x,
+          canvasPoint.y - arrow.y,
+        ]);
+        this.callbacks.updateElementSilent(arrow.id, { points: newPoints } as Partial<LinearElement>);
+        this.mode = 'moving-waypoint';
+        this.movingWaypointIndex = this.pendingWaypointSegment + 1;
+        this.waypointOriginalPoints = newPoints;
+        this.pendingWaypointSegment = -1;
+        this.callbacks.invalidateStatic();
+        break;
+      }
+
       case 'moving-waypoint': {
         const elements = this.callbacks.getElements();
         const arrow = elements.find((e) => e.id === this.movingWaypointArrowId) as LinearElement | undefined;
@@ -1085,6 +1114,11 @@ export class InteractionManager {
         break;
       }
 
+      case 'pending-waypoint':
+        this.pendingWaypointSegment = -1;
+        this.movingWaypointArrowId = '';
+        break;
+
       case 'panning':
         if (this.rightButtonDown && this.rightButtonTravel < InteractionManager.CLICK_SLOP_PX) {
           this.contextMenuRequested = true;
@@ -1176,44 +1210,10 @@ export class InteractionManager {
       }
     }
 
-    // Double-click on manually-routed elbow: reset to auto-routing
+    // Double-click on a connector: add or edit its label ("REST", "publishes"...).
+    // Routing mode and route reset live in the context menu / style panel.
     if (element.type === 'arrow' || element.type === 'line') {
-      const linear = element as LinearElement;
-      if (linear.routingMode === 'elbow' && linear.elbowManualRoute) {
-        const newPoints: [number, number][] = [
-          [...linear.points[0]] as [number, number],
-          [...linear.points[linear.points.length - 1]] as [number, number],
-        ];
-        this.callbacks.pushHistory();
-        this.callbacks.updateElement(linear.id, {
-          points: newPoints,
-          elbowManualRoute: false,
-        } as Partial<LinearElement>);
-        this.callbacks.invalidateStatic();
-        return;
-      }
-    }
-
-    // Phase 2.2: Double-click on arrow/line to cycle routing mode
-    if (element.type === 'arrow' || element.type === 'line') {
-      const linear = element as LinearElement;
-      const modes: ('straight' | 'curved' | 'elbow')[] = ['straight', 'curved', 'elbow'];
-      const currentIdx = modes.indexOf(linear.routingMode);
-      const nextMode = modes[(currentIdx + 1) % modes.length];
-      const updates: Partial<LinearElement> = { routingMode: nextMode };
-
-      // When leaving elbow mode, reset manual routing and collapse to 2 points
-      if (linear.routingMode === 'elbow' && linear.elbowManualRoute) {
-        updates.elbowManualRoute = false;
-        updates.points = [
-          [...linear.points[0]] as [number, number],
-          [...linear.points[linear.points.length - 1]] as [number, number],
-        ];
-      }
-
-      this.callbacks.pushHistory();
-      this.callbacks.updateElement(linear.id, updates as Partial<LinearElement>);
-      this.callbacks.invalidateStatic();
+      this.callbacks.startTextEditing(element, false);
       return;
     }
 

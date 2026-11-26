@@ -429,12 +429,30 @@ export class CanvasRenderer {
    * Applies the element's position, rotation, and opacity before dispatching
    * to the shape-specific renderer.
    */
+  /**
+   * Give the renderer the full element set for lookups (elbow routing,
+   * connector labels). The static pass does this itself; exports call it.
+   */
+  setElementsContext(elements: MavisElement[]): void {
+    this.elementsMap.clear();
+    for (const el of elements) this.elementsMap.set(el.id, el);
+  }
+
   renderElement(
     ctx: CanvasRenderingContext2D,
     element: MavisElement,
     renderMode: RenderMode,
     portalActiveUsers?: Map<string, number>,
   ): void {
+    // Connector labels are positioned by their connector, not by themselves
+    if (element.type === 'text' && element.containerId) {
+      const container = this.elementsMap.get(element.containerId);
+      if (container && (container.type === 'arrow' || container.type === 'line')) {
+        this.renderConnectorLabel(ctx, element as TextElement, container as LinearElement);
+        return;
+      }
+    }
+
     ctx.save();
 
     // Transform: translate to element center, rotate, translate back to origin
@@ -1132,6 +1150,65 @@ export class CanvasRenderer {
     for (let i = 0; i < lines.length; i++) {
       ctx.fillText(lines[i], anchorX, startY + i * lineHeightPx);
     }
+  }
+
+  /**
+   * Draw a connector's label centred on the route's visual midpoint, on a
+   * knockout so the line doesn't strike through the text.
+   */
+  private renderConnectorLabel(
+    ctx: CanvasRenderingContext2D,
+    label: TextElement,
+    connector: LinearElement,
+  ): void {
+    if (!label.text) return;
+    const mid = this.connectorMidpoint(connector);
+    const lines = label.text.split('\n');
+    const lineHeightPx = label.fontSize * label.lineHeight;
+
+    ctx.save();
+    ctx.font = cssFont(label.fontSize, label.fontFamily);
+    ctx.globalAlpha = label.opacity / 100;
+    let width = 0;
+    for (const line of lines) width = Math.max(width, ctx.measureText(line).width);
+    const height = lines.length * lineHeightPx;
+    const padX = 6;
+    const padY = 2;
+
+    ctx.fillStyle = this.labelBackground;
+    ctx.beginPath();
+    ctx.roundRect(mid.x - width / 2 - padX, mid.y - height / 2 - padY, width + padX * 2, height + padY * 2, 4);
+    ctx.fill();
+
+    ctx.fillStyle = label.strokeColor;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    lines.forEach((line, i) => {
+      ctx.fillText(line, mid.x, mid.y - height / 2 + i * lineHeightPx);
+    });
+    ctx.restore();
+  }
+
+  /** Background drawn behind connector labels (the canvas colour). */
+  labelBackground = '#ffffff';
+
+  /** Midpoint of the route as drawn (elbow and curved routes included). */
+  private connectorMidpoint(el: LinearElement): Point {
+    const pts = el.points;
+    if (el.routingMode === 'elbow') {
+      return polylineMidpoint(el.x, el.y, this.getElbowPointsForElement(el));
+    }
+    if (el.routingMode === 'curved' && pts.length === 2) {
+      const start = { x: pts[0][0], y: pts[0][1] };
+      const end = { x: pts[1][0], y: pts[1][1] };
+      const [, cp1, cp2] = getCubicControlPoints(start, end, 0.5);
+      // Cubic Bézier at t = 0.5
+      return {
+        x: el.x + (start.x + 3 * cp1.x + 3 * cp2.x + end.x) / 8,
+        y: el.y + (start.y + 3 * cp1.y + 3 * cp2.y + end.y) / 8,
+      };
+    }
+    return polylineMidpoint(el.x, el.y, pts);
   }
 
   /**
@@ -1887,4 +1964,26 @@ export function elementWorldBounds(el: MavisElement): {
   }
 
   return { minX: minX - pad, minY: minY - pad, maxX: maxX + pad, maxY: maxY + pad };
+}
+
+/** Point halfway along a polyline given relative to (originX, originY). */
+function polylineMidpoint(originX: number, originY: number, pts: [number, number][]): Point {
+  if (pts.length === 0) return { x: originX, y: originY };
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) {
+    total += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  }
+  let remaining = total / 2;
+  for (let i = 1; i < pts.length; i++) {
+    const seg = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    if (remaining <= seg && seg > 0) {
+      const t = remaining / seg;
+      return {
+        x: originX + pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * t,
+        y: originY + pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t,
+      };
+    }
+    remaining -= seg;
+  }
+  return { x: originX + pts[0][0], y: originY + pts[0][1] };
 }

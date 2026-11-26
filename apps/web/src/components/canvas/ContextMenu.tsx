@@ -57,6 +57,22 @@ function buildItems(
       sep('s-portal');
     }
 
+    const labelable =
+      single &&
+      !single.isLocked &&
+      ['rectangle', 'ellipse', 'diamond', 'triangle', 'arrow', 'line', 'text'].includes(single.type);
+    if (labelable) {
+      const hasLabel = single.type === 'text' || single.boundElements.some((b) => b.type === 'text');
+      items.push({
+        kind: 'item',
+        id: 'edit-label',
+        label: hasLabel ? 'Edit label' : 'Add label',
+        hint: 'Enter',
+        run: () => getCanvasController()?.editLabel?.(single.id),
+      });
+      sep('s-label');
+    }
+
     items.push(
       { kind: 'item', id: 'cut', label: 'Cut', hint: shortcut('Mod+X'), run: actions.cut },
       { kind: 'item', id: 'copy', label: 'Copy', hint: shortcut('Mod+C'), run: actions.copy },
@@ -117,6 +133,20 @@ function buildItems(
     if (single && (single.type === 'arrow' || single.type === 'line')) {
       sep('s-routing');
       const current = (single as LinearElement).routingMode;
+      if (current === 'elbow' && (single as LinearElement).elbowManualRoute) {
+        items.push({
+          kind: 'item',
+          id: 'reset-route',
+          label: 'Reset route',
+          run: () => {
+            const linear = single as LinearElement;
+            useElementsStore.getState().updateElement(single.id, {
+              points: [linear.points[0], linear.points[linear.points.length - 1]],
+              elbowManualRoute: false,
+            } as Partial<MavisElement>);
+          },
+        });
+      }
       for (const r of ROUTING) {
         items.push({
           kind: 'item',
@@ -137,6 +167,15 @@ function buildItems(
     }
 
     sep('s-structure');
+    if (selected.length >= 2) {
+      items.push({
+        kind: 'item',
+        id: 'tidy-selection',
+        label: 'Tidy up selection',
+        hint: shortcut('Shift+Alt+T'),
+        run: () => void actions.tidyUp(),
+      });
+    }
     if (actions.canGroup()) {
       items.push({ kind: 'item', id: 'group', label: 'Group', hint: shortcut('Mod+G'), run: actions.group });
     }
@@ -179,6 +218,13 @@ function buildItems(
     sep('s-view');
     items.push(
       { kind: 'item', id: 'fit', label: 'Zoom to fit', hint: shortcut('Shift+1'), run: actions.zoomToFit },
+      {
+        kind: 'item',
+        id: 'tidy',
+        label: 'Tidy up layout',
+        hint: shortcut('Shift+Alt+T'),
+        run: () => void actions.tidyUp(),
+      },
       {
         kind: 'item',
         id: 'grid',

@@ -18,6 +18,7 @@ import { useLayerStore } from './layerStore';
 import {
   BOUND_TEXT_PADDING,
   boundTextBox,
+  isLinear,
   cascadeDelete,
   syncBoundElements,
   withBoundLabels,
@@ -327,19 +328,25 @@ function applyElementUpdate(
       updatedAt: Date.now(),
     } as MavisElement;
 
-    // Keep bound text inside its container
+    // Keep bound text inside its container (connector labels re-centre instead)
+    let containerToSync: string | null = null;
     if (merged.type === 'text' && merged.containerId) {
       const container = next.get(merged.containerId);
       if (container && !container.isDeleted) {
-        Object.assign(
-          merged,
-          clampBoundTextToContainer(merged.x, merged.y, merged.width, merged.height, container),
-        );
+        if (isLinear(container)) {
+          containerToSync = container.id;
+        } else {
+          Object.assign(
+            merged,
+            clampBoundTextToContainer(merged.x, merged.y, merged.width, merged.height, container),
+          );
+        }
       }
     }
 
     next.set(id, merged);
     syncBoundElements(next, id);
+    if (containerToSync) syncBoundElements(next, containerToSync);
 
     return { elements: next };
   });
@@ -811,13 +818,14 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
     const container = state.elements.get(containerId);
     if (!container) throw new Error(`Container ${containerId} not found`);
 
+    const connector = isLinear(container);
     const textEl: TextElement = {
       id: nanoid(),
       type: 'text',
       diagramId: container.diagramId,
       ...boundTextBox(container),
       text,
-      fontSize: 20,
+      fontSize: connector ? 16 : 20,
       fontFamily: 'hand-drawn',
       textAlign: 'center',
       verticalAlign: 'middle',

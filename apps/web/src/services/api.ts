@@ -222,6 +222,8 @@ export async function apiUpdateDiagram(
 }
 
 export async function apiCreateDiagram(input: {
+  /** Client-generated id; the server creates idempotently with it. */
+  id?: string;
   projectId: string;
   parentDiagramId?: string | null;
   parentPortalId?: string | null;

@@ -123,3 +123,20 @@ export async function getActiveElements(
 export async function waitForSaved(page: Page): Promise<void> {
   await expect(page.getByText('Saved', { exact: true })).toBeVisible({ timeout: 15_000 });
 }
+
+/** Screen (page) coordinates of an element's centre, honouring pan/zoom. */
+export async function screenCenterOf(
+  page: Page,
+  el: { x: number; y: number; width: number; height: number },
+): Promise<{ x: number; y: number }> {
+  const vp = await page.evaluate(
+    () =>
+      (window as unknown as { __MAVISDRAW__: { getViewport: () => { zoom: number; scrollX: number; scrollY: number } } })
+        .__MAVISDRAW__.getViewport(),
+  );
+  const box = (await interactiveCanvas(page).boundingBox())!;
+  return {
+    x: box.x + (el.x + el.width / 2) * vp.zoom + vp.scrollX,
+    y: box.y + (el.y + el.height / 2) * vp.zoom + vp.scrollY,
+  };
+}

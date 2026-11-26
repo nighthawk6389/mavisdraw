@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
+import { registerNewDiagram } from '../../services/diagramSync';
 import { useElementsStore } from '../../stores/elementsStore';
 import { useSelectionStore } from '../../stores/selectionStore';
 import { useDiagramStore } from '../../stores/diagramStore';
@@ -68,6 +69,7 @@ export default function PortalProperties() {
       selectedPortal.id,
       selectedPortal.label || 'New Diagram',
     );
+    registerNewDiagram(diagram);
     updateElement(selectedPortal.id, {
       targetDiagramId: diagram.id,
     } as Partial<PortalElement>);

@@ -58,6 +58,8 @@ export default defineConfig({
         JWT_SECRET: 'e2e-jwt-secret',
         COOKIE_SECRET: 'e2e-cookie-secret',
         AUTH_RATE_LIMIT_MAX: '10000',
+        // Deterministic stand-in for the LLM (never active in production)
+        AGENT_MOCK: '1',
         LOG_LEVEL: 'warn',
         NODE_ENV: 'test',
       },

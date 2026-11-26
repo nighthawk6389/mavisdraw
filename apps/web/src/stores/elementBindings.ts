@@ -22,13 +22,58 @@ export function isContainer(el: MavisElement): boolean {
   return CONTAINER_TYPES.has(el.type);
 }
 
+/** Default size of a connector label box before its text is measured. */
+export const ARROW_LABEL_DEFAULT = { width: 120, height: 24 };
+
+/**
+ * Point halfway along a linear element's polyline (world coordinates).
+ * The renderer refines this for curved/elbow routes; this is what's stored
+ * so hit-testing and exports place the label sensibly.
+ */
+export function linearMidpoint(el: LinearElement): Point {
+  const pts = el.points;
+  if (pts.length === 0) return { x: el.x, y: el.y };
+  if (pts.length === 1) return { x: el.x + pts[0][0], y: el.y + pts[0][1] };
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) {
+    total += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  }
+  let remaining = total / 2;
+  for (let i = 1; i < pts.length; i++) {
+    const seg = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    if (remaining <= seg && seg > 0) {
+      const t = remaining / seg;
+      return {
+        x: el.x + pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * t,
+        y: el.y + pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t,
+      };
+    }
+    remaining -= seg;
+  }
+  const last = pts[pts.length - 1];
+  return { x: el.x + last[0], y: el.y + last[1] };
+}
+
 /** The box a bound label should occupy inside its container. */
-export function boundTextBox(container: MavisElement): {
+export function boundTextBox(
+  container: MavisElement,
+  size: { width: number; height: number } = ARROW_LABEL_DEFAULT,
+): {
   x: number;
   y: number;
   width: number;
   height: number;
 } {
+  if (isLinear(container)) {
+    // Connector labels sit centred on the connector's midpoint
+    const mid = linearMidpoint(container);
+    return {
+      x: mid.x - size.width / 2,
+      y: mid.y - size.height / 2,
+      width: size.width,
+      height: size.height,
+    };
+  }
   return {
     x: container.x + BOUND_TEXT_PADDING,
     y: container.y + BOUND_TEXT_PADDING,
@@ -88,8 +133,13 @@ export function getBindingEdgePoint(
  */
 export function syncBoundElements(next: Map<string, MavisElement>, id: string): void {
   const shape = next.get(id);
-  if (!shape || shape.isDeleted || isLinear(shape) || shape.type === 'text') return;
+  if (!shape || shape.isDeleted || shape.type === 'text') return;
   if (!shape.boundElements || shape.boundElements.length === 0) return;
+
+  if (isLinear(shape)) {
+    syncConnectorLabels(next, shape);
+    return;
+  }
 
   for (const bound of shape.boundElements) {
     const el = next.get(bound.id);
@@ -137,7 +187,26 @@ export function syncBoundElements(next: Map<string, MavisElement>, id: string): 
         points[points.length - 1] = [edge.x - arrow.x, edge.y - arrow.y];
         changed = true;
       }
-      if (changed) next.set(arrow.id, bump(arrow, { points }));
+      if (changed) {
+        const moved = bump(arrow, { points });
+        next.set(arrow.id, moved);
+        syncConnectorLabels(next, moved);
+      }
+    }
+  }
+}
+
+/** Keep a connector's labels centred on it (their size is kept). */
+function syncConnectorLabels(next: Map<string, MavisElement>, connector: LinearElement): void {
+  for (const bound of connector.boundElements) {
+    if (bound.type !== 'text') continue;
+    const label = next.get(bound.id);
+    if (!label || label.isDeleted || label.type !== 'text' || label.containerId !== connector.id) {
+      continue;
+    }
+    const box = boundTextBox(connector, { width: label.width, height: label.height });
+    if (label.x !== box.x || label.y !== box.y) {
+      next.set(label.id, bump(label, { x: box.x, y: box.y }));
     }
   }
 }

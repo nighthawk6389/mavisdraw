@@ -66,6 +66,14 @@ export async function mockAuthAndOpenEditor(page: Page) {
   await page.route('**/api/diagrams/**', (route) =>
     route.fulfill({ status: 200, json: { diagram: TEST_DIAGRAM } }),
   );
+  // Nested diagrams are created on the server as soon as a portal is drawn
+  await page.route('**/api/diagrams', (route) => {
+    const body = route.request().postDataJSON() as Record<string, unknown> | null;
+    return route.fulfill({
+      status: 201,
+      json: { diagram: { ...TEST_DIAGRAM, ...body, elements: [] } },
+    });
+  });
 
   await page.goto('/');
 

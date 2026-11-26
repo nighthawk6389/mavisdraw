@@ -185,3 +185,18 @@ export function zoomToFit(): void {
 export function zoomToSelection(): void {
   getCanvasController()?.zoomToSelection();
 }
+
+/**
+ * Auto-arrange the selection (2+ shapes) or the whole diagram along its
+ * connections, as one undoable step.
+ */
+export async function tidyUp(): Promise<void> {
+  const { tidyUpDiagram } = await import('../layout/autoLayout');
+  const diagramId = useDiagramStore.getState().activeDiagramId;
+  const ids = selectedIds();
+  const changed = await tidyUpDiagram(diagramId, ids.length >= 2 ? new Set(ids) : undefined);
+  if (changed) {
+    getCanvasController()?.invalidate();
+    if (ids.length < 2) getCanvasController()?.zoomToFit();
+  }
+}

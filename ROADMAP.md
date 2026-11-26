@@ -4,6 +4,15 @@ _Research snapshot: 2026-11-26 · Based on a full read of the codebase at `edcb5
 
 ---
 
+## Progress (updated as phases land)
+
+| Phase                             | Status                                                                                                                                                                                                                |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Real-backend e2e lane + CI        | ✅ Done — `apps/web/e2e-real`, Postgres service job in CI                                                                                                                                                             |
+| 1. Editing on par with Excalidraw | ✅ Core done (collaboration-safe undo, bindings, navigation, context menu, z-order/lock, PNG/PDF, perf, bundle). Remaining items in `BACKLOG.md`                                                                      |
+| 2. Living architecture map        | ✅ Core done (nested diagrams persist + lazy-load, connector labels, Mermaid → nested map, auto-layout/Tidy up, ⌘K jump-to-anything, drill-out animation, AI agent fixed end-to-end). Remaining items in `BACKLOG.md` |
+| 3. Teams                          | In progress                                                                                                                                                                                                           |
+
 ## 1. TL;DR
 
 MavisDraw went from empty repo to a broad full-stack diagramming app in **~2 weeks (Feb 28 – Mar 12, 2026)**, built mostly by AI agents following `PLAN.md`. Stages 1–6 shipped, Stage 7 (SSO, performance, a11y, dark mode, templates, mobile) never started, and the repo has been idle since March.

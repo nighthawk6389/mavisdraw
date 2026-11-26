@@ -31,6 +31,7 @@ export async function renderElementsToPng(
   await whenFontsReady();
   const renderer = exportRenderer();
   const ordered = sortByStacking(elements.filter((el) => !el.isDeleted));
+  renderer.setElementsContext(ordered);
   return exportToPng(
     ordered,
     {

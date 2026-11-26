@@ -3,6 +3,11 @@ import type { Point, Bounds } from '@mavisdraw/types';
 
 interface SelectionState {
   selectedIds: Set<string>;
+  /**
+   * The selection once it has been stable for a moment. Contextual panels
+   * use this so they don't pop up under the second click of a double-click.
+   */
+  settledSelectedIds: Set<string>;
   selectionBox: Bounds | null;
   hoveredId: string | null;
 
@@ -40,6 +45,7 @@ function computeBounds(start: Point, current: Point): Bounds {
 
 export const useSelectionStore = create<SelectionState>((set, get) => ({
   selectedIds: new Set<string>(),
+  settledSelectedIds: new Set<string>(),
   selectionBox: null,
   hoveredId: null,
   _selectionStart: null,
@@ -126,3 +132,19 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
     return get().selectedIds.size;
   },
 }));
+
+// ── Settled selection (debounced; clearing is immediate) ─────────────────
+const SETTLE_MS = 250;
+let settleTimer: ReturnType<typeof setTimeout> | null = null;
+useSelectionStore.subscribe((state, prev) => {
+  if (state.selectedIds === prev.selectedIds) return;
+  if (settleTimer) clearTimeout(settleTimer);
+  if (state.selectedIds.size === 0) {
+    useSelectionStore.setState({ settledSelectedIds: state.selectedIds });
+    return;
+  }
+  settleTimer = setTimeout(() => {
+    settleTimer = null;
+    useSelectionStore.setState({ settledSelectedIds: useSelectionStore.getState().selectedIds });
+  }, SETTLE_MS);
+});

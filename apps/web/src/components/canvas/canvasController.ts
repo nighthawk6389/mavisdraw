@@ -17,6 +17,8 @@ export interface CanvasController {
   invalidate: () => void;
   /** Drill into the nested diagram behind a portal element. */
   openPortal?: (portalId: string) => void;
+  /** Start editing the label of a shape/connector (or a text element itself). */
+  editLabel?: (elementId: string) => void;
 }
 
 let current: CanvasController | null = null;

@@ -15,6 +15,10 @@ interface UIState {
   // Agent chat
   showAgentChat: boolean;
 
+  // Command palette & diagram-as-code import
+  showCommandPalette: boolean;
+  showMermaidDialog: boolean;
+
   // Diagram render mode
   renderMode: RenderMode;
 
@@ -31,6 +35,8 @@ interface UIState {
   toggleVersionHistory: () => void;
   toggleGitHubDialog: () => void;
   toggleAgentChat: () => void;
+  setShowCommandPalette: (show: boolean) => void;
+  setShowMermaidDialog: (show: boolean) => void;
   setRenderMode: (mode: RenderMode) => void;
   toggleGrid: () => void;
   toggleSnapToGrid: () => void;
@@ -45,6 +51,8 @@ export const useUIStore = create<UIState>((set) => ({
   showVersionHistory: false,
   showGitHubDialog: false,
   showAgentChat: false,
+  showCommandPalette: false,
+  showMermaidDialog: false,
   renderMode: 'clean',
   showGrid: true,
   snapToGrid: false,
@@ -77,6 +85,9 @@ export const useUIStore = create<UIState>((set) => ({
   toggleAgentChat: () => {
     set((state) => ({ showAgentChat: !state.showAgentChat }));
   },
+
+  setShowCommandPalette: (show: boolean) => set({ showCommandPalette: show }),
+  setShowMermaidDialog: (show: boolean) => set({ showMermaidDialog: show }),
 
   setRenderMode: (mode: RenderMode) => {
     set({ renderMode: mode });

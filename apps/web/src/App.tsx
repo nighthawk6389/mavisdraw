@@ -4,6 +4,8 @@ import Canvas from './components/canvas/Canvas';
 // Heavy, rarely-open panels load on first use
 const ExportDialog = lazy(() => import('./components/export/ExportDialog'));
 const AgentPanel = lazy(() => import('./components/agent/AgentPanel'));
+const CommandPalette = lazy(() => import('./components/command/CommandPalette'));
+const MermaidDialog = lazy(() => import('./components/command/MermaidDialog'));
 import Toolbar from './components/toolbar/Toolbar';
 import StylePanel from './components/toolbar/StylePanel';
 import LayerPanel from './components/toolbar/LayerPanel';
@@ -17,6 +19,10 @@ import PresenceAvatars from './components/collaboration/PresenceAvatars';
 import ShareDialog from './components/collaboration/ShareDialog';
 import { useKeyboard } from './hooks/useKeyboard';
 import { useClipboard } from './hooks/useClipboard';
+import { installDiagramAsCodePaste } from './import/diagramAsCode';
+import Toaster from './components/ui/Toaster';
+import { shortcut } from './utils/platform';
+import { getCanvasController } from './components/canvas/canvasController';
 import { useAutoSnapshot } from './hooks/useAutoSnapshot';
 import { useAutoSave, type SaveStatus } from './hooks/useAutoSave';
 import { useSelectionStore } from './stores/selectionStore';
@@ -28,6 +34,14 @@ import { useDiagramStore } from './stores/diagramStore';
 import LoginPage from './routes/login';
 import Dashboard from './routes/dashboard';
 import { apiGetDiagram, apiListDiagrams } from './services/api';
+import {
+  isDiagramLoaded,
+  loadDiagramElements,
+  markDiagramLoaded,
+  resetDiagramSync,
+  toDiagram,
+} from './services/diagramSync';
+import { recordSaved, resetSaveTracking } from './services/saveTracker';
 import type { MavisElement, Diagram } from '@mavisdraw/types';
 
 type AppView = 'loading' | 'login' | 'dashboard' | 'editor';
@@ -52,6 +66,12 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
   const interactionManagerRef = useRef<{ setSpacePressed: (p: boolean) => void } | null>(null);
   useKeyboard(interactionManagerRef);
   useClipboard();
+  useEffect(() => installDiagramAsCodePaste(), []);
+  // Warm the ⌘K palette so the first keystrokes after opening it aren't lost
+  useEffect(() => {
+    const id = setTimeout(() => void import('./components/command/CommandPalette'), 1500);
+    return () => clearTimeout(id);
+  }, []);
   useAutoSnapshot();
 
   const selectedIds = useSelectionStore((s) => s.selectedIds);
@@ -62,17 +82,36 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
   const { saveStatus, manualSave } = useAutoSave(activeDiagramId);
   const showAgentChat = useUIStore((s) => s.showAgentChat);
   const showExportDialog = useUIStore((s) => s.showExportDialog);
+  const showCommandPalette = useUIStore((s) => s.showCommandPalette);
+  const showMermaidDialog = useUIStore((s) => s.showMermaidDialog);
   const [showShareDialog, setShowShareDialog] = useState(false);
 
   const diagrams = useDiagramStore((s) => s.diagrams);
   const projectId = diagrams.get(activeDiagramId)?.projectId ?? null;
 
+  // Nested diagrams load their contents the first time they're opened
+  useEffect(() => {
+    if (!activeDiagramId) return;
+    const firstVisit = !isDiagramLoaded(activeDiagramId);
+    loadDiagramElements(activeDiagramId)
+      .then(() => {
+        // First time here: frame the content once it has arrived
+        const store = useDiagramStore.getState();
+        if (firstVisit && store.activeDiagramId === activeDiagramId && !store.getViewport(activeDiagramId)) {
+          getCanvasController()?.zoomToFit();
+        }
+      })
+      .catch((err) => console.error('Failed to load diagram:', err));
+  }, [activeDiagramId]);
+
+  // Contextual panels follow the settled selection (see selectionStore)
+  const settledSelectedIds = useSelectionStore((s) => s.settledSelectedIds);
   const showPortalProperties = useMemo(() => {
-    if (selectedIds.size !== 1) return false;
+    if (settledSelectedIds.size !== 1 || selectedIds.size !== 1) return false;
     const id = Array.from(selectedIds)[0];
-    const el = elements.get(id);
-    return el?.type === 'portal';
-  }, [selectedIds, elements]);
+    if (!settledSelectedIds.has(id)) return false;
+    return elements.get(id)?.type === 'portal';
+  }, [selectedIds, settledSelectedIds, elements]);
 
   return (
     <div className="flex flex-col h-full w-full bg-white">
@@ -91,6 +130,15 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
         </div>
         <div className="flex items-center gap-3 pr-3">
           <PresenceAvatars />
+          <button
+            onClick={() => useUIStore.getState().setShowCommandPalette(true)}
+            className="flex items-center gap-2 text-xs text-gray-500 hover:text-gray-700 px-2 py-1 border border-gray-300 rounded"
+            title="Jump to any shape or diagram, or run a command"
+            aria-label="Search"
+          >
+            Search
+            <kbd className="rounded bg-gray-100 px-1 text-[10px] text-gray-500">{shortcut('Mod+K')}</kbd>
+          </button>
           <button
             onClick={openImportDialog}
             className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 border border-gray-300 rounded"
@@ -183,6 +231,17 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
       </div>
 
       {/* Overlays */}
+      <Toaster />
+      {showCommandPalette && (
+        <Suspense fallback={null}>
+          <CommandPalette onClose={() => useUIStore.getState().setShowCommandPalette(false)} />
+        </Suspense>
+      )}
+      {showMermaidDialog && (
+        <Suspense fallback={null}>
+          <MermaidDialog onClose={() => useUIStore.getState().setShowMermaidDialog(false)} />
+        </Suspense>
+      )}
       {showExportDialog && (
         <Suspense fallback={null}>
           <ExportDialog />
@@ -212,34 +271,23 @@ export default function App() {
   const handleOpenProject = useCallback(
     async (projectId: string, rootDiagramId: string) => {
       try {
-        // Load all diagrams for the project
+        // Load the whole hierarchy (titles/structure); elements load per diagram on open
         const response = await apiListDiagrams(projectId);
-
         const newDiagrams = new Map<string, Diagram>();
         for (const d of response.diagrams) {
-          const diagram: Diagram = {
-            id: d.id,
-            projectId: d.projectId,
-            parentDiagramId: d.parentDiagramId,
-            parentPortalId: d.parentPortalId,
-            title: d.title,
-            viewBackgroundColor: d.viewBackgroundColor,
-            gridEnabled: d.gridEnabled,
-            gridSize: d.gridSize,
-            renderMode: d.renderMode as 'sketchy' | 'clean',
-            layers: d.layers as Diagram['layers'],
-            createdBy: d.createdBy,
-            createdAt: new Date(d.createdAt).getTime(),
-            updatedAt: new Date(d.updatedAt).getTime(),
-          };
+          const diagram = toDiagram(d);
           newDiagrams.set(diagram.id, diagram);
         }
 
+        resetDiagramSync(newDiagrams.keys());
+        resetSaveTracking();
+
         // Load root diagram elements
         const rootResponse = await apiGetDiagram(rootDiagramId);
-        const elementsStore = useElementsStore.getState();
         const elements = rootResponse.diagram.elements as MavisElement[];
-        elementsStore.setElements(elements);
+        useElementsStore.getState().setElements(elements);
+        markDiagramLoaded(rootDiagramId);
+        recordSaved(rootDiagramId, elements, newDiagrams.get(rootDiagramId)?.updatedAt);
 
         // Replace all diagrams with only this project's diagrams
         useDiagramStore.setState({

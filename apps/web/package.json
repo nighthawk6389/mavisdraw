@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@ai-sdk/react": "^3.0.118",
+    "@dagrejs/dagre": "^1.1.8",
     "@fontsource/architects-daughter": "^5.3.0",
     "@hocuspocus/provider": "^2.15.0",
     "@mavisdraw/compat": "workspace:*",

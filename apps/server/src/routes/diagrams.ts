@@ -16,22 +16,32 @@ import {
 } from '../services/diagramService.js';
 import { requireAuth } from '../middleware/auth.js';
 
+/** Client-generated ids (nanoid) let the editor create nested diagrams offline-first. */
+const diagramIdSchema = z.string().regex(/^[A-Za-z0-9_-]{8,64}$/, 'Invalid diagram id');
+
 const createDiagramSchema = z.object({
+  id: diagramIdSchema.optional(),
   projectId: z.string().min(1),
   parentDiagramId: z.string().nullable().optional(),
   parentPortalId: z.string().nullable().optional(),
   title: z.string().min(1).max(255).optional(),
 });
 
+/** Upper bound on elements per diagram, to keep a single save bounded. */
+const MAX_ELEMENTS_PER_DIAGRAM = 20_000;
+
 const updateDiagramSchema = z.object({
   title: z.string().min(1).max(255).optional(),
-  elements: z.array(z.any()).optional(),
-  viewBackgroundColor: z.string().optional(),
+  elements: z.array(z.any()).max(MAX_ELEMENTS_PER_DIAGRAM).optional(),
+  viewBackgroundColor: z.string().max(20).optional(),
   gridEnabled: z.boolean().optional(),
   gridSize: z.number().int().positive().optional(),
   renderMode: z.enum(['sketchy', 'clean']).optional(),
-  layers: z.array(z.any()).optional(),
+  layers: z.array(z.any()).max(100).optional(),
 });
+
+/** Diagrams carry inline images, so saves can be much larger than Fastify's 1MB default. */
+const DIAGRAM_BODY_LIMIT = 25 * 1024 * 1024;
 
 const createSnapshotSchema = z.object({
   trigger: z.enum(['auto', 'manual']).optional(),
@@ -52,7 +62,33 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(403).send({ error: 'Access denied' });
     }
 
+    // A child must live in the same project as its parent
+    if (parsed.data.parentDiagramId) {
+      const parent = await getDiagram(parsed.data.parentDiagramId);
+      if (!parent || parent.projectId !== parsed.data.projectId) {
+        return reply.code(400).send({ error: 'Parent diagram not found in this project' });
+      }
+    }
+
+    // Idempotent create with a client id: retries return the existing diagram
+    if (parsed.data.id) {
+      const existing = await getDiagram(parsed.data.id);
+      if (existing) {
+        if (existing.projectId !== parsed.data.projectId) {
+          return reply.code(409).send({ error: 'Diagram id already in use' });
+        }
+        return reply.code(200).send({
+          diagram: {
+            ...existing,
+            createdAt: existing.createdAt.toISOString(),
+            updatedAt: existing.updatedAt.toISOString(),
+          },
+        });
+      }
+    }
+
     const diagram = await createDiagram({
+      id: parsed.data.id,
       projectId: parsed.data.projectId,
       parentDiagramId: parsed.data.parentDiagramId,
       parentPortalId: parsed.data.parentPortalId,
@@ -118,38 +154,42 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
   );
 
   // Update diagram
-  app.put('/api/diagrams/:id', { preHandler: [requireAuth] }, async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const userId = request.user!.userId;
+  app.put(
+    '/api/diagrams/:id',
+    { preHandler: [requireAuth], bodyLimit: DIAGRAM_BODY_LIMIT },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const userId = request.user!.userId;
 
-    const parsed = updateDiagramSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation failed', details: parsed.error.issues });
-    }
+      const parsed = updateDiagramSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: 'Validation failed', details: parsed.error.issues });
+      }
 
-    const existing = await getDiagram(id);
-    if (!existing) {
-      return reply.code(404).send({ error: 'Diagram not found' });
-    }
+      const existing = await getDiagram(id);
+      if (!existing) {
+        return reply.code(404).send({ error: 'Diagram not found' });
+      }
 
-    const access = await checkProjectAccess(existing.projectId, userId);
-    if (!access || access === 'viewer') {
-      return reply.code(403).send({ error: 'Access denied' });
-    }
+      const access = await checkProjectAccess(existing.projectId, userId);
+      if (!access || access === 'viewer') {
+        return reply.code(403).send({ error: 'Access denied' });
+      }
 
-    const diagram = await updateDiagram(id, parsed.data);
-    if (!diagram) {
-      return reply.code(404).send({ error: 'Diagram not found' });
-    }
+      const diagram = await updateDiagram(id, parsed.data);
+      if (!diagram) {
+        return reply.code(404).send({ error: 'Diagram not found' });
+      }
 
-    return reply.code(200).send({
-      diagram: {
-        ...diagram,
-        createdAt: diagram.createdAt.toISOString(),
-        updatedAt: diagram.updatedAt.toISOString(),
-      },
-    });
-  });
+      return reply.code(200).send({
+        diagram: {
+          ...diagram,
+          createdAt: diagram.createdAt.toISOString(),
+          updatedAt: diagram.updatedAt.toISOString(),
+        },
+      });
+    },
+  );
 
   // Delete diagram
   app.delete('/api/diagrams/:id', { preHandler: [requireAuth] }, async (request, reply) => {
@@ -171,75 +211,67 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Save diagram (creates snapshot)
-  app.post(
-    '/api/diagrams/:id/save',
-    { preHandler: [requireAuth] },
-    async (request, reply) => {
-      const { id } = request.params as { id: string };
-      const userId = request.user!.userId;
+  app.post('/api/diagrams/:id/save', { preHandler: [requireAuth] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const userId = request.user!.userId;
 
-      const parsed = createSnapshotSchema.safeParse(request.body ?? {});
-      if (!parsed.success) {
-        return reply.code(400).send({ error: 'Validation failed', details: parsed.error.issues });
-      }
+    const parsed = createSnapshotSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'Validation failed', details: parsed.error.issues });
+    }
 
-      const existing = await getDiagram(id);
-      if (!existing) {
-        return reply.code(404).send({ error: 'Diagram not found' });
-      }
+    const existing = await getDiagram(id);
+    if (!existing) {
+      return reply.code(404).send({ error: 'Diagram not found' });
+    }
 
-      const access = await checkProjectAccess(existing.projectId, userId);
-      if (!access || access === 'viewer') {
-        return reply.code(403).send({ error: 'Access denied' });
-      }
+    const access = await checkProjectAccess(existing.projectId, userId);
+    if (!access || access === 'viewer') {
+      return reply.code(403).send({ error: 'Access denied' });
+    }
 
-      const snapshot = await createSnapshot(
-        id,
-        userId,
-        parsed.data.trigger ?? 'manual',
-        parsed.data.label,
-      );
+    const snapshot = await createSnapshot(
+      id,
+      userId,
+      parsed.data.trigger ?? 'manual',
+      parsed.data.label,
+    );
 
-      return reply.code(201).send({
-        snapshot: {
-          ...snapshot,
-          createdAt: snapshot.createdAt.toISOString(),
-        },
-      });
-    },
-  );
+    return reply.code(201).send({
+      snapshot: {
+        ...snapshot,
+        createdAt: snapshot.createdAt.toISOString(),
+      },
+    });
+  });
 
   // Get snapshots for a diagram
-  app.get(
-    '/api/diagrams/:id/snapshots',
-    { preHandler: [requireAuth] },
-    async (request, reply) => {
-      const { id } = request.params as { id: string };
-      const userId = request.user!.userId;
-      const query = request.query as { limit?: string; offset?: string };
+  app.get('/api/diagrams/:id/snapshots', { preHandler: [requireAuth] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const userId = request.user!.userId;
+    const query = request.query as { limit?: string; offset?: string };
 
-      const existing = await getDiagram(id);
-      if (!existing) {
-        return reply.code(404).send({ error: 'Diagram not found' });
-      }
+    const existing = await getDiagram(id);
+    if (!existing) {
+      return reply.code(404).send({ error: 'Diagram not found' });
+    }
 
-      const access = await checkProjectAccess(existing.projectId, userId);
-      if (!access) {
-        return reply.code(403).send({ error: 'Access denied' });
-      }
+    const access = await checkProjectAccess(existing.projectId, userId);
+    if (!access) {
+      return reply.code(403).send({ error: 'Access denied' });
+    }
 
-      const limit = Math.min(parseInt(query.limit ?? '50', 10), 100);
-      const offset = parseInt(query.offset ?? '0', 10);
+    const limit = Math.min(parseInt(query.limit ?? '50', 10), 100);
+    const offset = parseInt(query.offset ?? '0', 10);
 
-      const snapshotList = await getSnapshots(id, limit, offset);
-      return reply.code(200).send({
-        snapshots: snapshotList.map((s) => ({
-          ...s,
-          createdAt: s.createdAt.toISOString(),
-        })),
-      });
-    },
-  );
+    const snapshotList = await getSnapshots(id, limit, offset);
+    return reply.code(200).send({
+      snapshots: snapshotList.map((s) => ({
+        ...s,
+        createdAt: s.createdAt.toISOString(),
+      })),
+    });
+  });
 
   // Restore snapshot
   app.post(

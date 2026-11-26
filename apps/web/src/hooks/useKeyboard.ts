@@ -92,12 +92,32 @@ export function useKeyboard(
         return;
       }
 
+      // Enter: drill into a selected portal, or edit the selected element's label
+      if (key === 'enter' && !mod && selectedIds.size === 1) {
+        const [id] = Array.from(selectedIds);
+        const el = useElementsStore.getState().elements.get(id);
+        if (el && !el.isDeleted) {
+          event.preventDefault();
+          const controller = getCanvasController();
+          if (el.type === 'portal') controller?.openPortal?.(id);
+          else controller?.editLabel?.(id);
+          return;
+        }
+      }
+
       // Arrow keys nudge the selection (Shift = 10px)
       if (!mod && NUDGE_KEYS[key] && selectedIds.size > 0) {
         event.preventDefault();
         const [ux, uy] = NUDGE_KEYS[key];
         const step = event.shiftKey ? 10 : 1;
         nudgeSelection(ux * step, uy * step);
+        return;
+      }
+
+      // Mod+K = command palette (jump to anything, run commands)
+      if (mod && key === 'k') {
+        event.preventDefault();
+        useUIStore.getState().setShowCommandPalette(true);
         return;
       }
 
@@ -168,6 +188,13 @@ export function useKeyboard(
         event.preventDefault();
         const up = code === 'BracketRight';
         actions.reorder(event.shiftKey ? (up ? 'front' : 'back') : up ? 'forward' : 'backward');
+        return;
+      }
+
+      // Shift+Alt+T = tidy up layout
+      if (event.shiftKey && event.altKey && code === 'KeyT') {
+        event.preventDefault();
+        void actions.tidyUp();
         return;
       }
 

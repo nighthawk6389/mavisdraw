@@ -169,6 +169,7 @@ export default function ExportDialog() {
             elementsByDiagram.set(el.diagramId, arr);
           }
           for (const [id, els] of elementsByDiagram) elementsByDiagram.set(id, sortByStacking(els));
+          renderer.setElementsContext(allElements.filter((el) => !el.isDeleted));
           // Active diagram first, then the rest of the hierarchy (one page each)
           const ordered = [
             ...diagrams.filter((d) => d.id === activeDiagramId),
