@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { MavisElement } from '@mavisdraw/types';
 import { useElementsStore, withoutHistory } from '../stores/elementsStore';
 import { recordSaved, resetSaveTracking } from '../services/saveTracker';
@@ -127,5 +127,37 @@ describe('journal', () => {
     const saved = await readJournal('p2');
     expect(saved[0].element.x).toBe(99);
     stopJournal();
+  });
+
+  it('backs up every edit synchronously, so a tab killed without unload events keeps it', () => {
+    vi.useFakeTimers();
+    try {
+      vi.advanceTimersByTime(1000); // outside any earlier test's throttle window
+      const key = 'mavisdraw:journal:p3';
+      const a = box('a', { version: 3 });
+      withoutHistory(() => useElementsStore.setState({ elements: new Map([['a', a]]) }));
+      recordSaved(D, [a]);
+      startJournal('p3');
+      useElementsStore.getState().updateElement('a', { x: 41 });
+      // Written at once, not on the next tick
+      expect(localStorage.getItem(key)).toContain('"x":41');
+      // A burst (a drag) is throttled, and the latest state lands
+      useElementsStore.getState().updateElement('a', { x: 42 });
+      useElementsStore.getState().updateElement('a', { x: 43 });
+      vi.advanceTimersByTime(100);
+      expect(localStorage.getItem(key)).toContain('"x":43');
+      // Releasing the mouse lands a drag's final state without waiting
+      useElementsStore.getState().updateElement('a', { x: 44 });
+      useElementsStore.getState().updateElement('a', { x: 45 });
+      window.dispatchEvent(new Event('pointerup'));
+      expect(localStorage.getItem(key)).toContain('"x":45');
+      // Once the server has everything, the backup goes
+      acknowledge(D);
+      vi.advanceTimersByTime(100);
+      expect(localStorage.getItem(key)).toBeNull();
+    } finally {
+      stopJournal();
+      vi.useRealTimers();
+    }
   });
 });

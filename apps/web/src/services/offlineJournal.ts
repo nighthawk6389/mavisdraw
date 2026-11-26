@@ -46,10 +46,55 @@ function writeBackup(id: string): void {
       savedAt: Date.now(),
       entries: Array.from(entries.values()),
     };
-    localStorage.setItem(backupKey(id), JSON.stringify(payload));
+    const json = JSON.stringify(payload);
+    // Big journals (inline images) stay in IndexedDB only
+    if (json.length > MAX_BACKUP_CHARS) {
+      localStorage.removeItem(backupKey(id));
+      return;
+    }
+    localStorage.setItem(backupKey(id), json);
   } catch {
     // Quota exceeded or storage blocked: the IndexedDB copy is all we have
   }
+}
+
+const MAX_BACKUP_CHARS = 1_500_000;
+const BACKUP_INTERVAL_MS = 100;
+let lastBackup = 0;
+let backupTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Keep the synchronous backup current: the first change is written at once
+ * (a crash right after an edit can't lose it), bursts (drags) at most every
+ * 100 ms with the latest state.
+ */
+function backupSoon(): void {
+  const id = projectId;
+  if (!id) return;
+  const wait = BACKUP_INTERVAL_MS - (Date.now() - lastBackup);
+  if (wait <= 0 && !backupTimer) {
+    lastBackup = Date.now();
+    writeBackup(id);
+    return;
+  }
+  if (backupTimer) return;
+  backupTimer = setTimeout(
+    () => {
+      backupTimer = null;
+      lastBackup = Date.now();
+      if (projectId === id) writeBackup(id);
+    },
+    Math.max(0, wait),
+  );
+}
+
+/** A gesture ended (drag released, key up): its final state is backed up now. */
+function flushBackup(): void {
+  if (!backupTimer || !projectId) return;
+  clearTimeout(backupTimer);
+  backupTimer = null;
+  lastBackup = Date.now();
+  writeBackup(projectId);
 }
 
 function readBackup(id: string): StoredJournal | null {
@@ -107,19 +152,15 @@ async function persistNow(id: string): Promise<void> {
       savedAt: Date.now(),
       entries: Array.from(entries.values()),
     } satisfies StoredJournal);
-  // The IndexedDB copy is current again; an older backup must not win
-  try {
-    localStorage.removeItem(backupKey(id));
-  } catch {
-    // ignore
-  }
+  // Nothing left to save: the backup goes too
+  if (entries.size === 0) writeBackup(id);
 }
 
 function flushOnHide(event?: Event): void {
   if (!projectId) return;
   if (event?.type !== 'pagehide' && document.visibilityState !== 'hidden') return;
   writeBackup(projectId); // lands even if the tab is gone a moment later
-  void persistNow(projectId).then(() => writeBackup(projectId ?? ''));
+  void persistNow(projectId);
 }
 
 /** Start journaling local edits in a project (after its contents have loaded). */
@@ -128,6 +169,9 @@ export function startJournal(id: string, restored: JournalEntry[] = []): void {
   projectId = id;
   entries = new Map(restored.map((e) => [e.element.id, e]));
   publish();
+  // Outside the throttle: the first edit after opening must back up at once
+  lastBackup = 0;
+  writeBackup(id);
   persistSoon();
 
   unsubscribe = useElementsStore.subscribe((state, prev) => {
@@ -145,11 +189,14 @@ export function startJournal(id: string, restored: JournalEntry[] = []): void {
     }
     if (changed) {
       publish();
+      backupSoon();
       persistSoon();
     }
   });
   window.addEventListener('visibilitychange', flushOnHide);
   window.addEventListener('pagehide', flushOnHide);
+  window.addEventListener('pointerup', flushBackup, true);
+  window.addEventListener('keyup', flushBackup, true);
 }
 
 function record(el: MavisElement): void {
@@ -165,12 +212,15 @@ function record(el: MavisElement): void {
 export function stopJournal(): void {
   unsubscribe?.();
   unsubscribe = null;
+  flushBackup();
   if (queued && projectId) {
     queued = false;
     void persistNow(projectId);
   }
   window.removeEventListener('visibilitychange', flushOnHide);
   window.removeEventListener('pagehide', flushOnHide);
+  window.removeEventListener('pointerup', flushBackup, true);
+  window.removeEventListener('keyup', flushBackup, true);
   projectId = null;
   entries = new Map();
   publish();
@@ -205,6 +255,7 @@ export function acknowledge(diagramId: string, serverElements?: MavisElement[]):
   }
   if (changed) {
     publish();
+    backupSoon();
     persistSoon();
   }
 }
