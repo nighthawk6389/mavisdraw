@@ -178,6 +178,15 @@ See `.github/workflows/ci.yml` for the full configuration.
 | Double-click a connector | Add or edit its label ("REST", "publishes"...) |
 | `Shift+Alt+T` | Tidy up: auto-layout the diagram (or the selection) along its connections |
 
+### Map ⇄ code
+
+**Code** (or ⌘K → *Map a repository…*) turns a repository — a GitHub repo, or a folder on your
+computer — into a nested architecture map: a level per app and package, linked to its folder, its
+main folders inside, and the datastores and services it uses (from `package.json`, workspaces,
+`docker-compose`, `go.mod`, `Cargo.toml`, `pyproject.toml`). Only file names and manifests are read.
+Later, **Check against the code** lists what changed since — new or removed packages, new
+dependencies, new services — each with a one-click fix, then **Mark map as up to date**.
+
 ### Diagram as code
 
 Paste a Mermaid flowchart (from a README, PR or design doc) straight onto the canvas, or use

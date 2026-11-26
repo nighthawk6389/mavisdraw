@@ -250,6 +250,63 @@ export async function getFileContent(
   return result;
 }
 
+/** Most manifest files fetched for one snapshot (each is an API call). */
+const SNAPSHOT_MAX_MANIFESTS = 80;
+const SNAPSHOT_MAX_FILES = 50_000;
+
+export interface RepoSnapshotData {
+  name: string;
+  ref: string;
+  files: string[];
+  /** path → contents, for the manifest files only. */
+  manifests: Record<string, string>;
+  truncated: boolean;
+}
+
+/**
+ * Everything the repo → map analyzer needs, in as few calls as possible:
+ * the whole file tree (one recursive call) plus the contents of the
+ * manifest files (package.json, workspace and compose files, go.mod...).
+ */
+export async function getRepoSnapshot(
+  accessToken: string,
+  owner: string,
+  repo: string,
+  ref = 'HEAD',
+  isManifest: (path: string) => boolean,
+  isRelevant: (path: string) => boolean,
+  enterpriseUrl?: string | null,
+): Promise<RepoSnapshotData> {
+  const tree = await githubFetch<{
+    tree: Array<{ path: string; type: string }>;
+    truncated: boolean;
+  }>(`/repos/${owner}/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`, accessToken, enterpriseUrl);
+
+  const files = tree.tree
+    .filter((e) => e.type === 'blob' && isRelevant(e.path))
+    .map((e) => e.path)
+    .slice(0, SNAPSHOT_MAX_FILES);
+  // Shallow manifests first: they say the most about the architecture
+  const wanted = files
+    .filter(isManifest)
+    .sort((a, b) => a.split('/').length - b.split('/').length)
+    .slice(0, SNAPSHOT_MAX_MANIFESTS);
+
+  const manifests: Record<string, string> = {};
+  for (let i = 0; i < wanted.length; i += 8) {
+    const batch = wanted.slice(i, i + 8);
+    const results = await Promise.all(
+      batch.map((path) =>
+        getFileContent(accessToken, owner, repo, path, ref, enterpriseUrl)
+          .then((f) => [path, f.content] as const)
+          .catch(() => null),
+      ),
+    );
+    for (const r of results) if (r) manifests[r[0]] = r[1];
+  }
+  return { name: repo, ref, files, manifests, truncated: tree.truncated || files.length >= SNAPSHOT_MAX_FILES };
+}
+
 // ── Connection Management ───────────────────────────────────
 
 export async function saveConnection(

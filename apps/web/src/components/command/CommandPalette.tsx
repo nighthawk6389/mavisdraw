@@ -3,6 +3,7 @@ import type { Diagram, MavisElement, PortalElement, TextElement } from '@mavisdr
 import { useElementsStore } from '../../stores/elementsStore';
 import { useDiagramStore } from '../../stores/diagramStore';
 import { useSelectionStore } from '../../stores/selectionStore';
+import { useRepoStore } from '../../repo/repoStore';
 import { useUIStore } from '../../stores/uiStore';
 import { usePermissionStore } from '../../stores/permissionStore';
 import { loadDiagramElements } from '../../services/diagramSync';
@@ -104,6 +105,13 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
         run: () => useUIStore.getState().setShowMermaidDialog(true),
       },
       {
+        id: 'cmd-repo',
+        kind: 'command',
+        title: 'Map a repository…',
+        subtitle: 'Generate the architecture from code, or check the map against it',
+        run: () => useRepoStore.getState().setDialogOpen(true),
+      },
+      {
         id: 'cmd-export',
         kind: 'command',
         title: 'Export…',
@@ -176,7 +184,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
 
     const editable = usePermissionStore.getState().canEdit;
     for (const c of commands) {
-      if (!editable && (c.id === 'cmd-tidy' || c.id === 'cmd-mermaid')) continue;
+      if (!editable && (c.id === 'cmd-tidy' || c.id === 'cmd-mermaid' || c.id === 'cmd-repo')) continue;
       const s = score(c.title, q);
       if (s > 0) out.push({ ...c, score: q ? s - 0.25 : 0 });
     }

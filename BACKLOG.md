@@ -53,7 +53,7 @@ Still open:
 
 ### Roadmap Phase 2 items not done yet
 
-- **Repo → map generation, drift detection (GitHub App + PR comments), MCP server, embeds** — not started; Mermaid import and the AI agent are the current entry points.
+- ~~Repo → map generation, drift detection~~ — done (in the editor): a GitHub repo or local folder becomes a nested map (apps/packages as linked levels, their main folders inside, datastores and external services from manifests and docker-compose); "Check against the code" lists new/removed components and dependencies with one-click fixes. Still missing: **PR-time drift** (a GitHub App + webhook that comments "this PR adds a dependency on Stripe" with a proposed map update), import-level analysis inside a component (edges between its folders), scheduled re-checks, the **MCP server** and **embeds**.
 - **Model + views** (one component shown at several levels) — not started; still the key data-model decision before the hierarchy grows.
 - **Cylinder/queue shapes** — Mermaid `[(db)]` maps to a rounded rectangle for now.
 - **LLM-markdown paste** — the `packages/llm` format can be exported but pasting it doesn't import with auto-layout yet (Mermaid does).

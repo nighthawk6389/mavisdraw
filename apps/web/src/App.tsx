@@ -6,6 +6,7 @@ const ExportDialog = lazy(() => import('./components/export/ExportDialog'));
 const AgentPanel = lazy(() => import('./components/agent/AgentPanel'));
 const VersionHistoryPanel = lazy(() => import('./components/version/VersionHistoryPanel'));
 const TourPanel = lazy(() => import('./components/present/TourPanel'));
+const RepoMapDialog = lazy(() => import('./components/repo/RepoMapDialog'));
 const PresentationOverlay = lazy(() => import('./components/present/PresentationOverlay'));
 const CommandPalette = lazy(() => import('./components/command/CommandPalette'));
 const MermaidDialog = lazy(() => import('./components/command/MermaidDialog'));
@@ -19,6 +20,7 @@ import ImportHandler from './components/export/ImportHandler';
 import CommentsPanel from './components/comments/CommentsPanel';
 import PresenterBanner from './components/present/PresenterBanner';
 import { usePresentStore } from './stores/presentStore';
+import { useRepoStore } from './repo/repoStore';
 import NotificationBell from './components/comments/NotificationBell';
 import GitHubConnectDialog from './components/github/GitHubConnectDialog';
 import PresenceAvatars from './components/collaboration/PresenceAvatars';
@@ -144,6 +146,8 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
   // Presenting (or following someone who is): the map, and nothing else
   const inPresentation = usePresentStore((s) => s.presenting || s.following);
   const tourOpen = usePresentStore((s) => s.panelOpen);
+  const repoDialogOpen = useRepoStore((s) => s.dialogOpen);
+  const repoDrift = useRepoStore((s) => (s.drift ? s.drift.length - s.applied.size : 0));
   const canShare = role === 'owner' || role === 'admin';
 
   // The address bar always points at what's on screen (shareable deep link).
@@ -274,6 +278,15 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
           {canEditProject && (
             <>
               <button
+                onClick={() => useRepoStore.getState().setDialogOpen(true)}
+                className={`text-xs px-2 py-1 border rounded ${
+                  repoDrift ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-gray-300 text-gray-500 hover:text-gray-700'
+                }`}
+                title="Generate the map from a repository, and check it against the code"
+              >
+                Code{repoDrift ? ` · ${repoDrift} changes` : ''}
+              </button>
+              <button
                 onClick={() => useUIStore.getState().toggleGitHubDialog()}
                 className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 border border-gray-300 rounded"
                 title="GitHub connections"
@@ -371,6 +384,11 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
       </div>
 
       {/* Overlays */}
+      {repoDialogOpen && (
+        <Suspense fallback={null}>
+          <RepoMapDialog />
+        </Suspense>
+      )}
       <Toaster />
       {showCommandPalette && (
         <Suspense fallback={null}>
@@ -482,6 +500,7 @@ async function loadProject(projectId: string, diagramId: string | null): Promise
   const threadId = new URLSearchParams(window.location.search).get('thread');
   useCommentsStore.setState({ pendingThreadId: threadId });
   void useCommentsStore.getState().load(projectId);
+  useRepoStore.getState().setSource(project.repoSource ?? null);
   // Someone may already be presenting
   usePresentStore.setState({ stops: [], presenting: false, following: false, remote: null });
   void usePresentStore.getState().loadTour();

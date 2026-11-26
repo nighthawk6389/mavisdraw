@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { isManifest, isRelevantPath } from '../services/repoFiles.js';
 import { requireAuth } from '../middleware/auth.js';
 import {
   getAuthorizeUrl,
@@ -14,6 +15,7 @@ import {
   getDecryptedToken,
   deleteConnection,
   GitHubError,
+  getRepoSnapshot,
 } from '../services/githubService.js';
 
 const REDIRECT_URI =
@@ -150,6 +152,34 @@ export async function githubRoutes(app: FastifyInstance): Promise<void> {
         if (err instanceof GitHubError) {
           return reply.code(err.statusCode).send({ error: err.message });
         }
+        throw err;
+      }
+    },
+  );
+
+  // ── Repository snapshot (for repo → map and drift checks) ──
+  app.get(
+    '/api/github/repos/:owner/:repo/snapshot',
+    { preHandler: [requireAuth] },
+    async (request, reply) => {
+      const params = repoParamsSchema.safeParse(request.params);
+      if (!params.success) return reply.code(400).send({ error: 'Invalid params' });
+      const { connectionId, ref } = request.query as { connectionId?: string; ref?: string };
+      if (!connectionId) return reply.code(400).send({ error: 'connectionId is required' });
+      try {
+        const { accessToken, enterpriseUrl } = await getDecryptedToken(connectionId, request.user!.userId);
+        const snapshot = await getRepoSnapshot(
+          accessToken,
+          params.data.owner,
+          params.data.repo,
+          ref || 'HEAD',
+          isManifest,
+          isRelevantPath,
+          enterpriseUrl,
+        );
+        return reply.send({ snapshot });
+      } catch (err) {
+        if (err instanceof GitHubError) return reply.code(err.statusCode).send({ error: err.message });
         throw err;
       }
     },

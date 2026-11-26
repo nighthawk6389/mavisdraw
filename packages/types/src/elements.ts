@@ -136,6 +136,8 @@ export interface PortalElement extends BaseElement {
   thumbnailDataUrl: string | null;
   portalStyle: PortalStyle;
   githubLink: GitHubLink | null;
+  /** Folder in the linked repository this level stands for (set by repo → map). */
+  codePath?: string | null;
 }
 
 export type MavisElement =

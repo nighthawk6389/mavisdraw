@@ -95,11 +95,19 @@ function representative(
 export interface MermaidImportResult {
   elements: number;
   diagrams: number;
+  /** Subgraph id → the portal created for it. */
+  portals: Map<string, string>;
+}
+
+export interface MermaidImportOptions {
+  /** Extra fields for the portal of a subgraph (e.g. a link to its code). */
+  portalExtras?: (subgraphId: string) => Partial<PortalElement> | undefined;
 }
 
 export async function importMermaidGraph(
   graph: MermaidGraph,
   at: Point,
+  options: MermaidImportOptions = {},
 ): Promise<MermaidImportResult> {
   const diagramStore = useDiagramStore.getState();
   const store = useElementsStore.getState();
@@ -202,6 +210,7 @@ export async function importMermaidGraph(
         const sgId = entity.key.slice(3);
         const portal: PortalElement = {
           ...(store.createElement('portal', diagramId, x, y, entity.width, entity.height) as PortalElement),
+          ...options.portalExtras?.(sgId),
           id: portalIdFor.get(sgId)!,
           label: entity.label,
           targetDiagramId: diagramFor.get(sgId)!,
@@ -254,6 +263,6 @@ export async function importMermaidGraph(
   }
   useSelectionStore.getState().selectMultiple(rootIds);
 
-  return { elements: created.length, diagrams: createdDiagrams.length };
+  return { elements: created.length, diagrams: createdDiagrams.length, portals: new Map(portalIdFor) };
 }
 

@@ -190,6 +190,7 @@ export interface ProjectResponse {
   /** Team workspace it belongs to (null: the owner's personal space). */
   workspaceId?: string | null;
   folder?: string | null;
+  repoSource?: RepoSourceData | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -655,4 +656,43 @@ export function apiGetInvite(token: string): Promise<{ invite: InviteInfo }> {
 
 export function apiAcceptInvite(token: string): Promise<{ kind: 'project' | 'workspace'; targetId: string }> {
   return apiFetch(`/api/invites/${token}/accept`, { method: 'POST' });
+}
+
+// ── Repository ⇄ map ───────────────────────────────────────────────────
+
+export interface RepoSourceData {
+  kind: 'github' | 'folder';
+  label: string;
+  owner?: string;
+  repo?: string;
+  ref?: string;
+  connectionId?: string;
+  model: import('@mavisdraw/compat').RepoModel;
+  generatedAt: string;
+  generatedBy: string;
+}
+
+export function apiSetProjectRepo(
+  projectId: string,
+  source: Omit<RepoSourceData, 'generatedAt' | 'generatedBy'> | null,
+): Promise<{ repoSource: RepoSourceData | null }> {
+  return apiFetch(`/api/projects/${projectId}/repo`, { method: 'PUT', body: JSON.stringify(source) });
+}
+
+export interface RepoSnapshotData {
+  name: string;
+  ref: string;
+  files: string[];
+  manifests: Record<string, string>;
+  truncated: boolean;
+}
+
+export function apiGetRepoSnapshot(
+  connectionId: string,
+  owner: string,
+  repo: string,
+  ref?: string,
+): Promise<{ snapshot: RepoSnapshotData }> {
+  const q = new URLSearchParams({ connectionId, ...(ref ? { ref } : {}) });
+  return apiFetch(`/api/github/repos/${owner}/${repo}/snapshot?${q}`);
 }

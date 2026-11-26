@@ -1,0 +1,1 @@
+{ "name": "@shop/storefront", "description": "Customer-facing web shop", "scripts": { "dev": "vite" }, "dependencies": { "@shop/ui": "workspace:*", "react": "^19.0.0" } }

@@ -14,6 +14,25 @@ const createProjectSchema = z.object({
   workspaceId: z.string().min(1).max(64).nullable().optional(),
 });
 
+const repoSourceSchema = z
+  .object({
+    kind: z.enum(['github', 'folder']),
+    label: z.string().min(1).max(300),
+    owner: z.string().max(100).optional(),
+    repo: z.string().max(100).optional(),
+    ref: z.string().max(200).optional(),
+    connectionId: z.string().max(64).optional(),
+    // The architecture model; bounded so a project row stays small
+    model: z
+      .object({
+        name: z.string().max(200),
+        components: z.array(z.record(z.string(), z.unknown())).max(500),
+        resources: z.array(z.record(z.string(), z.unknown())).max(200),
+      })
+      .passthrough(),
+  })
+  .nullable();
+
 const updateProjectSchema = z.object({
   name: z.string().min(1).max(255).optional(),
   isPublic: z.boolean().optional(),
@@ -210,6 +229,23 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
         updatedAt: updated.updatedAt.toISOString(),
       },
     });
+  });
+
+  // Link the map to the repository it was generated from (editors+)
+  app.put('/api/projects/:id/repo', { preHandler: [requireAuth] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const userId = request.user!.userId;
+    const parsed = repoSourceSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'Validation failed', details: parsed.error.issues });
+    }
+    const access = await checkProjectAccess(id, userId);
+    if (!access || access === 'viewer') return reply.code(403).send({ error: 'Access denied' });
+    const repoSource = parsed.data
+      ? { ...parsed.data, generatedAt: new Date().toISOString(), generatedBy: userId }
+      : null;
+    await db.update(projects).set({ repoSource, updatedAt: new Date() }).where(eq(projects.id, id));
+    return reply.send({ repoSource });
   });
 
   // Delete project

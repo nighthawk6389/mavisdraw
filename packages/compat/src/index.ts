@@ -11,3 +11,14 @@ export type {
   MermaidShape,
   MermaidDirection,
 } from './mermaid';
+export {
+  analyzeRepo,
+  isManifest,
+  isRelevantPath,
+  repoToGraph,
+  diffModels,
+  describeDrift,
+  componentKey,
+  SHARED_GROUP,
+} from './repo';
+export type { RepoSnapshot, RepoModel, RepoComponent, RepoResource, RepoGraph, DriftChange } from './repo';

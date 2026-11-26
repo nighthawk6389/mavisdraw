@@ -79,6 +79,11 @@ export const projects = pgTable(
     workspaceId: text('workspace_id').references(() => workspaces.id, { onDelete: 'set null' }),
     /** Dashboard folder (a name, shared by everyone who sees the project). */
     folder: varchar('folder', { length: 100 }),
+    /**
+     * The repository the map was generated from, and the architecture model
+     * at that time (drift is measured against it).
+     */
+    repoSource: jsonb('repo_source').$type<RepoSource | null>(),
     thumbnailUrl: text('thumbnail_url'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -360,6 +365,22 @@ export const notifications = pgTable(
   },
   (table) => [index('notifications_user_id_idx').on(table.userId, table.createdAt)],
 );
+
+// ── Repository the map was generated from ───────────────────
+
+export interface RepoSource {
+  kind: 'github' | 'folder';
+  /** "owner/repo@ref" or the folder's name. */
+  label: string;
+  owner?: string;
+  repo?: string;
+  ref?: string;
+  connectionId?: string;
+  /** Architecture model (see @mavisdraw/compat analyzeRepo) at generation time. */
+  model: unknown;
+  generatedAt: string;
+  generatedBy: string;
+}
 
 // ── Tours (presentation paths through the map) ──────────────
 
