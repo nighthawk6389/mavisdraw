@@ -6,11 +6,13 @@ import { useSyncExternalStore } from 'react';
  *   /p/:projectId              a project's root diagram
  *   /p/:projectId/d/:diagramId a nested diagram (deep link)
  *   /share/:token              accept a share link, then open the project
+ *   /invite/:token             accept an email invite (project or workspace)
  */
 export type Route =
   | { name: 'dashboard' }
   | { name: 'project'; projectId: string; diagramId: string | null }
-  | { name: 'share'; token: string };
+  | { name: 'share'; token: string }
+  | { name: 'invite'; token: string };
 
 export function parseRoute(pathname: string): Route {
   const parts = pathname.split('/').filter(Boolean).map(decodeURIComponent);
@@ -22,6 +24,7 @@ export function parseRoute(pathname: string): Route {
     };
   }
   if (parts[0] === 'share' && parts[1]) return { name: 'share', token: parts[1] };
+  if (parts[0] === 'invite' && parts[1]) return { name: 'invite', token: parts[1] };
   return { name: 'dashboard' };
 }
 

@@ -1,19 +1,26 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
-import { eq, or, and } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { projects, projectPermissions } from '../db/schema.js';
-import { createDiagram } from '../services/diagramService.js';
+import { projects, projectPermissions, workspaceMembers } from '../db/schema.js';
+import { checkProjectAccess, combineAccess, createDiagram } from '../services/diagramService.js';
+import { getWorkspaceRole } from '../services/workspaceService.js';
 import { requireAuth } from '../middleware/auth.js';
 
 const createProjectSchema = z.object({
   name: z.string().min(1).max(255),
+  /** Create it in a team workspace (you must be a member). */
+  workspaceId: z.string().min(1).max(64).nullable().optional(),
 });
 
 const updateProjectSchema = z.object({
   name: z.string().min(1).max(255).optional(),
   isPublic: z.boolean().optional(),
+  /** Dashboard folder; null or '' takes it out of any folder. */
+  folder: z.string().trim().max(100).nullable().optional(),
+  /** Move into a workspace (null: back to the owner's personal space). */
+  workspaceId: z.string().min(1).max(64).nullable().optional(),
 });
 
 export async function projectRoutes(app: FastifyInstance): Promise<void> {
@@ -27,6 +34,10 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     const userId = request.user!.userId;
     const projectId = nanoid();
     const now = new Date();
+    const workspaceId = parsed.data.workspaceId ?? null;
+    if (workspaceId && !(await getWorkspaceRole(workspaceId, userId))) {
+      return reply.code(403).send({ error: 'You are not a member of that workspace' });
+    }
 
     // Create project
     const [project] = await db
@@ -35,6 +46,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
         id: projectId,
         name: parsed.data.name,
         ownerId: userId,
+        workspaceId,
         isPublic: false,
         createdAt: now,
         updatedAt: now,
@@ -69,43 +81,52 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  // List user's projects (owned + shared)
+  // List the user's projects: owned, shared with them, and in their workspaces
   app.get('/api/projects', { preHandler: [requireAuth] }, async (request, reply) => {
     const userId = request.user!.userId;
 
-    // Get owned projects
-    const ownedProjects = await db.query.projects.findMany({
-      where: eq(projects.ownerId, userId),
-    });
-
-    // Get projects shared with user
-    const sharedPermissions = await db.query.projectPermissions.findMany({
+    const owned = await db.query.projects.findMany({ where: eq(projects.ownerId, userId) });
+    const shares = await db.query.projectPermissions.findMany({
       where: eq(projectPermissions.userId, userId),
       with: { project: true },
     });
+    const memberships = await db.query.workspaceMembers.findMany({
+      where: eq(workspaceMembers.userId, userId),
+    });
+    const workspaceProjects = memberships.length
+      ? await db.query.projects.findMany({
+          where: inArray(
+            projects.workspaceId,
+            memberships.map((m) => m.workspaceId),
+          ),
+        })
+      : [];
 
-    const sharedProjects = sharedPermissions
-      .filter((p) => p.project)
+    const byId = new Map<string, typeof projects.$inferSelect>();
+    for (const p of [
+      ...owned,
+      ...shares.map((s) => s.project!).filter(Boolean),
+      ...workspaceProjects,
+    ]) {
+      byId.set(p.id, p);
+    }
+    const shareRole = new Map(shares.map((s) => [s.projectId, s.role]));
+    const workspaceRole = new Map(memberships.map((m) => [m.workspaceId, m.role]));
+
+    const allProjects = Array.from(byId.values())
       .map((p) => ({
-        ...p.project!,
-        role: p.role,
-      }));
-
-    const allProjects = [
-      ...ownedProjects.map((p) => ({
         ...p,
-        role: 'owner' as const,
+        role: combineAccess({
+          isOwner: p.ownerId === userId,
+          projectRole: shareRole.get(p.id),
+          workspaceRole: p.workspaceId ? workspaceRole.get(p.workspaceId) : undefined,
+          isPublic: false,
+        }),
         createdAt: p.createdAt.toISOString(),
         updatedAt: p.updatedAt.toISOString(),
-      })),
-      ...sharedProjects
-        .filter((sp) => !ownedProjects.some((op) => op.id === sp.id))
-        .map((p) => ({
-          ...p,
-          createdAt: p.createdAt.toISOString(),
-          updatedAt: p.updatedAt.toISOString(),
-        })),
-    ];
+      }))
+      .filter((p) => p.role !== null)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
     return reply.code(200).send({ projects: allProjects });
   });
@@ -123,16 +144,11 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(404).send({ error: 'Project not found' });
     }
 
-    // Check access, and tell the client what it may do
-    let role: string = 'owner';
-    if (project.ownerId !== userId) {
-      const permission = await db.query.projectPermissions.findFirst({
-        where: and(eq(projectPermissions.projectId, id), eq(projectPermissions.userId, userId)),
-      });
-      if (!permission && !project.isPublic) {
-        return reply.code(403).send({ error: 'Access denied' });
-      }
-      role = permission?.role ?? 'viewer';
+    // Check access (shares, workspace membership, public), and tell the
+    // client what it may do
+    const role = await checkProjectAccess(id, userId);
+    if (!role) {
+      return reply.code(403).send({ error: 'Access denied' });
     }
 
     return reply.code(200).send({
@@ -163,14 +179,25 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(404).send({ error: 'Project not found' });
     }
 
-    if (project.ownerId !== userId) {
+    const { folder, workspaceId, ...ownerFields } = parsed.data;
+    const isOwner = project.ownerId === userId;
+    if ((Object.keys(ownerFields).length > 0 || workspaceId !== undefined) && !isOwner) {
       return reply.code(403).send({ error: 'Only the owner can update this project' });
+    }
+    if (folder !== undefined) {
+      const access = await checkProjectAccess(id, userId);
+      if (!access || access === 'viewer') return reply.code(403).send({ error: 'Access denied' });
+    }
+    if (workspaceId && !(await getWorkspaceRole(workspaceId, userId))) {
+      return reply.code(403).send({ error: 'You are not a member of that workspace' });
     }
 
     const [updated] = await db
       .update(projects)
       .set({
-        ...parsed.data,
+        ...ownerFields,
+        ...(folder !== undefined ? { folder: folder ? folder : null } : {}),
+        ...(workspaceId !== undefined ? { workspaceId } : {}),
         updatedAt: new Date(),
       })
       .where(eq(projects.id, id))

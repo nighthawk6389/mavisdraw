@@ -10,6 +10,7 @@ import { githubRoutes } from './routes/github.js';
 import { agentRoutes } from './routes/agent.js';
 import { commentRoutes } from './routes/comments.js';
 import { tourRoutes } from './routes/tours.js';
+import { workspaceRoutes } from './routes/workspaces.js';
 import {
   createHocuspocusServer,
   persistOpenDocuments,
@@ -94,6 +95,7 @@ export async function buildApp() {
   await app.register(agentRoutes);
   await app.register(commentRoutes);
   await app.register(tourRoutes);
+  await app.register(workspaceRoutes);
 
   // Global error handler
   app.setErrorHandler((error: Error & { statusCode?: number }, _request, reply) => {

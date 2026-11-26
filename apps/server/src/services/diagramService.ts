@@ -1,8 +1,14 @@
 import { nanoid } from 'nanoid';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { diagrams, diagramSnapshots, projects, projectPermissions } from '../db/schema.js';
-import type { PermissionRole } from '../db/schema.js';
+import {
+  diagrams,
+  diagramSnapshots,
+  projects,
+  projectPermissions,
+  workspaceMembers,
+} from '../db/schema.js';
+import type { PermissionRole, WorkspaceRole } from '../db/schema.js';
 
 export interface CreateDiagramInput {
   /** Client-chosen id (validated by the route); generated when omitted. */
@@ -164,10 +170,41 @@ export async function getSnapshot(snapshotId: string) {
   });
 }
 
+export type ProjectAccess = PermissionRole | 'owner';
+
+const RANK: Record<ProjectAccess, number> = { viewer: 0, editor: 1, admin: 2, owner: 3 };
+
+/** What a workspace role means for the workspace's projects. */
+export function accessFromWorkspace(role: WorkspaceRole | null | undefined): PermissionRole | null {
+  if (!role) return null;
+  return role === 'member' ? 'editor' : 'admin';
+}
+
+/**
+ * Someone's effective role in a project: the owner; otherwise the highest of
+ * their direct share and what their workspace membership grants; otherwise
+ * viewer for a public project.
+ */
+export function combineAccess(input: {
+  isOwner: boolean;
+  projectRole: PermissionRole | null | undefined;
+  workspaceRole: WorkspaceRole | null | undefined;
+  isPublic: boolean;
+}): ProjectAccess | null {
+  if (input.isOwner) return 'owner';
+  const candidates = [input.projectRole ?? null, accessFromWorkspace(input.workspaceRole)].filter(
+    (r): r is PermissionRole => r !== null,
+  );
+  if (candidates.length > 0) {
+    return candidates.reduce((best, r) => (RANK[r] > RANK[best] ? r : best));
+  }
+  return input.isPublic ? 'viewer' : null;
+}
+
 export async function checkProjectAccess(
   projectId: string,
   userId: string,
-): Promise<PermissionRole | 'owner' | null> {
+): Promise<ProjectAccess | null> {
   const project = await db.query.projects.findFirst({
     where: eq(projects.id, projectId),
   });
@@ -181,9 +218,21 @@ export async function checkProjectAccess(
       eq(projectPermissions.userId, userId),
     ),
   });
+  const membership = project.workspaceId
+    ? await db.query.workspaceMembers.findFirst({
+        where: and(
+          eq(workspaceMembers.workspaceId, project.workspaceId),
+          eq(workspaceMembers.userId, userId),
+        ),
+      })
+    : undefined;
 
-  // Public projects can be opened (read-only) by anyone signed in
-  return permission?.role ?? (project.isPublic ? 'viewer' : null);
+  return combineAccess({
+    isOwner: false,
+    projectRole: permission?.role,
+    workspaceRole: membership?.role,
+    isPublic: project.isPublic,
+  });
 }
 
 const MAX_AUTO_SNAPSHOTS = 50;

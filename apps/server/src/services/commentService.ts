@@ -9,6 +9,7 @@ import {
   projectPermissions,
   projects,
   users,
+  workspaceMembers,
   type NotificationType,
 } from '../db/schema.js';
 
@@ -28,8 +29,18 @@ export async function getProjectMembers(projectId: string): Promise<Member[]> {
     where: eq(projectPermissions.projectId, projectId),
     columns: { userId: true },
   });
+  const teammates = project.workspaceId
+    ? await db.query.workspaceMembers.findMany({
+        where: eq(workspaceMembers.workspaceId, project.workspaceId),
+        columns: { userId: true },
+      })
+    : [];
   const ids = Array.from(
-    new Set([project.ownerId, ...perms.map((p) => p.userId).filter((id): id is string => !!id)]),
+    new Set([
+      project.ownerId,
+      ...perms.map((p) => p.userId).filter((id): id is string => !!id),
+      ...teammates.map((m) => m.userId),
+    ]),
   );
   const rows = await db.query.users.findMany({
     where: inArray(users.id, ids),

@@ -187,14 +187,20 @@ export interface ProjectResponse {
   isPublic: boolean;
   thumbnailUrl: string | null;
   role?: string;
+  /** Team workspace it belongs to (null: the owner's personal space). */
+  workspaceId?: string | null;
+  folder?: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
-export async function apiCreateProject(name: string): Promise<{ project: ProjectResponse }> {
+export async function apiCreateProject(
+  name: string,
+  workspaceId?: string | null,
+): Promise<{ project: ProjectResponse }> {
   return apiFetch('/api/projects', {
     method: 'POST',
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, ...(workspaceId ? { workspaceId } : {}) }),
   });
 }
 
@@ -208,7 +214,7 @@ export async function apiGetProject(id: string): Promise<{ project: ProjectRespo
 
 export async function apiUpdateProject(
   id: string,
-  updates: { name?: string; isPublic?: boolean },
+  updates: { name?: string; isPublic?: boolean; folder?: string | null; workspaceId?: string | null },
 ): Promise<{ project: ProjectResponse }> {
   return apiFetch(`/api/projects/${id}`, {
     method: 'PUT',
@@ -543,4 +549,110 @@ export function apiSetPresentation(
     method: 'PUT',
     body: JSON.stringify({ stop }),
   });
+}
+
+// ── Workspaces & invites ───────────────────────────────────────────────
+
+export type WorkspaceRole = 'owner' | 'admin' | 'member';
+
+export interface WorkspaceResponse {
+  id: string;
+  name: string;
+  role: WorkspaceRole;
+  memberCount: number;
+  createdAt: string;
+}
+
+export interface WorkspaceMember {
+  userId: string;
+  name: string;
+  email: string;
+  role: WorkspaceRole;
+}
+
+export interface PendingInvite {
+  id: string;
+  email: string;
+  role: string;
+  token: string;
+  createdAt: string;
+}
+
+export type InviteResult = { status: 'added' } | { status: 'invited'; inviteUrl: string };
+
+export function apiListWorkspaces(): Promise<{ workspaces: WorkspaceResponse[] }> {
+  return apiFetch('/api/workspaces');
+}
+
+export function apiCreateWorkspace(name: string): Promise<{ workspace: WorkspaceResponse }> {
+  return apiFetch('/api/workspaces', { method: 'POST', body: JSON.stringify({ name }) });
+}
+
+export function apiWorkspaceMembers(
+  id: string,
+): Promise<{ role: WorkspaceRole; members: WorkspaceMember[]; invites: PendingInvite[] }> {
+  return apiFetch(`/api/workspaces/${id}/members`);
+}
+
+export function apiSetWorkspaceRole(id: string, userId: string, role: WorkspaceRole): Promise<unknown> {
+  return apiFetch(`/api/workspaces/${id}/members/${userId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ role }),
+  });
+}
+
+export function apiRemoveWorkspaceMember(id: string, userId: string): Promise<void> {
+  return apiFetch(`/api/workspaces/${id}/members/${userId}`, { method: 'DELETE' });
+}
+
+export function apiInviteToWorkspace(id: string, email: string, role: 'admin' | 'member'): Promise<InviteResult> {
+  return apiFetch(`/api/workspaces/${id}/invites`, {
+    method: 'POST',
+    body: JSON.stringify({ email, role }),
+  });
+}
+
+export function apiRevokeWorkspaceInvite(id: string, inviteId: string): Promise<void> {
+  return apiFetch(`/api/workspaces/${id}/invites/${inviteId}`, { method: 'DELETE' });
+}
+
+export function apiInviteToProject(
+  id: string,
+  email: string,
+  role: 'viewer' | 'editor' | 'admin',
+): Promise<InviteResult> {
+  return apiFetch(`/api/projects/${id}/invites`, {
+    method: 'POST',
+    body: JSON.stringify({ email, role }),
+  });
+}
+
+export function apiListProjectInvites(id: string): Promise<{ invites: PendingInvite[] }> {
+  return apiFetch(`/api/projects/${id}/invites`);
+}
+
+export function apiRevokeProjectInvite(id: string, inviteId: string): Promise<void> {
+  return apiFetch(`/api/projects/${id}/invites/${inviteId}`, { method: 'DELETE' });
+}
+
+export function apiTransferProject(id: string, userId: string): Promise<{ ok: true }> {
+  return apiFetch(`/api/projects/${id}/transfer`, { method: 'POST', body: JSON.stringify({ userId }) });
+}
+
+export interface InviteInfo {
+  kind: 'project' | 'workspace';
+  targetId: string;
+  targetName: string;
+  invitedBy: string | null;
+  email: string;
+  role: string;
+  accepted: boolean;
+}
+
+export function apiGetInvite(token: string): Promise<{ invite: InviteInfo }> {
+  return apiFetch(`/api/invites/${token}`);
+}
+
+export function apiAcceptInvite(token: string): Promise<{ kind: 'project' | 'workspace'; targetId: string }> {
+  return apiFetch(`/api/invites/${token}/accept`, { method: 'POST' });
 }

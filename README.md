@@ -190,6 +190,12 @@ auto-laid out — a flat README diagram becomes a navigable, multi-level map.
 - **Every project and nested diagram has a URL** (`/p/:project/d/:diagram`) — paste it in Slack and
   teammates land on the same level.
 - **Share links** (`Share` → copy link) add whoever opens them to the project with the chosen role.
+- **Invite by email** (in Share, or a workspace's Members): people with an account get access at
+  once; anyone else gets an invite link that works only for their address and is claimed when they
+  sign up.
+- **Workspaces** share every project inside them with the team (members edit; admins manage), and
+  the dashboard groups projects into Recent, Yours, Shared with you, each workspace, and folders.
+  An owner can hand a project to someone else and stay on as admin.
 - **Live editing** merges per property: one person can move a shape while another recolours it.
   Undo only ever undoes your own changes, and never reverts a property a teammate changed after you.
 - **Present** turns the map into a guided tour: **Generate from map** makes one stop per level,

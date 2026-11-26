@@ -75,6 +75,10 @@ export const projects = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     rootDiagramId: text('root_diagram_id'),
     isPublic: boolean('is_public').notNull().default(false),
+    /** Team space the project belongs to (its members get access); null = personal. */
+    workspaceId: text('workspace_id').references(() => workspaces.id, { onDelete: 'set null' }),
+    /** Dashboard folder (a name, shared by everyone who sees the project). */
+    folder: varchar('folder', { length: 100 }),
     thumbnailUrl: text('thumbnail_url'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -218,6 +222,58 @@ export const projectPermissionsRelations = relations(projectPermissions, ({ one 
     references: [users.id],
   }),
 }));
+
+// ── Workspaces (teams) ───────────────────────────────────────
+
+export type WorkspaceRole = 'owner' | 'admin' | 'member';
+
+export const workspaces = pgTable('workspaces', {
+  id: text('id').primaryKey(),
+  name: varchar('name', { length: 120 }).notNull(),
+  createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const workspaceMembers = pgTable(
+  'workspace_members',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    role: varchar('role', { length: 20 }).notNull().default('member').$type<WorkspaceRole>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('workspace_members_unique_idx').on(table.workspaceId, table.userId),
+    index('workspace_members_user_idx').on(table.userId),
+  ],
+);
+
+/** An invitation by email to a project or a workspace, claimable by that email's account. */
+export const invites = pgTable(
+  'invites',
+  {
+    id: text('id').primaryKey(),
+    kind: varchar('kind', { length: 20 }).notNull().$type<'project' | 'workspace'>(),
+    targetId: text('target_id').notNull(),
+    email: varchar('email', { length: 255 }).notNull(),
+    role: varchar('role', { length: 20 }).notNull(),
+    token: text('token').notNull(),
+    invitedBy: text('invited_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+    acceptedBy: text('accepted_by').references(() => users.id, { onDelete: 'set null' }),
+  },
+  (table) => [
+    uniqueIndex('invites_token_idx').on(table.token),
+    index('invites_email_idx').on(table.email),
+    index('invites_target_idx').on(table.kind, table.targetId),
+  ],
+);
 
 // ── Comments ─────────────────────────────────────────────────
 

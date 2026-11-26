@@ -39,7 +39,15 @@ import { openImportDialog } from './components/export/ImportHandler';
 import { useDiagramStore } from './stores/diagramStore';
 import LoginPage from './routes/login';
 import Dashboard from './routes/dashboard';
-import { apiGetDiagram, apiGetProject, apiJoinViaShareLink, apiListDiagrams } from './services/api';
+import {
+  apiAcceptInvite,
+  apiGetDiagram,
+  apiGetInvite,
+  apiGetProject,
+  apiJoinViaShareLink,
+  apiListDiagrams,
+  type InviteInfo,
+} from './services/api';
 import { navigate, projectPath, reflectPath, useRoute } from './routing';
 import { useCommentsStore } from './stores/commentsStore';
 import {
@@ -349,10 +357,10 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
             )}
             <CommentsPanel />
             {tourOpen && (
-          <Suspense fallback={null}>
-            <TourPanel />
-          </Suspense>
-        )}
+              <Suspense fallback={null}>
+                <TourPanel />
+              </Suspense>
+            )}
             {showAgentChat && canEditProject && (
               <Suspense fallback={null}>
                 <AgentPanel />
@@ -510,6 +518,48 @@ export default function App() {
     };
   }, [isAuthenticated, route]);
 
+  // /invite/:token → accept (as the invited email), then open what it's for
+  const [inviteInfo, setInviteInfo] = useState<InviteInfo | null>(null);
+  const inviteToken = route.name === 'invite' ? route.token : null;
+  useEffect(() => {
+    if (!inviteToken || isAuthenticated) return;
+    let cancelled = false;
+    apiGetInvite(inviteToken)
+      .then(({ invite }) => !cancelled && setInviteInfo(invite))
+      .catch(() => !cancelled && setInviteInfo(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [inviteToken, isAuthenticated]);
+  useEffect(() => {
+    if (!isAuthenticated || !inviteToken) return;
+    let cancelled = false;
+    apiAcceptInvite(inviteToken)
+      .then(({ kind, targetId }) => {
+        if (cancelled) return;
+        toast(
+          kind === 'project' ? "You've joined the project" : "You've joined the workspace",
+          'success',
+        );
+        navigate(
+          kind === 'project'
+            ? projectPath(targetId)
+            : `/?workspace=${encodeURIComponent(targetId)}`,
+          {
+            replace: true,
+          },
+        );
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        toast(err instanceof Error ? err.message : "This invite doesn't work", 'error');
+        navigate('/', { replace: true });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated, inviteToken]);
+
   // /p/:projectId[/d/:diagramId] → load the project once
   const routeProjectId = route.name === 'project' ? route.projectId : null;
   const routeDiagramId = route.name === 'project' ? route.diagramId : null;
@@ -555,14 +605,21 @@ export default function App() {
   }
 
   if (!isAuthenticated) {
-    return <LoginPage sharedLink={route.name === 'share'} />;
+    // Keyed: once the invite details arrive, open on "sign up" (it usually is a new account)
+    return (
+      <LoginPage
+        key={inviteInfo ? 'invite' : 'plain'}
+        sharedLink={route.name === 'share'}
+        invite={inviteInfo}
+      />
+    );
   }
 
   if (route.name === 'project' && openedProjectId === route.projectId) {
     return <EditorView onBackToDashboard={handleBackToDashboard} />;
   }
 
-  if (route.name === 'project' || route.name === 'share') {
+  if (route.name === 'project' || route.name === 'share' || route.name === 'invite') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-gray-500">{openError ?? 'Opening…'}</div>
