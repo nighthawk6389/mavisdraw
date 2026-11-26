@@ -11,11 +11,13 @@ import { useDiagramStore } from '../../stores/diagramStore';
 import { useCollaborationStore } from '../../stores/collaborationStore';
 import { useCollaboration } from '../../hooks/useCollaboration';
 import CursorOverlay from '../collaboration/CursorOverlay';
+import CommentLayer from '../comments/CommentLayer';
+import { useCommentsStore } from '../../stores/commentsStore';
 import { generateThumbnail } from '../../utils/thumbnailGenerator';
 import { installTestHooks } from '../../utils/testHooks';
 import { cssFont, measureText, whenFontsReady } from '../../utils/fonts';
 import { insertImageFile } from '../../utils/imageInsert';
-import { registerNewDiagram } from '../../services/diagramSync';
+import { registerNewDiagram, ensureDiagramKnown } from '../../services/diagramSync';
 import { usePermissionStore } from '../../stores/permissionStore';
 import { useViewportStore } from '../../stores/viewportStore';
 import { sortByStacking, withoutHistory } from '../../stores/elementsStore';
@@ -341,6 +343,14 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
       if (portalElement.type !== 'portal') return;
       const portal = portalElement as PortalElement;
       if (!portal.targetDiagramId) return;
+
+      // A teammate's new portal: learn about its diagram first
+      if (!useDiagramStore.getState().diagrams.has(portal.targetDiagramId)) {
+        void ensureDiagramKnown(portal.targetDiagramId).then((ok) => {
+          if (ok) handlePortalDrillDownRef.current(portalElement);
+        });
+        return;
+      }
 
       const renderer = rendererRef.current;
       const container = containerRef.current;
@@ -702,6 +712,16 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         return renderer.getViewport().screenToCanvas(w / 2, h / 2);
       },
       invalidate: () => renderer.invalidateStatic(),
+      centerOn: (point: Point) => {
+        const { width: w, height: h } = containerSize();
+        const vp = renderer.getViewport().getViewport();
+        renderer.getViewport().setViewport({
+          ...vp,
+          scrollX: w / 2 - point.x * vp.zoom,
+          scrollY: h / 2 - point.y * vp.zoom,
+        });
+        renderer.invalidateStatic();
+      },
       openPortal: (portalId: string) => {
         const portal = useElementsStore.getState().elements.get(portalId);
         if (portal) handlePortalDrillDownRef.current(portal);
@@ -922,6 +942,22 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
       }
       if (activePointersRef.current.size > 1) return;
 
+      // Comment mode: a click drops a pin (on the shape under it, if any)
+      if (useToolStore.getState().activeTool === 'comment' && e.button === 0) {
+        activePointersRef.current.delete(e.pointerId);
+        const at = rendererRef.current!.getViewport().screenToCanvas(pos.x, pos.y);
+        const hit = mgr.hitTestAt(pos.x, pos.y);
+        useCommentsStore.getState().startDraft({
+          diagramId: activeDiagramIdRef.current,
+          x: at.x,
+          y: at.y,
+          elementId: hit?.id ?? null,
+          offsetX: hit ? at.x - hit.x : 0,
+          offsetY: hit ? at.y - hit.y : 0,
+        });
+        return;
+      }
+
       useElementsStore.getState().beginHistoryBatch();
       mgr.onPointerDown(pos.x, pos.y, { button: e.button, shiftKey: e.shiftKey });
     },
@@ -1141,6 +1177,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         onPointerCancel={handlePointerUp}
         onContextMenu={handleContextMenu}
       />
+      <CommentLayer />
       <CursorOverlay />
       <ZoomControls />
       {contextMenu && (

@@ -38,11 +38,7 @@ test.describe('Export Dialog', () => {
     await expect(page.locator('h2:has-text("Export")')).toBeVisible();
 
     // Close with the X button
-    await page
-      .locator('h2:has-text("Export")')
-      .locator('..')
-      .locator('button')
-      .click();
+    await page.locator('h2:has-text("Export")').locator('..').locator('button').click();
     await expect(page.locator('h2:has-text("Export")')).not.toBeVisible();
   });
 
@@ -240,7 +236,9 @@ test.describe('Version History Panel', () => {
     await page.locator('button.bg-blue-600:has-text("Save")').click();
 
     // Wait for the snapshot to appear in the list
-    await expect(page.locator('text=Test Version 1')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId('version-entry').getByText('Test Version 1')).toBeVisible({
+      timeout: 5000,
+    });
   });
 
   test('shows "No versions saved yet" when empty', async ({ page }) => {

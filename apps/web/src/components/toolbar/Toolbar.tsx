@@ -22,13 +22,16 @@ const TOOLS: ToolConfig[] = [
   { tool: 'freedraw', icon: '\u270E', label: 'Freedraw', shortcut: 'P' },
   { tool: 'text', icon: 'T', label: 'Text', shortcut: 'T' },
   { tool: 'portal', icon: '\u29C9', label: 'Portal', shortcut: 'O' },
+  { tool: 'comment', icon: '\u{1F4AC}', label: 'Comment', shortcut: 'C' },
 ];
 
 export default function Toolbar() {
   const { activeTool, isToolLocked, setTool, toggleToolLock } = useToolStore();
   const canEdit = usePermissionStore((s) => s.canEdit);
-  // Viewers navigate; they don't get drawing tools
-  const tools = canEdit ? TOOLS : TOOLS.filter((t) => t.tool === 'select' || t.tool === 'hand');
+  // Viewers navigate and comment; they don't get drawing tools
+  const tools = canEdit
+    ? TOOLS
+    : TOOLS.filter((t) => t.tool === 'select' || t.tool === 'hand' || t.tool === 'comment');
   const {
     renderMode,
     setRenderMode,

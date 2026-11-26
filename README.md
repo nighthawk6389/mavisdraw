@@ -194,6 +194,9 @@ auto-laid out — a flat README diagram becomes a navigable, multi-level map.
   Undo only ever undoes your own changes, and never reverts a property a teammate changed after you.
 - **Viewers** can pan, zoom, select, copy and drill through every level, but can't change anything
   (enforced on the server too).
+- **Comments** (`C`, then click a shape or anywhere): the pin sticks to the shape, `@` mentions a
+  teammate and notifies them, and the Comments panel lists threads on every nested level.
+  Viewers can comment too.
 - **Version history** (`Mod+S`) is shared by everyone on the project. Restoring a version updates
   every open editor live, and the previous state is kept as a backup version.
 

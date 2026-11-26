@@ -3,6 +3,10 @@ import * as Y from 'yjs';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { useElementsStore, applyRemoteChanges } from './elementsStore';
 import { docVersion, readElement, writeElement } from '../collab/ydocElements';
+import { useCommentsStore } from './commentsStore';
+import { useDiagramStore } from './diagramStore';
+import { refreshDiagramList } from '../services/diagramSync';
+import { useNotificationStore } from './notificationStore';
 
 /** True while remote changes are being written into the store (no echo back). */
 let applyingRemote = false;
@@ -245,6 +249,15 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
         }
       }
       if (changed.size === 0) return;
+      // A teammate drew a portal: fetch the nested diagram behind it
+      const diagrams = useDiagramStore.getState().diagrams;
+      for (const id of changed) {
+        const target = (elementsMap.get(id) as Y.Map<unknown> | undefined)?.get?.('targetDiagramId');
+        if (typeof target === 'string' && target && !diagrams.has(target)) {
+          void refreshDiagramList();
+          break;
+        }
+      }
       applyingRemote = true;
       try {
         applyRemoteChanges(() =>
@@ -260,6 +273,15 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
         );
       } finally {
         applyingRemote = false;
+      }
+    });
+
+    // Side-channel nudges from the server (e.g. a comment was posted)
+    doc.getMap('signals').observe((event, transaction) => {
+      if (transaction.local) return;
+      if (event.keysChanged.has('comments')) {
+        void useCommentsStore.getState().refresh();
+        void useNotificationStore.getState().load();
       }
     });
 

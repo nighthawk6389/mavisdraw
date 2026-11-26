@@ -1,4 +1,4 @@
-import type { APIRequestContext, BrowserContext, Page } from '@playwright/test';
+import type { APIRequestContext, Browser, BrowserContext, Page } from '@playwright/test';
 import { expect } from '@playwright/test';
 
 export const API_URL = `http://localhost:${process.env.E2E_API_PORT ?? '3101'}`;
@@ -110,7 +110,17 @@ export async function dragOnCanvas(
 /** Read elements of the active diagram from the dev-only test hook. */
 export async function getActiveElements(
   page: Page,
-): Promise<Array<{ id: string; type: string; x: number; y: number; width: number; height: number; [k: string]: unknown }>> {
+): Promise<
+  Array<{
+    id: string;
+    type: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    [k: string]: unknown;
+  }>
+> {
   return page.evaluate(() => {
     const hook = (window as unknown as { __MAVISDRAW__?: { getActiveElements: () => unknown[] } })
       .__MAVISDRAW__;
@@ -129,14 +139,85 @@ export async function screenCenterOf(
   page: Page,
   el: { x: number; y: number; width: number; height: number },
 ): Promise<{ x: number; y: number }> {
-  const vp = await page.evaluate(
-    () =>
-      (window as unknown as { __MAVISDRAW__: { getViewport: () => { zoom: number; scrollX: number; scrollY: number } } })
-        .__MAVISDRAW__.getViewport(),
+  const vp = await page.evaluate(() =>
+    (
+      window as unknown as {
+        __MAVISDRAW__: { getViewport: () => { zoom: number; scrollX: number; scrollY: number } };
+      }
+    ).__MAVISDRAW__.getViewport(),
   );
   const box = (await interactiveCanvas(page).boundingBox())!;
   return {
     x: box.x + (el.x + el.width / 2) * vp.zoom + vp.scrollX,
     y: box.y + (el.y + el.height / 2) * vp.zoom + vp.scrollY,
   };
+}
+
+// ── Two people in one project (owner + someone who joined via a share link) ──
+
+export async function shareLink(
+  ctx: BrowserContext,
+  owner: TestUser,
+  projectId: string,
+  role: 'viewer' | 'editor',
+) {
+  const res = await ctx.request.post(`${API_URL}/api/projects/${projectId}/share`, {
+    headers: { Authorization: `Bearer ${owner.accessToken}` },
+    data: { role },
+  });
+  expect(res.status(), await res.text()).toBe(201);
+  return ((await res.json()) as { share: { shareToken: string } }).share.shareToken;
+}
+
+export async function isConnected(page: Page) {
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() =>
+          (
+            window as unknown as { __MAVISDRAW__?: { getConnectionStatus: () => string } }
+          ).__MAVISDRAW__?.getConnectionStatus(),
+        ),
+      { timeout: 15_000 },
+    )
+    .toBe('connected');
+}
+
+/** Drag between two page (not canvas-relative) points, e.g. from screenCenterOf. */
+export async function dragPage(
+  page: Page,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+) {
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(to.x, to.y, { steps: 8 });
+  await page.mouse.up();
+}
+
+export const types = async (page: Page) =>
+  (await getActiveElements(page)).map((e) => e.type).sort();
+
+/** Owner + a second user who joined through a share link, both in the editor. */
+export async function twoPeople(
+  browser: Browser,
+  role: 'viewer' | 'editor',
+  names: { owner?: string; guest?: string } = {},
+) {
+  const ctxA = await browser.newContext();
+  const ctxB = await browser.newContext();
+  const a = await ctxA.newPage();
+  const b = await ctxB.newPage();
+  const owner = await registerUser(ctxA, names.owner ?? 'Owner');
+  const guest = await registerUser(ctxB, names.guest ?? (role === 'viewer' ? 'Viewer' : 'Editor'));
+  const project = await apiCreateProject(ctxA.request, owner, `Team ${role}`);
+  const token = await shareLink(ctxA, owner, project.id, role);
+
+  await openProject(a, `Team ${role}`);
+  // The guest follows the share link like a real person would
+  await b.goto(`/share/${token}`);
+  await expect(b.locator('canvas').first()).toBeVisible();
+  await isConnected(a);
+  await isConnected(b);
+  return { ctxA, ctxB, a, b, owner, guest, project };
 }

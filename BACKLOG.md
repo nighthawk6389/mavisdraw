@@ -20,7 +20,7 @@
 
 ### Roadmap Phase 3 items not done yet
 
-- **Comments & @mentions** pinned to elements, resolve threads, notifications — not started (the biggest remaining Teams gap).
+- ~~Comments & @mentions~~ — done: threads pinned to shapes (pins follow them), replies, resolve/reopen, @mention autocomplete, in-app notifications, a panel across every nested level, `?thread=` deep links, live updates through the room. Still missing: email/Slack delivery of notifications, comment reactions, and lazy-loading the comments UI (it added ~7 KB gzip to the main bundle).
 - **Visual diff between versions** ("what changed since last week") — versions are full JSON snapshots; there's no diff view yet. Auto versions are pruned to the latest 50 per diagram.
 - **Workspaces/orgs, invite by email, commenter role, folders, transfer ownership** — sharing is still per project (owner/admin/editor/viewer + share links).
 - **Presentation mode** (guided path through zoom levels) — not started; follow mode exists.

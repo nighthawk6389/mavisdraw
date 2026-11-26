@@ -5,6 +5,7 @@ import {
   timestamp,
   boolean,
   integer,
+  doublePrecision,
   jsonb,
   index,
   uniqueIndex,
@@ -217,6 +218,92 @@ export const projectPermissionsRelations = relations(projectPermissions, ({ one 
     references: [users.id],
   }),
 }));
+
+// ── Comments ─────────────────────────────────────────────────
+
+/**
+ * A comment thread pinned to a diagram. When `elementId` is set the pin
+ * follows that element (offset from its top-left); x/y is where it was
+ * placed, used if the element is gone.
+ */
+export const commentThreads = pgTable(
+  'comment_threads',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    diagramId: text('diagram_id')
+      .notNull()
+      .references(() => diagrams.id, { onDelete: 'cascade' }),
+    elementId: text('element_id'),
+    x: doublePrecision('x').notNull(),
+    y: doublePrecision('y').notNull(),
+    offsetX: doublePrecision('offset_x').notNull().default(0),
+    offsetY: doublePrecision('offset_y').notNull().default(0),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    resolvedBy: text('resolved_by').references(() => users.id, { onDelete: 'set null' }),
+    createdBy: text('created_by')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('comment_threads_project_id_idx').on(table.projectId),
+    index('comment_threads_diagram_id_idx').on(table.diagramId),
+  ],
+);
+
+export const comments = pgTable(
+  'comments',
+  {
+    id: text('id').primaryKey(),
+    threadId: text('thread_id')
+      .notNull()
+      .references(() => commentThreads.id, { onDelete: 'cascade' }),
+    authorId: text('author_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    body: text('body').notNull(),
+    /** User ids @mentioned in the body. */
+    mentions: jsonb('mentions').notNull().default([]).$type<string[]>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    editedAt: timestamp('edited_at', { withTimezone: true }),
+  },
+  (table) => [index('comments_thread_id_idx').on(table.threadId)],
+);
+
+export type NotificationType = 'mention' | 'reply';
+
+export const notifications = pgTable(
+  'notifications',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    type: varchar('type', { length: 20 }).notNull().$type<NotificationType>(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    diagramId: text('diagram_id')
+      .notNull()
+      .references(() => diagrams.id, { onDelete: 'cascade' }),
+    threadId: text('thread_id')
+      .notNull()
+      .references(() => commentThreads.id, { onDelete: 'cascade' }),
+    commentId: text('comment_id')
+      .notNull()
+      .references(() => comments.id, { onDelete: 'cascade' }),
+    actorId: text('actor_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    readAt: timestamp('read_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('notifications_user_id_idx').on(table.userId, table.createdAt)],
+);
 
 // ── GitHub Connections ──────────────────────────────────────
 

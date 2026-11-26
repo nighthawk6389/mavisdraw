@@ -16,6 +16,21 @@ export function documentNameFor(diagramId: string): string {
   return `${DOCUMENT_PREFIX}${diagramId}`;
 }
 
+/**
+ * Nudge everyone in a diagram's live room that some side data changed
+ * (e.g. comments), so they refetch it right away instead of polling.
+ */
+export function signalDocument(
+  server: Pick<Hocuspocus, 'documents'>,
+  diagramId: string,
+  key: string,
+): void {
+  const doc = server.documents.get(documentNameFor(diagramId));
+  if (!doc) return;
+  const signals = doc.getMap('signals');
+  signals.set(key, Number(signals.get(key) ?? 0) + 1);
+}
+
 /** Write a live document to the database: readable JSON (REST, exports) plus the CRDT state. */
 export async function persistDocument(documentName: string, document: Y.Doc): Promise<void> {
   const diagramId = documentName.replace(DOCUMENT_PREFIX, '');

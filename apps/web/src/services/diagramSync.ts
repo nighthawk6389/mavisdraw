@@ -1,5 +1,6 @@
 import type { Diagram, MavisElement } from '@mavisdraw/types';
 import {
+  apiListDiagrams,
   ApiError,
   apiCreateDiagram,
   apiGetDiagram,
@@ -139,6 +140,47 @@ export function loadDiagramElements(diagramId: string): Promise<void> {
 
   loading.set(diagramId, promise);
   return promise;
+}
+
+let listing: Promise<void> | null = null;
+
+function currentProjectId(): string | null {
+  const { diagrams, activeDiagramId } = useDiagramStore.getState();
+  return diagrams.get(activeDiagramId)?.projectId ?? diagrams.values().next().value?.projectId ?? null;
+}
+
+/**
+ * Pull in nested diagrams that collaborators created after this project was
+ * opened (their portals arrive live; the diagrams behind them don't).
+ * Existing diagrams are left untouched. Concurrent calls share one request.
+ */
+export function refreshDiagramList(projectId: string | null = currentProjectId()): Promise<void> {
+  if (!projectId) return Promise.resolve();
+  if (listing) return listing;
+  listing = (async () => {
+    const { diagrams } = await apiListDiagrams(projectId);
+    const have = useDiagramStore.getState().diagrams;
+    const missing = diagrams.filter((d) => !have.has(d.id));
+    if (missing.length === 0) return;
+    for (const d of missing) known.add(d.id);
+    useDiagramStore.setState((s) => {
+      const next = new Map(s.diagrams);
+      for (const d of missing) if (!next.has(d.id)) next.set(d.id, toDiagram(d));
+      return { diagrams: next };
+    });
+  })()
+    .catch((err) => console.error('Failed to refresh diagram list:', err))
+    .finally(() => {
+      listing = null;
+    });
+  return listing;
+}
+
+/** True once the diagram is in the store, fetching the project's list if needed. */
+export async function ensureDiagramKnown(diagramId: string): Promise<boolean> {
+  if (useDiagramStore.getState().diagrams.has(diagramId)) return true;
+  await refreshDiagramList();
+  return useDiagramStore.getState().diagrams.has(diagramId);
 }
 
 /**

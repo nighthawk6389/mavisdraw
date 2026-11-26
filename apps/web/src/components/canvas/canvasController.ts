@@ -19,6 +19,8 @@ export interface CanvasController {
   openPortal?: (portalId: string) => void;
   /** Start editing the label of a shape/connector (or a text element itself). */
   editLabel?: (elementId: string) => void;
+  /** Pan so a canvas point is in the middle of the screen (zoom unchanged). */
+  centerOn?: (point: Point) => void;
 }
 
 let current: CanvasController | null = null;

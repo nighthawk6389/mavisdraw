@@ -89,6 +89,8 @@ export async function apiFetch<T = unknown>(
     throw new ApiError(body.error ?? 'Request failed', response.status);
   }
 
+  // 204 No Content (deletes, mark-as-read) has no JSON to parse
+  if (response.status === 204) return undefined as T;
   return response.json();
 }
 
@@ -322,4 +324,133 @@ export async function apiListPermissions(
 
 export async function apiRevokePermission(permissionId: string): Promise<void> {
   await apiFetch(`/api/permissions/${permissionId}`, { method: 'DELETE' });
+}
+
+// ── Comments & notifications ───────────────────────────────────────────
+
+export interface Member {
+  id: string;
+  name: string;
+  avatarUrl: string | null;
+}
+
+export interface CommentData {
+  id: string;
+  threadId: string;
+  body: string;
+  mentions: string[];
+  author: Member;
+  createdAt: string;
+  editedAt: string | null;
+}
+
+export interface CommentThreadData {
+  id: string;
+  projectId: string;
+  diagramId: string;
+  elementId: string | null;
+  x: number;
+  y: number;
+  offsetX: number;
+  offsetY: number;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+  createdBy: string;
+  createdAt: string;
+  comments: CommentData[];
+}
+
+export interface NotificationData {
+  id: string;
+  type: 'mention' | 'reply';
+  projectId: string;
+  projectName: string;
+  diagramId: string;
+  diagramTitle: string;
+  threadId: string;
+  commentId: string;
+  actor: { id: string; name: string };
+  excerpt: string;
+  readAt: string | null;
+  createdAt: string;
+}
+
+export function apiListMembers(projectId: string): Promise<{ members: Member[] }> {
+  return apiFetch(`/api/projects/${projectId}/members`);
+}
+
+export function apiListComments(projectId: string): Promise<{ threads: CommentThreadData[] }> {
+  return apiFetch(`/api/projects/${projectId}/comments`);
+}
+
+export function apiCreateThread(
+  diagramId: string,
+  input: {
+    elementId: string | null;
+    x: number;
+    y: number;
+    offsetX: number;
+    offsetY: number;
+    body: string;
+    mentions: string[];
+  },
+): Promise<{ thread: CommentThreadData }> {
+  return apiFetch(`/api/diagrams/${diagramId}/comments`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function apiReplyToThread(
+  threadId: string,
+  body: string,
+  mentions: string[],
+): Promise<{ thread: CommentThreadData }> {
+  return apiFetch(`/api/comment-threads/${threadId}/replies`, {
+    method: 'POST',
+    body: JSON.stringify({ body, mentions }),
+  });
+}
+
+export function apiResolveThread(
+  threadId: string,
+  resolved: boolean,
+): Promise<{ thread: CommentThreadData }> {
+  return apiFetch(`/api/comment-threads/${threadId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ resolved }),
+  });
+}
+
+export function apiDeleteThread(threadId: string): Promise<void> {
+  return apiFetch(`/api/comment-threads/${threadId}`, { method: 'DELETE' });
+}
+
+export function apiEditComment(
+  commentId: string,
+  body: string,
+  mentions: string[],
+): Promise<{ thread: CommentThreadData }> {
+  return apiFetch(`/api/comments/${commentId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ body, mentions }),
+  });
+}
+
+export function apiDeleteComment(commentId: string): Promise<{ thread: CommentThreadData | null }> {
+  return apiFetch(`/api/comments/${commentId}`, { method: 'DELETE' });
+}
+
+export function apiListNotifications(): Promise<{
+  notifications: NotificationData[];
+  unreadCount: number;
+}> {
+  return apiFetch('/api/notifications');
+}
+
+export function apiMarkNotificationsRead(ids?: string[]): Promise<void> {
+  return apiFetch('/api/notifications/read', {
+    method: 'POST',
+    body: JSON.stringify(ids ? { ids } : {}),
+  });
 }

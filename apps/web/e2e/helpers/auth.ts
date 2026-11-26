@@ -64,6 +64,20 @@ export async function mockAuthAndOpenEditor(page: Page) {
     route.fulfill({ status: 200, json: { project: TEST_PROJECT } }),
   );
 
+  // Comments, members and notifications (empty by default)
+  await page.route(`**/api/projects/${TEST_PROJECT.id}/comments`, (route) =>
+    route.fulfill({ status: 200, json: { threads: [] } }),
+  );
+  await page.route(`**/api/projects/${TEST_PROJECT.id}/members`, (route) =>
+    route.fulfill({
+      status: 200,
+      json: { members: [{ id: TEST_USER.id, name: TEST_USER.name, avatarUrl: null }] },
+    }),
+  );
+  await page.route('**/api/notifications', (route) =>
+    route.fulfill({ status: 200, json: { notifications: [], unreadCount: 0 } }),
+  );
+
   // Editor endpoints — diagram listing & fetching + auto-save PUT
   await page.route(`**/api/projects/${TEST_PROJECT.id}/diagrams`, (route) =>
     route.fulfill({ status: 200, json: { diagrams: [TEST_DIAGRAM] } }),

@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { useCommentsStore } from '../stores/commentsStore';
 import { useToolStore, type Tool } from '../stores/toolStore';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useElementsStore } from '../stores/elementsStore';
@@ -20,6 +21,7 @@ const KEY_TO_TOOL: Record<string, Tool> = {
   p: 'freedraw',
   t: 'text',
   o: 'portal',
+  c: 'comment',
 };
 
 const NUDGE_KEYS: Record<string, [number, number]> = {
@@ -89,7 +91,8 @@ export function useKeyboard(
           (event.shiftKey && !mod && (code === 'Digit1' || code === 'Digit2')) ||
           (event.shiftKey && event.altKey && code === 'KeyC') ||
           (mod && event.shiftKey && (key === 'e' || key === 't')) ||
-          (!mod && !event.altKey && (key === 'v' || key === 'h' || key === ' '));
+          key === 'escape' ||
+          (!mod && !event.altKey && ['v', 'h', 'c', ' '].includes(key));
         if (!allowed) return;
       }
 
@@ -101,6 +104,13 @@ export function useKeyboard(
       }
 
       if (key === 'escape') {
+        // Close an open comment first, then leave comment mode / clear selection
+        const comments = useCommentsStore.getState();
+        if (comments.draft || comments.activeThreadId) {
+          comments.cancelDraft();
+          comments.openThread(null);
+          return;
+        }
         useSelectionStore.getState().clearSelection();
         useToolStore.getState().setTool('select');
         return;

@@ -14,6 +14,8 @@ import DiagramTreeSidebar from './components/navigation/DiagramTreeSidebar';
 import PortalProperties from './components/elements/PortalProperties';
 import ImportHandler from './components/export/ImportHandler';
 import VersionHistoryPanel from './components/version/VersionHistoryPanel';
+import CommentsPanel from './components/comments/CommentsPanel';
+import NotificationBell from './components/comments/NotificationBell';
 import GitHubConnectDialog from './components/github/GitHubConnectDialog';
 import PresenceAvatars from './components/collaboration/PresenceAvatars';
 import ShareDialog from './components/collaboration/ShareDialog';
@@ -35,6 +37,7 @@ import LoginPage from './routes/login';
 import Dashboard from './routes/dashboard';
 import { apiGetDiagram, apiGetProject, apiJoinViaShareLink, apiListDiagrams } from './services/api';
 import { navigate, projectPath, reflectPath, useRoute } from './routing';
+import { useCommentsStore } from './stores/commentsStore';
 import { usePermissionStore, type ProjectRole } from './stores/permissionStore';
 import { toast } from './stores/toastStore';
 import {
@@ -183,6 +186,7 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
           >
             History
           </button>
+          <CommentsButton />
           {canEditProject && (
             <>
               <button
@@ -218,6 +222,7 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
               Save
             </button>
           )}
+          <NotificationBell />
           <span className="text-xs text-gray-500">{user?.name}</span>
           <button onClick={logout} className="text-xs text-gray-400 hover:text-gray-600">
             Sign out
@@ -254,6 +259,7 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
         {canEditProject && <StylePanel />}
         {canEditProject && <LayerPanel />}
         <VersionHistoryPanel />
+        <CommentsPanel />
         {showAgentChat && canEditProject && (
           <Suspense fallback={null}>
             <AgentPanel />
@@ -285,6 +291,30 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
 }
 
 /** Load a project into the editor stores; optionally open a nested diagram. */
+/** Header toggle for the comments panel, with the number of open threads. */
+function CommentsButton() {
+  const threads = useCommentsStore((s) => s.threads);
+  const panelOpen = useCommentsStore((s) => s.panelOpen);
+  const open = useMemo(
+    () => Array.from(threads.values()).filter((t) => !t.resolvedAt).length,
+    [threads],
+  );
+  return (
+    <button
+      onClick={() => useCommentsStore.getState().setPanelOpen(!panelOpen)}
+      className={`text-xs px-2 py-1 border rounded ${
+        panelOpen
+          ? 'border-blue-300 bg-blue-50 text-blue-700'
+          : 'border-gray-300 text-gray-500 hover:text-gray-700'
+      }`}
+      title="Comments (C to add one)"
+      aria-pressed={panelOpen}
+    >
+      Comments{open > 0 ? ` · ${open}` : ''}
+    </button>
+  );
+}
+
 async function loadProject(projectId: string, diagramId: string | null): Promise<void> {
   const { project } = await apiGetProject(projectId);
   if (!project.rootDiagramId) throw new Error('Project has no root diagram');
@@ -318,6 +348,12 @@ async function loadProject(projectId: string, diagramId: string | null): Promise
   if (diagramId && diagramId !== rootId && newDiagrams.has(diagramId)) {
     useDiagramStore.getState().navigateToDiagram(diagramId);
   }
+
+  // Comments for every level; ?thread=… (from a notification or a copied
+  // link) opens that thread once the canvas is up
+  const threadId = new URLSearchParams(window.location.search).get('thread');
+  useCommentsStore.setState({ pendingThreadId: threadId });
+  void useCommentsStore.getState().load(projectId);
 }
 
 export default function App() {

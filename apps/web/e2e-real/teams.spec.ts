@@ -1,74 +1,14 @@
-import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import {
-  API_URL,
-  registerUser,
-  apiCreateProject,
   apiGetDiagram,
-  openProject,
   dragOnCanvas,
+  dragPage,
   getActiveElements,
   interactiveCanvas,
   screenCenterOf,
-  type TestUser,
+  twoPeople,
+  types,
 } from './helpers';
-
-async function shareLink(
-  ctx: BrowserContext,
-  owner: TestUser,
-  projectId: string,
-  role: 'viewer' | 'editor',
-) {
-  const res = await ctx.request.post(`${API_URL}/api/projects/${projectId}/share`, {
-    headers: { Authorization: `Bearer ${owner.accessToken}` },
-    data: { role },
-  });
-  expect(res.status(), await res.text()).toBe(201);
-  return ((await res.json()) as { share: { shareToken: string } }).share.shareToken;
-}
-
-async function isConnected(page: Page) {
-  await expect
-    .poll(
-      () =>
-        page.evaluate(() =>
-          (
-            window as unknown as { __MAVISDRAW__?: { getConnectionStatus: () => string } }
-          ).__MAVISDRAW__?.getConnectionStatus(),
-        ),
-      { timeout: 15_000 },
-    )
-    .toBe('connected');
-}
-
-/** Drag between two page (not canvas-relative) points, e.g. from screenCenterOf. */
-async function dragPage(page: Page, from: { x: number; y: number }, to: { x: number; y: number }) {
-  await page.mouse.move(from.x, from.y);
-  await page.mouse.down();
-  await page.mouse.move(to.x, to.y, { steps: 8 });
-  await page.mouse.up();
-}
-
-const types = async (page: Page) => (await getActiveElements(page)).map((e) => e.type).sort();
-
-/** Owner + a second user who joined through a share link, both in the editor. */
-async function twoPeople(browser: Browser, role: 'viewer' | 'editor') {
-  const ctxA = await browser.newContext();
-  const ctxB = await browser.newContext();
-  const a = await ctxA.newPage();
-  const b = await ctxB.newPage();
-  const owner = await registerUser(ctxA, 'Owner');
-  const guest = await registerUser(ctxB, role === 'viewer' ? 'Viewer' : 'Editor');
-  const project = await apiCreateProject(ctxA.request, owner, `Team ${role}`);
-  const token = await shareLink(ctxA, owner, project.id, role);
-
-  await openProject(a, `Team ${role}`);
-  // The guest follows the share link like a real person would
-  await b.goto(`/share/${token}`);
-  await expect(b.locator('canvas').first()).toBeVisible();
-  await isConnected(a);
-  await isConnected(b);
-  return { ctxA, ctxB, a, b, owner, guest, project };
-}
 
 test.describe('Teams', () => {
   test('a share link opens the project, and the URL deep-links the diagram', async ({
