@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { convertToModelMessages, type UIMessage } from 'ai';
 import { requireAuth } from '../middleware/auth.js';
 import { isAgentConfigured, streamAgentChat } from '../services/agentService.js';
+import { config } from '../config.js';
 
 /** Bounds on what a client can send per turn (cost and abuse control). */
 const MAX_MESSAGES = 60;
@@ -41,7 +42,7 @@ function allowTurn(userId: string): boolean {
 }
 
 function allowedOrigin(origin: string | undefined): string | null {
-  const configured = process.env.CORS_ORIGIN ?? 'http://localhost:3000';
+  const configured = config.corsOrigin;
   return origin && origin === configured ? origin : null;
 }
 

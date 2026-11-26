@@ -1,9 +1,12 @@
 import { buildApp } from './app.js';
+import { assertValidConfig } from './config.js';
 
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
 const HOST = process.env.HOST ?? '0.0.0.0';
 
 async function start() {
+  // Refuse to run with missing or default secrets in production
+  assertValidConfig();
   const app = await buildApp();
 
   try {

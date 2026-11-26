@@ -16,10 +16,11 @@ import {
   deleteConnection,
   GitHubError,
   getRepoSnapshot,
+  verifyOAuthState,
 } from '../services/githubService.js';
+import { config } from '../config.js';
 
-const REDIRECT_URI =
-  process.env.GITHUB_REDIRECT_URI ?? 'http://localhost:3000/oauth/github/callback.html';
+const REDIRECT_URI = config.github.redirectUri;
 
 const repoParamsSchema = z.object({
   owner: z.string().min(1),
@@ -43,7 +44,7 @@ export async function githubRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/github/authorize', { preHandler: [requireAuth] }, async (request, reply) => {
     const { enterpriseUrl } = request.query as { enterpriseUrl?: string };
     try {
-      const url = getAuthorizeUrl(REDIRECT_URI, enterpriseUrl);
+      const url = getAuthorizeUrl(REDIRECT_URI, request.user!.userId, enterpriseUrl);
       return reply.send({ url });
     } catch (err) {
       if (err instanceof GitHubError) {
@@ -59,7 +60,8 @@ export async function githubRoutes(app: FastifyInstance): Promise<void> {
   app.post('/api/github/callback', { preHandler: [requireAuth] }, async (request, reply) => {
     const schema = z.object({
       code: z.string().min(1),
-      enterpriseUrl: z.string().optional(),
+      // Signed by /authorize: proves this user started the flow, and for which host
+      state: z.string().min(1),
     });
     const parsed = schema.safeParse(request.body);
     if (!parsed.success) {
@@ -67,9 +69,11 @@ export async function githubRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const userId = request.user!.userId;
-    const { code, enterpriseUrl } = parsed.data;
+    const { code, state } = parsed.data;
 
     try {
+      // The host comes from the signed state, never from the request body
+      const { enterpriseUrl } = verifyOAuthState(state, userId);
       const { accessToken, scope } = await exchangeCodeForToken(
         code,
         REDIRECT_URI,

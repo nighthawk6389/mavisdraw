@@ -1,4 +1,6 @@
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { nanoid } from 'nanoid';
+import { config, originOf, type Config } from '../config.js';
 import { eq, and } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { githubConnections } from '../db/schema.js';
@@ -6,23 +8,100 @@ import { encrypt, decrypt } from '../utils/encryption.js';
 
 // ── Configuration ───────────────────────────────────────────
 
-const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID ?? '';
-const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET ?? '';
-const DEFAULT_BASE_URL = 'https://api.github.com';
-const DEFAULT_AUTH_URL = 'https://github.com';
+const DEFAULT_API_URL = 'https://api.github.com';
 
-function getBaseUrl(enterpriseUrl?: string | null): string {
-  if (enterpriseUrl) {
-    return `${enterpriseUrl.replace(/\/$/, '')}/api/v3`;
-  }
-  return DEFAULT_BASE_URL;
+export interface ResolvedHost {
+  /** Web origin for OAuth (https://github.com or the enterprise origin). */
+  authUrl: string;
+  /** REST API base. */
+  apiUrl: string;
+  clientId: string;
+  clientSecret: string;
+  /** null for github.com. */
+  enterpriseUrl: string | null;
 }
 
-function getAuthUrl(enterpriseUrl?: string | null): string {
-  if (enterpriseUrl) {
-    return enterpriseUrl.replace(/\/$/, '');
+/**
+ * Which GitHub to talk to. Only github.com and the one GitHub Enterprise
+ * server configured on this instance are allowed: the URL comes from the
+ * client, and the OAuth client secret (and users' tokens) are sent to it, so
+ * an arbitrary URL would hand them to whoever runs that host (and let the
+ * server be pointed at internal addresses).
+ */
+export function resolveGitHubHost(
+  enterpriseUrl?: string | null,
+  github: Config['github'] = config.github,
+): ResolvedHost {
+  if (!enterpriseUrl) {
+    return {
+      authUrl: github.cloud.url,
+      apiUrl: DEFAULT_API_URL,
+      clientId: github.cloud.clientId,
+      clientSecret: github.cloud.clientSecret,
+      enterpriseUrl: null,
+    };
   }
-  return DEFAULT_AUTH_URL;
+  const origin = originOf(enterpriseUrl);
+  if (!origin || !github.enterprise || origin !== github.enterprise.url) {
+    throw new GitHubError('That GitHub Enterprise server is not enabled on this MavisDraw instance', 400);
+  }
+  return {
+    authUrl: origin,
+    apiUrl: `${origin}/api/v3`,
+    clientId: github.enterprise.clientId,
+    clientSecret: github.enterprise.clientSecret,
+    enterpriseUrl: origin,
+  };
+}
+
+// ── OAuth state ─────────────────────────────────────────────
+
+const STATE_TTL_MS = 10 * 60 * 1000;
+
+function stateKey(secret: string): Buffer {
+  return createHash('sha256').update(`github-oauth-state:${secret}`).digest();
+}
+
+/**
+ * The OAuth `state`: who started the flow, against which host, until when,
+ * signed. The callback must present it, so a code can't be injected into
+ * someone else's session (login CSRF) and the host can't be swapped.
+ */
+export function createOAuthState(
+  userId: string,
+  enterpriseUrl: string | null,
+  now = Date.now(),
+  secret = config.jwtSecret,
+): string {
+  const payload = Buffer.from(
+    JSON.stringify({ u: userId, e: enterpriseUrl, x: now + STATE_TTL_MS, n: nanoid(8) }),
+  ).toString('base64url');
+  const sig = createHmac('sha256', stateKey(secret)).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+/** Check a returned state; gives back the host the flow was started for. */
+export function verifyOAuthState(
+  state: string,
+  userId: string,
+  now = Date.now(),
+  secret = config.jwtSecret,
+): { enterpriseUrl: string | null } {
+  const [payload, sig] = state.split('.');
+  if (!payload || !sig) throw new GitHubError('Invalid OAuth state', 400);
+  const expected = createHmac('sha256', stateKey(secret)).update(payload).digest();
+  const given = Buffer.from(sig, 'base64url');
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
+    throw new GitHubError('Invalid OAuth state', 400);
+  }
+  const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as {
+    u: string;
+    e: string | null;
+    x: number;
+  };
+  if (data.u !== userId) throw new GitHubError('This GitHub authorization was started by another account', 400);
+  if (data.x < now) throw new GitHubError('The GitHub authorization took too long; please try again', 400);
+  return { enterpriseUrl: data.e };
 }
 
 // ── Types ───────────────────────────────────────────────────
@@ -82,35 +161,39 @@ export class GitHubError extends Error {
 
 // ── OAuth Flow ──────────────────────────────────────────────
 
-export function getAuthorizeUrl(redirectUri: string, enterpriseUrl?: string): string {
-  if (!GITHUB_CLIENT_ID) {
+export function getAuthorizeUrl(
+  redirectUri: string,
+  userId: string,
+  enterpriseUrl?: string | null,
+): string {
+  const host = resolveGitHubHost(enterpriseUrl);
+  if (!host.clientId) {
     throw new GitHubError('GitHub OAuth is not configured', 500);
   }
-  const authUrl = getAuthUrl(enterpriseUrl);
   const params = new URLSearchParams({
-    client_id: GITHUB_CLIENT_ID,
+    client_id: host.clientId,
     redirect_uri: redirectUri,
     scope: 'repo read:user',
-    state: nanoid(),
+    state: createOAuthState(userId, host.enterpriseUrl),
   });
-  return `${authUrl}/login/oauth/authorize?${params}`;
+  return `${host.authUrl}/login/oauth/authorize?${params}`;
 }
 
 export async function exchangeCodeForToken(
   code: string,
   redirectUri: string,
-  enterpriseUrl?: string,
+  enterpriseUrl?: string | null,
 ): Promise<{ accessToken: string; scope: string }> {
-  const authUrl = getAuthUrl(enterpriseUrl);
-  const response = await fetch(`${authUrl}/login/oauth/access_token`, {
+  const host = resolveGitHubHost(enterpriseUrl);
+  const response = await fetch(`${host.authUrl}/login/oauth/access_token`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
     },
     body: JSON.stringify({
-      client_id: GITHUB_CLIENT_ID,
-      client_secret: GITHUB_CLIENT_SECRET,
+      client_id: host.clientId,
+      client_secret: host.clientSecret,
       code,
       redirect_uri: redirectUri,
     }),
@@ -141,7 +224,7 @@ async function githubFetch<T>(
   accessToken: string,
   enterpriseUrl?: string | null,
 ): Promise<T> {
-  const baseUrl = getBaseUrl(enterpriseUrl);
+  const baseUrl = resolveGitHubHost(enterpriseUrl).apiUrl;
   const response = await fetch(`${baseUrl}${path}`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -314,7 +397,7 @@ export async function saveConnection(
   accessToken: string,
   scope: string,
   githubUser: GitHubUser,
-  enterpriseUrl?: string,
+  enterpriseUrl?: string | null,
 ): Promise<GitHubConnection> {
   const encryptedToken = encrypt(accessToken);
   const id = nanoid();

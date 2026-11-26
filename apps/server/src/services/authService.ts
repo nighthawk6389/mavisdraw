@@ -4,8 +4,9 @@ import { nanoid } from 'nanoid';
 import { eq, or } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { users, sessions } from '../db/schema.js';
+import { config } from '../config.js';
 
-const JWT_SECRET = process.env.JWT_SECRET ?? 'mavisdraw-dev-secret-change-in-production';
+const JWT_SECRET = config.jwtSecret;
 const JWT_ACCESS_EXPIRY = '15m';
 const JWT_REFRESH_EXPIRY_DAYS = 30;
 const BCRYPT_ROUNDS = 10;

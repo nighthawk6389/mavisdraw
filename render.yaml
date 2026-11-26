@@ -13,7 +13,7 @@ services:
     name: mavisdraw-api
     runtime: node
     plan: standard
-    buildCommand: pnpm install && pnpm turbo run build --filter=@mavisdraw/server && cd apps/server && pnpm run db:push && pnpm run db:seed
+    buildCommand: pnpm install && pnpm turbo run build --filter=@mavisdraw/server && cd apps/server && pnpm run db:push
     startCommand: node apps/server/dist/index.js
     envVars:
       - key: NODE_VERSION
@@ -33,6 +33,14 @@ services:
         generateValue: true
       - key: NODE_ENV
         value: production
+      # Requests reach the app through Render's proxy: use X-Forwarded-For
+      # for the client address (rate limits are per user, not per proxy)
+      - key: TRUST_PROXY
+        value: "true"
+      # Set these in the dashboard to enable GitHub (see docs/github-oauth-setup.md):
+      # GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_REDIRECT_URI,
+      # GITHUB_TOKEN_ENCRYPTION_KEY (64 hex chars: openssl rand -hex 32)
+      # and optionally GITHUB_ENTERPRISE_URL + GITHUB_ENTERPRISE_CLIENT_ID/SECRET
     healthCheckPath: /api/health
 
   # ── Frontend static site ────────────────────────────────

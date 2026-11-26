@@ -26,7 +26,7 @@ interface GitHubState {
   // Connection management
   initialize: () => Promise<void>;
   connect: (enterpriseUrl?: string) => Promise<void>;
-  handleOAuthCallback: (code: string, enterpriseUrl?: string) => Promise<void>;
+  handleOAuthCallback: (code: string, state: string) => Promise<void>;
   disconnect: (connectionId: string) => Promise<void>;
 
   // Repo browsing
@@ -79,9 +79,9 @@ export const useGitHubStore = create<GitHubState>((set) => ({
         if (event.origin !== window.location.origin) return;
         if (event.data?.type !== 'github-oauth-callback') return;
         window.removeEventListener('message', onMessage);
-        const { code } = event.data as { code: string };
-        if (code) {
-          useGitHubStore.getState().handleOAuthCallback(code, enterpriseUrl);
+        const { code, state } = event.data as { code: string; state: string };
+        if (code && state) {
+          useGitHubStore.getState().handleOAuthCallback(code, state);
         }
       };
       window.addEventListener('message', onMessage);
@@ -105,10 +105,10 @@ export const useGitHubStore = create<GitHubState>((set) => ({
     }
   },
 
-  handleOAuthCallback: async (code: string, enterpriseUrl?: string) => {
+  handleOAuthCallback: async (code: string, state: string) => {
     set({ isLoading: true, error: null });
     try {
-      const { connection } = await apiGitHubCallback(code, enterpriseUrl);
+      const { connection } = await apiGitHubCallback(code, state);
       set((state) => ({
         connections: [...state.connections, connection],
         isLoading: false,

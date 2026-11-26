@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import websocket from '@fastify/websocket';
+import { config } from './config.js';
 import { authRoutes } from './routes/auth.js';
 import { projectRoutes } from './routes/projects.js';
 import { diagramRoutes } from './routes/diagrams.js';
@@ -33,18 +34,22 @@ declare module 'fastify' {
 export async function buildApp() {
   const app = Fastify({
     logger: {
-      level: process.env.LOG_LEVEL ?? 'info',
+      level: config.logLevel,
     },
+    // Behind a load balancer (Render, Fly, nginx) the client address is in
+    // X-Forwarded-For; without this every user shares the proxy's IP for
+    // rate limiting
+    trustProxy: config.trustProxy,
   });
 
   // Plugins
   await app.register(cors, {
-    origin: process.env.CORS_ORIGIN ?? 'http://localhost:3000',
+    origin: config.corsOrigin,
     credentials: true,
   });
 
   await app.register(cookie, {
-    secret: process.env.COOKIE_SECRET ?? 'mavisdraw-cookie-secret',
+    secret: config.cookieSecret,
   });
 
   // Diagram updates carry inline images, but nothing legitimate comes close
