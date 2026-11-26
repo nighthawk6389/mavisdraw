@@ -38,6 +38,7 @@ import Dashboard from './routes/dashboard';
 import { apiGetDiagram, apiGetProject, apiJoinViaShareLink, apiListDiagrams } from './services/api';
 import { navigate, projectPath, reflectPath, useRoute } from './routing';
 import { useCommentsStore } from './stores/commentsStore';
+import { applyJournal, readJournal, startJournal, stopJournal, useJournalStore } from './services/offlineJournal';
 import { usePermissionStore, type ProjectRole } from './stores/permissionStore';
 import { toast } from './stores/toastStore';
 import {
@@ -51,7 +52,38 @@ import { recordSaved, resetSaveTracking } from './services/saveTracker';
 import type { MavisElement, Diagram } from '@mavisdraw/types';
 
 
+function useOnline(): boolean {
+  const [online, setOnline] = useState(() => navigator.onLine);
+  useEffect(() => {
+    const up = () => setOnline(true);
+    const down = () => setOnline(false);
+    window.addEventListener('online', up);
+    window.addEventListener('offline', down);
+    return () => {
+      window.removeEventListener('online', up);
+      window.removeEventListener('offline', down);
+    };
+  }, []);
+  return online;
+}
+
 function SaveIndicator({ status }: { status: SaveStatus }) {
+  const pending = useJournalStore((s) => s.pending);
+  const online = useOnline();
+  // Edits that exist only on this device: say so plainly (they're safe, and
+  // will be saved when the connection is back)
+  if (pending > 0 && (!online || status === 'error')) {
+    return (
+      <span
+        className="px-2 text-xs text-amber-700"
+        data-testid="offline-indicator"
+        title="Your changes are stored in this browser and will be saved when you're back online, even if you close the tab."
+      >
+        {online ? 'Not saved yet' : 'Offline'} · {pending} {pending === 1 ? 'change' : 'changes'} kept on
+        this device
+      </span>
+    );
+  }
   if (status === 'idle') return null;
 
   const label =
@@ -337,6 +369,7 @@ function CommentsButton() {
 }
 
 async function loadProject(projectId: string, diagramId: string | null): Promise<void> {
+  stopJournal();
   const { project } = await apiGetProject(projectId);
   if (!project.rootDiagramId) throw new Error('Project has no root diagram');
   usePermissionStore.getState().setRole((project.role as ProjectRole | undefined) ?? 'viewer');
@@ -368,6 +401,30 @@ async function loadProject(projectId: string, diagramId: string | null): Promise
   // Deep link into a nested diagram
   if (diagramId && diagramId !== rootId && newDiagrams.has(diagramId)) {
     useDiagramStore.getState().navigateToDiagram(diagramId);
+  }
+
+  // Edits a previous session couldn't save (tab closed offline, crash...):
+  // bring them back if nobody changed those elements since
+  const saved = (await readJournal(projectId)).filter((e) => newDiagrams.has(e.diagramId));
+  if (saved.length > 0) {
+    const levels = Array.from(new Set(saved.map((e) => e.diagramId))).filter((d) => d !== rootId);
+    await Promise.all(levels.map((d) => loadDiagramElements(d).catch(() => undefined)));
+    const { pending, result } = applyJournal(saved);
+    startJournal(projectId, pending);
+    if (result.restored > 0) {
+      toast(
+        `Recovered ${result.restored} unsaved ${result.restored === 1 ? 'change' : 'changes'} from your last session.`,
+        'success',
+      );
+    }
+    if (result.conflicts > 0) {
+      toast(
+        `${result.conflicts} of your unsaved ${result.conflicts === 1 ? 'change was' : 'changes were'} skipped: a teammate changed ${result.conflicts === 1 ? 'that shape' : 'those shapes'} since.`,
+        'info',
+      );
+    }
+  } else {
+    startJournal(projectId);
   }
 
   // Comments for every level; ?thread=… (from a notification or a copied

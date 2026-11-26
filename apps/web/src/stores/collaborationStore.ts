@@ -6,6 +6,7 @@ import { docVersion, readElement, writeElement } from '../collab/ydocElements';
 import { useCommentsStore } from './commentsStore';
 import { useDiagramStore } from './diagramStore';
 import { refreshDiagramList } from '../services/diagramSync';
+import { acknowledge } from '../services/offlineJournal';
 import { useNotificationStore } from './notificationStore';
 
 /** True while remote changes are being written into the store (no echo back). */
@@ -338,6 +339,12 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
 
         set({ connectedUsers: users, remoteCursors: cursors });
       },
+    });
+
+    // Everything we sent has been acknowledged: those edits are safe on the
+    // server, so they no longer need the on-device journal
+    provider.on('unsyncedChanges', (count: number) => {
+      if (count === 0 && initialSyncDone && get().provider === provider) acknowledge(diagramId);
     });
 
     // Set local awareness fields

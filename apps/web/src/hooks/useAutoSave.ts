@@ -8,6 +8,7 @@ import {
   savedVersions,
 } from '../services/saveTracker';
 import { toast } from '../stores/toastStore';
+import { acknowledge } from '../services/offlineJournal';
 import { isLiveSynced } from '../stores/collaborationStore';
 import { useElementsStore, applyRemoteChanges } from '../stores/elementsStore';
 import { useDiagramStore } from '../stores/diagramStore';
@@ -70,6 +71,7 @@ async function saveDiagram(diagram: Diagram, elements: MavisElement[]): Promise<
   if (conflicts.length > 0) adoptServerVersions(conflicts, serverElements);
   // What the server now has is the base for the next save
   recordSaved(diagram.id, serverElements, diagram.updatedAt);
+  acknowledge(diagram.id, serverElements);
 }
 
 /**

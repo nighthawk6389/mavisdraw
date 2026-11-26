@@ -48,7 +48,7 @@ Still open:
 - ~~Visual diff between versions~~ — done: Compare any version with now (live), added/changed/removed outlined on the canvas, a plain-language change list ("Renamed “Auth” → “Auth Service”"). Still missing: comparing two past versions with each other, and a project-wide diff across nested levels. Auto versions are pruned to the latest 50 per diagram.
 - **Workspaces/orgs, invite by email, commenter role, folders, transfer ownership** — sharing is still per project (owner/admin/editor/viewer + share links).
 - **Presentation mode** (guided path through zoom levels) — not started; follow mode exists.
-- **Offline editing** — edits made while the room is disconnected are kept locally and REST-saved, then reconciled by version on reconnect; there's no `y-indexeddb` queue, so closing the tab while offline loses unsaved work.
+- ~~Offline editing~~ — done: unacknowledged edits are journaled in IndexedDB with their base versions and restored on the next open, unless a teammate changed those elements since (then skipped, and said so); "Offline · N changes kept on this device" indicator. Still missing: opening a project you've never loaded while offline (no local copy of the diagram itself), and service-worker caching of the app shell.
 - **Only the diagram on screen is live.** Nested diagrams you're not looking at load over REST (fresh, since REST reads now come from the live room), but you don't see teammates' edits there until you navigate in.
 
 ### Roadmap Phase 2 items not done yet

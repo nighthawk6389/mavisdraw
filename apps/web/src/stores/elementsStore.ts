@@ -310,6 +310,11 @@ export function withoutHistory<T>(fn: () => T): T {
 /** Alias used by the collaboration layer for readability. */
 export const applyRemoteChanges = withoutHistory;
 
+/** True while applying changes that aren't the local user's edits (remote, loads). */
+export function isApplyingUnrecorded(): boolean {
+  return unrecordedDepth > 0;
+}
+
 /** Shared logic for updating a single element (keeps labels and arrows attached). */
 function applyElementUpdate(
   set: (fn: (prev: ElementsState) => Partial<ElementsState>) => void,

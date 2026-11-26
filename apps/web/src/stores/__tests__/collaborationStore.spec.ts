@@ -11,6 +11,7 @@ vi.mock('@hocuspocus/provider', () => {
         destroy: vi.fn(),
         setAwarenessField: vi.fn(),
         connect: vi.fn(),
+        on: vi.fn(),
         isAuthenticated: true,
         _opts: opts,
         // Simulate connect

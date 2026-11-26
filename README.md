@@ -192,6 +192,9 @@ auto-laid out — a flat README diagram becomes a navigable, multi-level map.
 - **Share links** (`Share` → copy link) add whoever opens them to the project with the chosen role.
 - **Live editing** merges per property: one person can move a shape while another recolours it.
   Undo only ever undoes your own changes, and never reverts a property a teammate changed after you.
+- **Offline**: edits made without a connection are kept in the browser — even if you close the tab —
+  and saved when you're back. If a teammate changed the same shape meanwhile, theirs is kept and
+  you're told.
 - **Viewers** can pan, zoom, select, copy and drill through every level, but can't change anything
   (enforced on the server too).
 - **Comments** (`C`, then click a shape or anywhere): the pin sticks to the shape, `@` mentions a
