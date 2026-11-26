@@ -11,12 +11,12 @@
 
 ### Security (P0)
 
-- **GitHub client secret exfiltration / SSRF via client-supplied `enterpriseUrl`** (`routes/github.ts:57-67` → `githubService.ts:99-116`).
+- ~~GitHub client secret exfiltration / SSRF via client-supplied `enterpriseUrl`~~ — fixed: hosts are allowlisted (github.com plus one operator-configured Enterprise server, each with its own OAuth app; `resolveGitHubHost`).
 - ~~Viewers can write over WebSocket~~ — fixed: viewers connect with `connection.readOnly`, and the editor is read-only for them.
-- **Production seeds `demo@mavisdraw.dev` / `password123`** (`render.yaml:16`, `db/seed.ts`).
+- ~~Production seeds `demo@mavisdraw.dev` / `password123`~~ — fixed: the production build no longer seeds, and `db/seed.ts` refuses to run when `NODE_ENV=production`.
 - **Share links never expire** and can't be revoked individually (tokens are now only shown to owners/admins — `routes/sharing.ts`).
 - **AI agent:** the diagram now goes in a delimited data message, client system messages are dropped, and turns are rate-limited/size-capped — but `browse_code`/`read_file` can still read any repo the user's GitHub token can see; restrict them to repos linked in the diagram.
-- OAuth `state` never verified (`githubService.ts:94`); no env validation and a hard-coded JWT fallback secret (`authService.ts:8`); `trustProxy` unset so IP rate limiting is shared by all users behind the proxy (`app.ts:14`).
+- ~~OAuth `state` never verified; no env validation and a hard-coded JWT fallback secret; `trustProxy` unset~~ — fixed: `state` is HMAC-signed and bound to user, host and a 10-minute TTL; production refuses to start on missing/weak secrets (`config.ts` `assertValidConfig`); `TRUST_PROXY` is explicit.
 
 ### Independent collaboration review (2026-11) — status
 
