@@ -105,6 +105,9 @@ importers:
       '@ai-sdk/react':
         specifier: ^3.0.118
         version: 3.0.118(react@19.2.4)(zod@4.3.6)
+      '@fontsource/architects-daughter':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@hocuspocus/provider':
         specifier: ^2.15.0
         version: 2.15.3(y-protocols@1.0.7(yjs@13.6.29))(yjs@13.6.29)
@@ -1096,6 +1099,9 @@ packages:
 
   '@fastify/websocket@11.2.0':
     resolution: {integrity: sha512-3HrDPbAG1CzUCqnslgJxppvzaAZffieOVbLp1DAy1huCSynUWPifSvfdEDUR8HlJLp3sp1A36uOM2tJogADS8w==}
+
+  '@fontsource/architects-daughter@5.3.0':
+    resolution: {integrity: sha512-uezOgAlbhmf9nDW69VYq31lXNA+0uRFWXBGCSFWLXVcrNESFHpNjvu11kJss1PMsfH/YKz1hnnYB+JSNI/t+ew==}
 
   '@hocuspocus/common@2.15.3':
     resolution: {integrity: sha512-Rzh1HF0a2o/tf90A3w2XNdXd9Ym3aQzMDfD3lAUONCX9B9QOdqdyiORrj6M25QEaJrEIbXFy8LtAFcL0wRdWzA==}
@@ -3619,6 +3625,8 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
+
+  '@fontsource/architects-daughter@5.3.0': {}
 
   '@hocuspocus/common@2.15.3':
     dependencies:

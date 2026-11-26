@@ -20,6 +20,7 @@ import {
   type ResizeHandle,
 } from './HitTesting';
 import { simplifyTuplePoints, applyElbowSegmentDrag } from '@mavisdraw/math';
+import type { WheelIntent } from './wheel';
 
 export type InteractionMode =
   | 'idle'
@@ -106,6 +107,17 @@ const SHAPE_TOOLS = new Set<Tool>([
 
 const SMART_GUIDE_THRESHOLD = 5; // pixels in screen space
 
+const RESIZE_CURSORS: Record<ResizeHandle, string> = {
+  'top-left': 'nwse-resize',
+  'bottom-right': 'nwse-resize',
+  'top-right': 'nesw-resize',
+  'bottom-left': 'nesw-resize',
+  'top-center': 'ns-resize',
+  'bottom-center': 'ns-resize',
+  'middle-left': 'ew-resize',
+  'middle-right': 'ew-resize',
+};
+
 export class InteractionManager {
   private mode: InteractionMode = 'idle';
   private callbacks: InteractionCallbacks;
@@ -120,6 +132,8 @@ export class InteractionManager {
   private creatingId: string = '';
   private dragStartPositions: Map<string, Point> = new Map();
   private dragStartSizes: Map<string, { width: number; height: number }> = new Map();
+  private dragStartPoints: Map<string, [number, number][]> = new Map();
+  private shiftKey = false;
   private resizeHandle: ResizeHandle | null = null;
   private resizeStartBounds: Bounds | null = null;
   private isSpacePressed = false;
@@ -160,10 +174,22 @@ export class InteractionManager {
   // Double-click tracking
   private lastClickTime = 0;
   private lastClickId: string | null = null;
+  private lastClickPoint: Point = { x: 0, y: 0 };
+  /** Max distance between the two clicks of a double-click, in screen pixels. */
+  private static readonly DOUBLE_CLICK_SLOP_PX = 6;
   private static readonly DOUBLE_CLICK_THRESHOLD = 300;
 
   /** Track last waypoint click for double-click-to-remove (Excalidraw/draw.io style). */
   private lastWaypointClick: { arrowId: string; pointIndex: number; time: number } | null = null;
+
+  // Right-click: a drag pans, a click (no movement) opens the context menu
+  private rightButtonDown = false;
+  private rightButtonTravel = 0;
+  private contextMenuRequested = false;
+  private static readonly CLICK_SLOP_PX = 4;
+
+  /** CSS cursor suggested for the current hover position. */
+  private hoverCursor = 'default';
 
   constructor(callbacks: InteractionCallbacks, diagramId: string) {
     this.callbacks = callbacks;
@@ -235,6 +261,7 @@ export class InteractionManager {
   // ─── Mouse Events ─────────────────────────────────────────
 
   onPointerDown(screenX: number, screenY: number, event: { button: number; shiftKey: boolean }): void {
+    this.shiftKey = event.shiftKey;
     const viewport = this.callbacks.getViewport();
     const canvasPoint = viewport.screenToCanvas(screenX, screenY);
     this.startCanvasPoint = canvasPoint;
@@ -251,9 +278,14 @@ export class InteractionManager {
       return;
     }
 
-    // Right click = pan (Miro-style)
+    // Any non-primary button breaks a double-click sequence
+    if (event.button !== 0) this.resetClickTracking();
+
+    // Right click = pan (Miro-style) or, without movement, context menu
     if (event.button === 2) {
       this.mode = 'panning';
+      this.rightButtonDown = true;
+      this.rightButtonTravel = 0;
       return;
     }
 
@@ -267,6 +299,7 @@ export class InteractionManager {
         for (const el of elements) {
           if (!selectedIds.has(el.id) || el.isDeleted) continue;
           if (el.type !== 'arrow' && el.type !== 'line') continue;
+          if (el.isLocked) continue;
           const linear = el as LinearElement;
 
           // Phase 4: Endpoint handle hit
@@ -414,10 +447,11 @@ export class InteractionManager {
         const hasNonLinear = elements.some(
           (e) => selectedIds.has(e.id) && e.type !== 'arrow' && e.type !== 'line' && !e.isDeleted,
         );
-        if (hasNonLinear) {
+        const hasLocked = elements.some((e) => selectedIds.has(e.id) && e.isLocked);
+        if (hasNonLinear && !hasLocked) {
           const selBounds = this.getSelectionBounds(elements, selectedIds);
           if (selBounds) {
-            const handle = hitTestResizeHandle(canvasPoint, selBounds);
+            const handle = hitTestResizeHandle(canvasPoint, selBounds, zoom);
             if (handle) {
               this.mode = 'resizing';
               this.resizeHandle = handle;
@@ -438,9 +472,12 @@ export class InteractionManager {
         const now = Date.now();
         const isDoubleClick =
           now - this.lastClickTime < InteractionManager.DOUBLE_CLICK_THRESHOLD &&
-          this.lastClickId === hitElement.id;
+          this.lastClickId === hitElement.id &&
+          Math.hypot(screenX - this.lastClickPoint.x, screenY - this.lastClickPoint.y) <=
+            InteractionManager.DOUBLE_CLICK_SLOP_PX;
         this.lastClickTime = now;
         this.lastClickId = hitElement.id;
+        this.lastClickPoint = { x: screenX, y: screenY };
 
         if (isDoubleClick) {
           this.handleDoubleClick(hitElement, canvasPoint);
@@ -512,6 +549,9 @@ export class InteractionManager {
       }
     } else if (tool === 'freedraw') {
       this.mode = 'drawing-freedraw';
+      // Stable seed/id so the sketchy preview doesn't shimmer while drawing
+      this.creatingSeed = Math.floor(Math.random() * 2 ** 31);
+      this.creatingId = '';
       this.freedrawPoints = [[canvasPoint.x, canvasPoint.y]];
       this.freedrawMinX = canvasPoint.x;
       this.freedrawMinY = canvasPoint.y;
@@ -526,7 +566,8 @@ export class InteractionManager {
     }
   }
 
-  onPointerMove(screenX: number, screenY: number): void {
+  onPointerMove(screenX: number, screenY: number, modifiers?: { shiftKey: boolean }): void {
+    if (modifiers) this.shiftKey = modifiers.shiftKey;
     const viewport = this.callbacks.getViewport();
     const canvasPoint = viewport.screenToCanvas(screenX, screenY);
     const deltaScreenX = screenX - this.lastScreenPoint.x;
@@ -540,6 +581,7 @@ export class InteractionManager {
         // Hover detection
         const hit = hitTestElements(canvasPoint, elements);
         this.callbacks.setHovered(hit?.id ?? null);
+        this.hoverCursor = this.computeHoverCursor(canvasPoint, elements, hit);
 
         // Phase 3: Detect nearby shapes for anchor point display
         if (tool === 'select' || tool === 'arrow') {
@@ -561,6 +603,11 @@ export class InteractionManager {
       }
 
       case 'panning': {
+        if (this.rightButtonDown) {
+          this.rightButtonTravel += Math.hypot(deltaScreenX, deltaScreenY);
+          // Don't pan for tiny jitters of a right-click
+          if (this.rightButtonTravel < InteractionManager.CLICK_SLOP_PX) break;
+        }
         viewport.pan(deltaScreenX, deltaScreenY);
         this.callbacks.invalidateStatic();
         break;
@@ -678,8 +725,12 @@ export class InteractionManager {
             p[0] - minX,
             p[1] - minY,
           ]);
+          const draft = this.callbacks.createElement('freedraw', this.diagramId, minX, minY, maxX - minX, maxY - minY);
+          if (!this.creatingId) this.creatingId = draft.id;
           this.creatingElement = {
-            ...this.callbacks.createElement('freedraw', this.diagramId, minX, minY, maxX - minX, maxY - minY),
+            ...draft,
+            id: this.creatingId,
+            seed: this.creatingSeed,
             points: relativePoints,
           } as MavisElement;
         }
@@ -807,7 +858,15 @@ export class InteractionManager {
     this.lastScreenPoint = { x: screenX, y: screenY };
   }
 
-  onPointerUp(_screenX: number, _screenY: number): void {
+  onPointerUp(screenX: number, screenY: number): void {
+    // A press that moved was a drag, not the first half of a double-click
+    if (
+      Math.hypot(screenX - this.startScreenPoint.x, screenY - this.startScreenPoint.y) >
+      InteractionManager.DOUBLE_CLICK_SLOP_PX
+    ) {
+      this.resetClickTracking();
+    }
+
     switch (this.mode) {
       case 'creating': {
         if (this.creatingElement) {
@@ -1027,22 +1086,64 @@ export class InteractionManager {
       }
 
       case 'panning':
+        if (this.rightButtonDown && this.rightButtonTravel < InteractionManager.CLICK_SLOP_PX) {
+          this.contextMenuRequested = true;
+        }
         break;
     }
 
+    this.rightButtonDown = false;
     this.mode = 'idle';
   }
 
-  onWheel(screenX: number, screenY: number, deltaX: number, deltaY: number, ctrlKey: boolean): void {
+  /** Forget the previous click so the next one can't complete a double-click. */
+  resetClickTracking(): void {
+    this.lastClickTime = 0;
+    this.lastClickId = null;
+  }
+
+  /** True once after a right-click that should open the context menu. */
+  consumeContextMenuRequest(): boolean {
+    const requested = this.contextMenuRequested;
+    this.contextMenuRequested = false;
+    return requested;
+  }
+
+  /** Abort the current gesture (e.g. a second finger turned it into a pinch). */
+  cancelGesture(): void {
+    this.mode = 'idle';
+    this.creatingElement = null;
+    this.currentSmartGuides = [];
+    this.rightButtonDown = false;
+    this.dragStartPositions.clear();
+    this.dragStartSizes.clear();
+    this.callbacks.endSelectionBox();
+    this.callbacks.invalidateStatic();
+  }
+
+  /** Topmost element under a screen point (used by the context menu). */
+  hitTestAt(screenX: number, screenY: number): MavisElement | null {
+    const canvasPoint = this.callbacks.getViewport().screenToCanvas(screenX, screenY);
+    return hitTestElementsWithGroups(canvasPoint, this.callbacks.getElements(), this.enteredGroupIds);
+  }
+
+  /** Group-aware set of ids a click on `element` would select. */
+  getSelectionFor(element: MavisElement): string[] {
+    return getGroupElementIds(element, this.callbacks.getElements(), this.enteredGroupIds);
+  }
+
+  getHoverCursor(): string {
+    return this.hoverCursor;
+  }
+
+  onWheel(screenX: number, screenY: number, intent: WheelIntent): void {
     const viewport = this.callbacks.getViewport();
-    if (ctrlKey) {
-      // Ctrl+scroll / pinch-to-zoom: use finer zoom factor for trackpad pinch
-      const factor = 1 - deltaY * 0.01;
-      viewport.zoomAt(screenX, screenY, Math.max(0.5, Math.min(2, factor)));
+    if (intent.kind === 'zoom') {
+      viewport.zoomAt(screenX, screenY, intent.factor);
+    } else if (intent.kind === 'pan') {
+      viewport.pan(intent.dx, intent.dy);
     } else {
-      // Scroll wheel = zoom (Miro-style)
-      const factor = deltaY > 0 ? 0.9 : 1.1;
-      viewport.zoomAt(screenX, screenY, factor);
+      return;
     }
     this.callbacks.invalidateStatic();
   }
@@ -1310,13 +1411,45 @@ export class InteractionManager {
 
   // ─── Helpers ───────────────────────────────────────────────
 
+  private computeHoverCursor(
+    canvasPoint: Point,
+    elements: MavisElement[],
+    hit: MavisElement | null,
+  ): string {
+    if (this.callbacks.getActiveTool() !== 'select') return 'default';
+    const selectedIds = this.callbacks.getSelectedIds();
+    if (selectedIds.size > 0) {
+      const hasLocked = elements.some((e) => selectedIds.has(e.id) && e.isLocked);
+      const hasNonLinear = elements.some(
+        (e) => selectedIds.has(e.id) && e.type !== 'arrow' && e.type !== 'line',
+      );
+      if (hasNonLinear && !hasLocked) {
+        const bounds = this.getSelectionBounds(elements, selectedIds);
+        if (bounds) {
+          const zoom = this.callbacks.getViewport().getViewport().zoom;
+          const handle = hitTestResizeHandle(canvasPoint, bounds, zoom);
+          if (handle) return RESIZE_CURSORS[handle] ?? 'default';
+        }
+      }
+    }
+    if (hit) return hit.isLocked ? 'not-allowed' : 'move';
+    return 'default';
+  }
+
   private captureElementPositions(elements: MavisElement[], selectedIds: Set<string>): void {
     this.dragStartPositions.clear();
     this.dragStartSizes.clear();
+    this.dragStartPoints.clear();
     for (const el of elements) {
+      // Locked elements stay put; bound labels move with their container
+      if (el.isLocked) continue;
+      if (el.type === 'text' && el.containerId && selectedIds.has(el.containerId)) continue;
       if (selectedIds.has(el.id)) {
         this.dragStartPositions.set(el.id, { x: el.x, y: el.y });
         this.dragStartSizes.set(el.id, { width: el.width, height: el.height });
+        if (el.type === 'freedraw' || el.type === 'line' || el.type === 'arrow') {
+          this.dragStartPoints.set(el.id, el.points.map((p) => [p[0], p[1]] as [number, number]));
+        }
       }
     }
   }
@@ -1358,62 +1491,56 @@ export class InteractionManager {
   private performResize(canvasPoint: Point): void {
     if (!this.resizeHandle || !this.resizeStartBounds) return;
 
+    const handle = this.resizeHandle;
     const dx = canvasPoint.x - this.startCanvasPoint.x;
     const dy = canvasPoint.y - this.startCanvasPoint.y;
     const sb = this.resizeStartBounds;
+    const MIN = 10;
+
+    let x = sb.x;
+    let y = sb.y;
+    let w = sb.width;
+    let h = sb.height;
+
+    if (handle.includes('left')) w = sb.width - dx;
+    if (handle.includes('right')) w = sb.width + dx;
+    if (handle.startsWith('top')) h = sb.height - dy;
+    if (handle.startsWith('bottom')) h = sb.height + dy;
+    w = Math.max(MIN, w);
+    h = Math.max(MIN, h);
+
+    // Shift keeps proportions; images keep them by default
+    const isCorner = !handle.includes('center') && !handle.includes('middle');
+    const elements = this.callbacks.getElements();
+    const allImages = Array.from(this.dragStartPositions.keys()).every(
+      (id) => elements.find((e) => e.id === id)?.type === 'image',
+    );
+    if (isCorner && (this.shiftKey || allImages) && sb.width > 0 && sb.height > 0) {
+      const ratio = sb.width / sb.height;
+      if (w / sb.width > h / sb.height) h = w / ratio;
+      else w = h * ratio;
+    }
+
+    // Anchor the edge opposite to the dragged handle
+    if (handle.includes('left')) x = sb.x + sb.width - w;
+    if (handle.startsWith('top')) y = sb.y + sb.height - h;
+
+    const scaleX = sb.width > 0 ? w / sb.width : 1;
+    const scaleY = sb.height > 0 ? h / sb.height : 1;
 
     for (const [id, startPos] of this.dragStartPositions) {
-      // Calculate relative position within selection bounds
-      const relX = sb.width > 0 ? (startPos.x - sb.x) / sb.width : 0;
-      const relY = sb.height > 0 ? (startPos.y - sb.y) / sb.height : 0;
-
-      let newBoundsX = sb.x;
-      let newBoundsY = sb.y;
-      let newBoundsW = sb.width;
-      let newBoundsH = sb.height;
-
-      // Adjust bounds based on handle
-      if (this.resizeHandle.includes('left')) {
-        newBoundsX = sb.x + dx;
-        newBoundsW = sb.width - dx;
+      const startSize = this.dragStartSizes.get(id) ?? { width: MIN, height: MIN };
+      const updates: Partial<LinearElement> = {
+        x: x + (startPos.x - sb.x) * scaleX,
+        y: y + (startPos.y - sb.y) * scaleY,
+        width: Math.max(1, startSize.width * scaleX),
+        height: Math.max(1, startSize.height * scaleY),
+      };
+      const startPoints = this.dragStartPoints.get(id);
+      if (startPoints) {
+        updates.points = startPoints.map(([px, py]) => [px * scaleX, py * scaleY] as [number, number]);
       }
-      if (this.resizeHandle.includes('right')) {
-        newBoundsW = sb.width + dx;
-      }
-      if (this.resizeHandle.includes('top')) {
-        newBoundsY = sb.y + dy;
-        newBoundsH = sb.height - dy;
-      }
-      if (this.resizeHandle.includes('bottom')) {
-        newBoundsH = sb.height + dy;
-      }
-
-      // Prevent negative dimensions
-      if (newBoundsW < 10) newBoundsW = 10;
-      if (newBoundsH < 10) newBoundsH = 10;
-
-      // For single element, directly set position/size
-      if (this.dragStartPositions.size === 1) {
-        this.callbacks.updateElementSilent(id, {
-          x: newBoundsX,
-          y: newBoundsY,
-          width: newBoundsW,
-          height: newBoundsH,
-        });
-      } else {
-        // For multi-element resize, scale proportionally
-        const scaleX = sb.width > 0 ? newBoundsW / sb.width : 1;
-        const scaleY = sb.height > 0 ? newBoundsH / sb.height : 1;
-        const startSize = this.dragStartSizes.get(id);
-        const startW = startSize?.width ?? 10;
-        const startH = startSize?.height ?? 10;
-        this.callbacks.updateElementSilent(id, {
-          x: newBoundsX + relX * newBoundsW,
-          y: newBoundsY + relY * newBoundsH,
-          width: Math.max(10, startW * scaleX),
-          height: Math.max(10, startH * scaleY),
-        });
-      }
+      this.callbacks.updateElementSilent(id, updates as Partial<MavisElement>);
     }
   }
 }

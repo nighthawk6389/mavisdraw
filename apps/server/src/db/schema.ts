@@ -42,10 +42,17 @@ export const sessions = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     refreshToken: text('refresh_token').notNull(),
+    /** Token replaced by the last rotation; still honoured for a short grace window. */
+    previousRefreshToken: text('previous_refresh_token'),
+    rotatedAt: timestamp('rotated_at', { withTimezone: true }),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index('sessions_user_id_idx').on(table.userId)],
+  (table) => [
+    index('sessions_user_id_idx').on(table.userId),
+    index('sessions_refresh_token_idx').on(table.refreshToken),
+    index('sessions_previous_refresh_token_idx').on(table.previousRefreshToken),
+  ],
 );
 
 export const sessionsRelations = relations(sessions, ({ one }) => ({

@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import * as Y from 'yjs';
 import { HocuspocusProvider } from '@hocuspocus/provider';
-import { useElementsStore } from './elementsStore';
+import { useElementsStore, applyRemoteChanges } from './elementsStore';
 import { getAccessToken } from '../services/api';
 import type { MavisElement, Viewport, ConnectionStatus } from '@mavisdraw/types';
 
@@ -122,13 +122,15 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
             }
           });
           if (elements.size > 0) {
-            useElementsStore.setState((prev) => {
-              const next = new Map(prev.elements);
-              for (const [id, el] of elements) {
-                next.set(id, el);
-              }
-              return { elements: next };
-            });
+            applyRemoteChanges(() =>
+              useElementsStore.setState((prev) => {
+                const next = new Map(prev.elements);
+                for (const [id, el] of elements) {
+                  next.set(id, el);
+                }
+                return { elements: next };
+              }),
+            );
           }
           set({ connectionStatus: 'connected', _applyingRemoteChanges: false });
         }
@@ -210,18 +212,22 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
                 ? (yElement.toJSON() as MavisElement)
                 : (yElement as MavisElement);
 
-            useElementsStore.setState((state) => {
-              const next = new Map(state.elements);
-              next.set(key, element);
-              return { elements: next };
-            });
+            applyRemoteChanges(() =>
+              useElementsStore.setState((state) => {
+                const next = new Map(state.elements);
+                next.set(key, element);
+                return { elements: next };
+              }),
+            );
           }
         } else if (change.action === 'delete') {
-          useElementsStore.setState((state) => {
-            const next = new Map(state.elements);
-            next.delete(key);
-            return { elements: next };
-          });
+          applyRemoteChanges(() =>
+            useElementsStore.setState((state) => {
+              const next = new Map(state.elements);
+              next.delete(key);
+              return { elements: next };
+            }),
+          );
         }
       });
       set({ _applyingRemoteChanges: false });

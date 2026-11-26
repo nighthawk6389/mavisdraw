@@ -1,9 +1,6 @@
 import React, { useCallback, useRef } from 'react';
 import { useElementsStore } from '../../stores/elementsStore';
 import { useDiagramStore } from '../../stores/diagramStore';
-import { importMavisDrawFile } from '@mavisdraw/export';
-import { importFromPng } from '@mavisdraw/export';
-import { importFromExcalidraw, importFromDrawio } from '@mavisdraw/compat';
 import type { ExcalidrawFile } from '@mavisdraw/compat';
 
 function detectFormat(
@@ -52,6 +49,10 @@ export default function ImportHandler() {
         alert('Unsupported file format. Supported: .mavisdraw, .excalidraw, .drawio, .png');
         return;
       }
+
+      // Parsers load on demand so they don't weigh down the editor bundle
+      const [{ importMavisDrawFile, importFromPng }, { importFromExcalidraw, importFromDrawio }] =
+        await Promise.all([import('@mavisdraw/export'), import('@mavisdraw/compat')]);
 
       let diagrams: import('@mavisdraw/types').Diagram[] = [];
       let elements: import('@mavisdraw/types').MavisElement[] = [];

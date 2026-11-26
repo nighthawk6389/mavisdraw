@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { WheelInterpreter } from '../../components/canvas/wheel';
 import { InteractionManager, type InteractionCallbacks } from '../../components/canvas/InteractionManager';
 import { ViewportManager } from '../../components/canvas/ViewportManager';
 import type { RectangleElement } from '@mavisdraw/types';
@@ -275,14 +276,24 @@ describe('InteractionManager', () => {
   });
 
   describe('scroll-to-zoom', () => {
-    it('zooms on scroll wheel without Ctrl (Miro-style)', () => {
+    const wheel = (deltaY: number, ctrlKey = false, deltaX = 0) =>
+      new WheelInterpreter().interpret({
+        deltaX,
+        deltaY,
+        deltaMode: 0,
+        ctrlKey,
+        metaKey: false,
+        shiftKey: false,
+        timeStamp: 0,
+      });
+
+    it('zooms on mouse wheel without Ctrl (Miro-style)', () => {
       const callbacks = createMockCallbacks();
       const mgr = new InteractionManager(callbacks, 'd1');
       const viewport = callbacks.getViewport();
       const before = viewport.getViewport().zoom;
 
-      // Scroll down = zoom out
-      mgr.onWheel(400, 300, 0, 100, false);
+      mgr.onWheel(400, 300, wheel(100));
       expect(viewport.getViewport().zoom).toBeLessThan(before);
     });
 
@@ -292,8 +303,7 @@ describe('InteractionManager', () => {
       const viewport = callbacks.getViewport();
       const before = viewport.getViewport().zoom;
 
-      // Scroll up = zoom in
-      mgr.onWheel(400, 300, 0, -100, false);
+      mgr.onWheel(400, 300, wheel(-100));
       expect(viewport.getViewport().zoom).toBeGreaterThan(before);
     });
 
@@ -302,11 +312,22 @@ describe('InteractionManager', () => {
       const mgr = new InteractionManager(callbacks, 'd1');
       const viewport = callbacks.getViewport();
 
-      // Small Ctrl+scroll delta should produce a proportional zoom change
-      mgr.onWheel(400, 300, 0, 5, true);
-      const zoom = viewport.getViewport().zoom;
-      // factor = 1 - 5 * 0.01 = 0.95 → zoom should be 0.95
-      expect(zoom).toBeCloseTo(0.95, 2);
+      mgr.onWheel(400, 300, wheel(5, true));
+      // factor = 1 - 5 * 0.01 = 0.95
+      expect(viewport.getViewport().zoom).toBeCloseTo(0.95, 2);
+    });
+
+    it('pans on trackpad two-finger scroll', () => {
+      const callbacks = createMockCallbacks();
+      const mgr = new InteractionManager(callbacks, 'd1');
+      const viewport = callbacks.getViewport();
+      const before = viewport.getViewport();
+
+      mgr.onWheel(400, 300, wheel(20, false, 30));
+      const after = viewport.getViewport();
+      expect(after.zoom).toBe(before.zoom);
+      expect(after.scrollX).toBe(before.scrollX - 30);
+      expect(after.scrollY).toBe(before.scrollY - 20);
     });
   });
 });

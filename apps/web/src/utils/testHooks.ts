@@ -9,6 +9,11 @@ export interface MavisDrawTestHooks {
   getViewport: () => Viewport;
   getActiveElements: () => MavisElement[];
   getActiveDiagramId: () => string;
+  getSelectedIds: () => string[];
+  /** Fill the active diagram with a grid of rectangles (perf tests). */
+  seedRectangles: (count: number) => void;
+  /** Elements drawn in the last static pass (after viewport culling). */
+  getDrawnCount: () => number;
 }
 
 interface TestWindow {

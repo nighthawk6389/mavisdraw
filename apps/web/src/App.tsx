@@ -1,19 +1,22 @@
-import React, { useRef, useMemo, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useMemo, useEffect, useState, useCallback, lazy, Suspense } from 'react';
 import Canvas from './components/canvas/Canvas';
+
+// Heavy, rarely-open panels load on first use
+const ExportDialog = lazy(() => import('./components/export/ExportDialog'));
+const AgentPanel = lazy(() => import('./components/agent/AgentPanel'));
 import Toolbar from './components/toolbar/Toolbar';
 import StylePanel from './components/toolbar/StylePanel';
 import LayerPanel from './components/toolbar/LayerPanel';
 import Breadcrumb from './components/navigation/Breadcrumb';
 import DiagramTreeSidebar from './components/navigation/DiagramTreeSidebar';
 import PortalProperties from './components/elements/PortalProperties';
-import ExportDialog from './components/export/ExportDialog';
 import ImportHandler from './components/export/ImportHandler';
 import VersionHistoryPanel from './components/version/VersionHistoryPanel';
 import GitHubConnectDialog from './components/github/GitHubConnectDialog';
-import AgentPanel from './components/agent/AgentPanel';
 import PresenceAvatars from './components/collaboration/PresenceAvatars';
 import ShareDialog from './components/collaboration/ShareDialog';
 import { useKeyboard } from './hooks/useKeyboard';
+import { useClipboard } from './hooks/useClipboard';
 import { useAutoSnapshot } from './hooks/useAutoSnapshot';
 import { useAutoSave, type SaveStatus } from './hooks/useAutoSave';
 import { useSelectionStore } from './stores/selectionStore';
@@ -48,6 +51,7 @@ function SaveIndicator({ status }: { status: SaveStatus }) {
 function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
   const interactionManagerRef = useRef<{ setSpacePressed: (p: boolean) => void } | null>(null);
   useKeyboard(interactionManagerRef);
+  useClipboard();
   useAutoSnapshot();
 
   const selectedIds = useSelectionStore((s) => s.selectedIds);
@@ -56,6 +60,8 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
   const { user, logout } = useAuthStore();
 
   const { saveStatus, manualSave } = useAutoSave(activeDiagramId);
+  const showAgentChat = useUIStore((s) => s.showAgentChat);
+  const showExportDialog = useUIStore((s) => s.showExportDialog);
   const [showShareDialog, setShowShareDialog] = useState(false);
 
   const diagrams = useDiagramStore((s) => s.diagrams);
@@ -169,11 +175,19 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
         <StylePanel />
         <LayerPanel />
         <VersionHistoryPanel />
-        <AgentPanel />
+        {showAgentChat && (
+          <Suspense fallback={null}>
+            <AgentPanel />
+          </Suspense>
+        )}
       </div>
 
       {/* Overlays */}
-      <ExportDialog />
+      {showExportDialog && (
+        <Suspense fallback={null}>
+          <ExportDialog />
+        </Suspense>
+      )}
       <ImportHandler />
       <GitHubConnectDialog />
     </div>

@@ -9,6 +9,25 @@ test.describe('Dev Auto-Login', () => {
       }
     });
 
+    // No session yet; the demo login succeeds (mocked: this suite has no backend)
+    const demoUser = {
+      id: 'demo-user',
+      email: 'demo@mavisdraw.dev',
+      name: 'Demo User',
+      avatarUrl: null,
+      createdAt: '2025-01-01T00:00:00.000Z',
+      updatedAt: '2025-01-01T00:00:00.000Z',
+    };
+    await page.route('**/api/auth/refresh', (route) =>
+      route.fulfill({ status: 401, json: { error: 'No session' } }),
+    );
+    await page.route('**/api/auth/login', (route) =>
+      route.fulfill({ status: 200, json: { user: demoUser, accessToken: 'demo-token' } }),
+    );
+    await page.route('**/api/projects', (route) =>
+      route.fulfill({ status: 200, json: { projects: [] } }),
+    );
+
     await page.goto('/');
 
     // Wait for the dashboard to appear (auto-login should kick in)
@@ -22,7 +41,7 @@ test.describe('Dev Auto-Login', () => {
     await expect(page.locator('text=Demo User')).toBeVisible();
 
     // Should see the dashboard
-    await expect(page.locator('text=Projects')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible();
 
     // Verify auth logs show dev auto-login path
     expect(authLogs.some((l) => l.includes('Dev auto-login succeeded'))).toBe(true);

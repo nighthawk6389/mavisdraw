@@ -13,7 +13,16 @@ import { useCollaboration } from '../../hooks/useCollaboration';
 import CursorOverlay from '../collaboration/CursorOverlay';
 import { generateThumbnail } from '../../utils/thumbnailGenerator';
 import { installTestHooks } from '../../utils/testHooks';
-import type { MavisElement, TextElement, ImageElement, PortalElement, RenderMode } from '@mavisdraw/types';
+import { cssFont, measureText, whenFontsReady } from '../../utils/fonts';
+import { insertImageFile } from '../../utils/imageInsert';
+import { useViewportStore } from '../../stores/viewportStore';
+import { sortByStacking, withoutHistory } from '../../stores/elementsStore';
+import { WheelInterpreter } from './wheel';
+import { registerCanvasController } from './canvasController';
+import { elementWorldBounds } from './CanvasRenderer';
+import ContextMenu, { type ContextMenuState } from './ContextMenu';
+import ZoomControls from './ZoomControls';
+import type { MavisElement, TextElement, PortalElement, RenderMode, Point } from '@mavisdraw/types';
 
 interface TextEditState {
   elementId: string;
@@ -42,6 +51,14 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
   // Text editing state
   const [textEditState, setTextEditState] = useState<TextEditState | null>(null);
   const textEditStartTimeRef = useRef<number>(0);
+
+  // Context menu (opened by a right-click without dragging)
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+
+  // Pointer tracking: last canvas position (paste anchor) and active touches (pinch)
+  const lastPointerCanvasRef = useRef<Point | null>(null);
+  const activePointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchRef = useRef<{ distance: number; midX: number; midY: number } | null>(null);
 
   // ─── Store subscriptions ──────────────────────────────────
 
@@ -77,11 +94,14 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
   const gridSize = useUIStore((s) => s.gridSize);
 
   const activeDiagramId = useDiagramStore((s) => s.activeDiagramId);
+  const layers = useLayerStore((s) => s.layers);
   const navigateToDiagram = useDiagramStore((s) => s.navigateToDiagram);
 
   // ─── Collaboration ──────────────────────────────────────
   const { handleMouseMove: handleCollabMouseMove, handleViewportChange, followedViewport } =
     useCollaboration(activeDiagramId);
+  const handleViewportChangeRef = useRef(handleViewportChange);
+  handleViewportChangeRef.current = handleViewportChange;
   const connectedUsers = useCollaborationStore((s) => s.connectedUsers);
   const saveViewport = useDiagramStore((s) => s.saveViewport);
   const getViewport = useDiagramStore((s) => s.getViewport);
@@ -144,6 +164,37 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     snapTarget: interactionMgr?.getSnapTarget() ?? null,
   };
 
+  // ─── Memoized, stacking-sorted element lists ──────────────
+  // Recomputed only when elements, diagram or layers change — not per frame.
+
+  const renderListRef = useRef<{ key: unknown[]; result: MavisElement[] }>({ key: [], result: [] });
+  const interactListRef = useRef<{ key: unknown[]; result: MavisElement[] }>({ key: [], result: [] });
+
+  const computeElementList = useCallback((excludeLockedLayers: boolean): MavisElement[] => {
+    const cacheRef = excludeLockedLayers ? interactListRef : renderListRef;
+    const layers = useLayerStore.getState().layers;
+    const key = [elementsRef.current, activeDiagramIdRef.current, layers];
+    const cached = cacheRef.current;
+    if (cached.key.length === key.length && key.every((k, i) => k === cached.key[i])) {
+      return cached.result;
+    }
+    const known = new Set(layers.map((l) => l.id));
+    const hidden = new Set(layers.filter((l) => !l.isVisible).map((l) => l.id));
+    const locked = new Set(layers.filter((l) => l.isLocked).map((l) => l.id));
+    const diagramId = activeDiagramIdRef.current;
+    const els: MavisElement[] = [];
+    for (const el of elementsRef.current.values()) {
+      if (el.isDeleted || el.diagramId !== diagramId) continue;
+      // Elements on layers this client doesn't know about stay visible
+      if (known.has(el.layerId) && hidden.has(el.layerId)) continue;
+      if (excludeLockedLayers && locked.has(el.layerId)) continue;
+      els.push(el);
+    }
+    const result = sortByStacking(els);
+    cacheRef.current = { key, result };
+    return result;
+  }, []);
+
   // ─── Text editing callbacks ────────────────────────────────
 
   const startTextEditing = useCallback(
@@ -173,69 +224,53 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     [createBoundText],
   );
 
-  const finalizeTextEdit = useCallback(() => {
-    if (!textEditState) return;
+  // The editing session that has already been committed (guards double commits
+  // when a pointerdown commit is followed by the editor's blur event).
+  const committedEditRef = useRef<TextEditState | null>(null);
 
-    // Guard against the initial blur that occurs when the mouseup (from the
-    // click that created the text element) steals focus from the editor.
+  const finalizeTextEdit = useCallback((reason: 'blur' | 'explicit' = 'explicit') => {
+    if (!textEditState || committedEditRef.current === textEditState) return;
+
+    // Ignore the spurious blur right after opening the editor (the mouseup of
+    // the click that created it steals focus). Explicit commits (Enter,
+    // Escape, clicking elsewhere) are never ignored.
     const elapsed = Date.now() - textEditStartTimeRef.current;
-    if (elapsed < 150) {
-      // Re-focus the editor instead of closing it
+    if (reason === 'blur' && elapsed < 150) {
       requestAnimationFrame(() => textEditorRef.current?.focus());
       return;
     }
 
     const editor = textEditorRef.current;
     if (!editor) return;
+    committedEditRef.current = textEditState;
+    interactionRef.current?.resetClickTracking();
 
     const text = editor.textContent || '';
 
-    if (text.trim() === '' && textEditState.isNew) {
-      // Delete empty new text elements
-      deleteElements([textEditState.elementId]);
-      if (textEditState.isShapeBinding && textEditState.shapeId) {
-        // Remove from shape's boundElements
-        const shape = useElementsStore.getState().getElementById(textEditState.shapeId);
-        if (shape) {
-          updateElement(textEditState.shapeId, {
-            boundElements: shape.boundElements.filter(
-              (b) => b.id !== textEditState.elementId,
-            ),
-          });
-        }
-      }
-    } else {
-      updateElement(textEditState.elementId, { text });
+    const store = useElementsStore.getState();
+    // A new label/text is one undo step: creation + typing are merged
+    const commit = (fn: () => void) =>
+      textEditState.isNew ? store.amendLastHistoryEntry(fn) : fn();
 
-      // Recalculate text bounds based on content
-      const el = useElementsStore.getState().getElementById(textEditState.elementId);
-      if (el && el.type === 'text') {
-        const textEl = el as TextElement;
-        if (!textEl.containerId) {
-          // Auto-size standalone text
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            let fontFace = 'sans-serif';
-            if (textEl.fontFamily === 'hand-drawn') {
-              fontFace = '"Virgil", cursive';
-            } else if (textEl.fontFamily === 'monospace') {
-              fontFace = 'monospace';
-            }
-            ctx.font = `${textEl.fontSize}px ${fontFace}`;
-            const lines = text.split('\n');
-            let maxWidth = 0;
-            for (const line of lines) {
-              maxWidth = Math.max(maxWidth, ctx.measureText(line).width);
-            }
-            const height = lines.length * textEl.fontSize * textEl.lineHeight;
-            updateElement(textEditState.elementId, {
-              width: Math.max(maxWidth + 10, 20),
-              height: Math.max(height, textEl.fontSize * textEl.lineHeight),
-            });
-          }
+    if (text.trim() === '' && textEditState.isNew) {
+      // Nothing typed: the draft never existed
+      commit(() => store.discardElements([textEditState.elementId]));
+    } else if (text.trim() === '') {
+      // Cleared an existing label: delete it
+      deleteElements([textEditState.elementId]);
+    } else {
+      commit(() => {
+        const el = useElementsStore.getState().getElementById(textEditState.elementId);
+        if (!el || el.type !== 'text') return;
+        const updates: Partial<TextElement> = { text };
+        if (!el.containerId) {
+          // Auto-size standalone text to its content
+          const size = measureText(text, el.fontSize, el.fontFamily, el.lineHeight);
+          updates.width = Math.max(size.width + 10, 20);
+          updates.height = Math.max(size.height, el.fontSize * el.lineHeight);
         }
-      }
+        updateElement(textEditState.elementId, updates as Partial<MavisElement>);
+      });
     }
 
     setTextEditState(null);
@@ -301,9 +336,11 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
           !el.isDeleted
         ) {
           if (thumbnailDataUrl) {
-            useElementsStore.getState().updateElement(el.id, {
-              thumbnailDataUrl,
-            } as Partial<PortalElement>);
+            withoutHistory(() =>
+              useElementsStore.getState().updateElementSilent(el.id, {
+                thumbnailDataUrl,
+              } as Partial<PortalElement>),
+            );
           }
         }
       }
@@ -376,6 +413,9 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     [clearSelection, navigateToDiagram, saveViewport, generateThumbnailForDiagram],
   );
 
+  const handlePortalDrillDownRef = useRef(handlePortalDrillDown);
+  handlePortalDrillDownRef.current = handlePortalDrillDown;
+
   // ─── Portal creation handler ──────────────────────────────
 
   const handlePortalCreated = useCallback(
@@ -425,9 +465,11 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
           (el as PortalElement).targetDiagramId === currentDiagramId &&
           !el.isDeleted
         ) {
-          useElementsStore.getState().updateElement(el.id, {
-            thumbnailDataUrl,
-          } as Partial<PortalElement>);
+          withoutHistory(() =>
+            useElementsStore.getState().updateElementSilent(el.id, {
+              thumbnailDataUrl,
+            } as Partial<PortalElement>),
+          );
         }
       }
     }
@@ -475,29 +517,117 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         return result;
       },
       getActiveDiagramId: () => activeDiagramIdRef.current,
+      getSelectedIds: () => Array.from(useSelectionStore.getState().selectedIds),
+      seedRectangles: (count: number) => {
+        const store = useElementsStore.getState();
+        const cols = Math.ceil(Math.sqrt(count));
+        withoutHistory(() =>
+          useElementsStore.setState((prev) => {
+            const next = new Map(prev.elements);
+            for (let i = 0; i < count; i++) {
+              const el = store.createElement(
+                'rectangle',
+                activeDiagramIdRef.current,
+                (i % cols) * 140,
+                Math.floor(i / cols) * 100,
+                120,
+                80,
+              );
+              next.set(el.id, el);
+            }
+            return { elements: next };
+          }),
+        );
+      },
+      getDrawnCount: () => renderer.lastDrawnCount,
     });
 
+    // Publish pan/zoom to React UI (zoom readout) and collaborators
+    renderer.onViewportChange = (vp) => {
+      useViewportStore.getState().setViewport(vp);
+      handleViewportChangeRef.current(vp);
+    };
+
+    // Repaint once the bundled hand-drawn font has loaded
+    whenFontsReady().then(() => renderer.invalidateStatic());
+
     renderer.startRenderLoop(
-      () => {
-        const currentDiagramId = activeDiagramIdRef.current;
-        const els: MavisElement[] = [];
-        const visibleLayerIds = useLayerStore.getState().getVisibleLayerIds();
-        for (const el of elementsRef.current.values()) {
-          if (!el.isDeleted && el.diagramId === currentDiagramId && visibleLayerIds.has(el.layerId)) {
-            els.push(el);
-          }
-        }
-        return els;
-      },
+      () => computeElementList(false),
       () => {
         const mgr = interactionRef.current;
-        stateRef.current.creatingElement = mgr?.getCreatingElement() ?? null;
-        stateRef.current.smartGuides = mgr?.getSmartGuides() ?? [];
-        return stateRef.current;
+        const state = stateRef.current;
+        state.creatingElement = mgr?.getCreatingElement() ?? null;
+        state.smartGuides = mgr?.getSmartGuides() ?? [];
+        state.anchorTarget = mgr?.getAnchorTarget() ?? null;
+        state.hoveredAnchor = mgr?.getHoveredAnchor() ?? null;
+        state.snapTarget = mgr?.getSnapTarget() ?? null;
+        return state;
       },
     );
 
+    const containerSize = () => {
+      const rect = container.getBoundingClientRect();
+      return { width: rect.width, height: rect.height };
+    };
+    const zoomAtCenter = (factor: number) => {
+      const { width: w, height: h } = containerSize();
+      renderer.getViewport().zoomAt(w / 2, h / 2, factor);
+      renderer.invalidateStatic();
+    };
+    const fitBounds = (els: MavisElement[]) => {
+      const { width: w, height: h } = containerSize();
+      if (els.length === 0) {
+        renderer.getViewport().reset();
+      } else {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const el of els) {
+          const b = elementWorldBounds(el);
+          minX = Math.min(minX, b.minX);
+          minY = Math.min(minY, b.minY);
+          maxX = Math.max(maxX, b.maxX);
+          maxY = Math.max(maxY, b.maxY);
+        }
+        renderer.getViewport().zoomToFit(
+          { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
+          w,
+          h,
+          64,
+        );
+        // Never blow tiny content up past 200%
+        const vp = renderer.getViewport().getViewport();
+        if (vp.zoom > 2) renderer.getViewport().zoomAt(w / 2, h / 2, 2 / vp.zoom);
+      }
+      renderer.invalidateStatic();
+    };
+
+    registerCanvasController({
+      zoomIn: () => zoomAtCenter(1.2),
+      zoomOut: () => zoomAtCenter(1 / 1.2),
+      resetZoom: () => {
+        const vp = renderer.getViewport().getViewport();
+        zoomAtCenter(1 / vp.zoom);
+      },
+      zoomToFit: () => fitBounds(computeElementList(false)),
+      zoomToSelection: () => {
+        const ids = useSelectionStore.getState().selectedIds;
+        const selected = computeElementList(false).filter((el) => ids.has(el.id));
+        fitBounds(selected.length > 0 ? selected : computeElementList(false));
+      },
+      getPasteAnchor: () => {
+        if (lastPointerCanvasRef.current) return lastPointerCanvasRef.current;
+        const { width: w, height: h } = containerSize();
+        return renderer.getViewport().screenToCanvas(w / 2, h / 2);
+      },
+      invalidate: () => renderer.invalidateStatic(),
+      openPortal: (portalId: string) => {
+        const portal = useElementsStore.getState().elements.get(portalId);
+        if (portal) handlePortalDrillDownRef.current(portal);
+      },
+    });
+
     return () => {
+      registerCanvasController(null);
+      renderer.onViewportChange = null;
       uninstallTestHooks();
       renderer.destroy();
       rendererRef.current = null;
@@ -511,18 +641,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
     const mgr = new InteractionManager(
       {
-        getElements: () => {
-          const currentDiagramId = activeDiagramIdRef.current;
-          const els: MavisElement[] = [];
-          const visibleLayerIds = useLayerStore.getState().getVisibleLayerIds();
-          const lockedLayerIds = useLayerStore.getState().getLockedLayerIds();
-          for (const el of elementsRef.current.values()) {
-            if (!el.isDeleted && el.diagramId === currentDiagramId && visibleLayerIds.has(el.layerId) && !lockedLayerIds.has(el.layerId)) {
-              els.push(el);
-            }
-          }
-          return els;
-        },
+        getElements: () => computeElementList(true),
         getActiveTool: () => useToolStore.getState().activeTool,
         getSelectedIds: () => useSelectionStore.getState().selectedIds,
         getViewport: () => renderer.getViewport(),
@@ -615,7 +734,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
   useEffect(() => {
     rendererRef.current?.invalidateStatic();
-  }, [elements, renderMode, showGrid, gridSize]);
+  }, [elements, renderMode, showGrid, gridSize, layers]);
 
   // ─── ResizeObserver ───────────────────────────────────────
 
@@ -658,59 +777,159 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     }
   }, [textEditState]);
 
-  // ─── Mouse Events ────────────────────────────────────────
+  // ─── Pointer Events ──────────────────────────────────────
+  // Pointer events cover mouse, pen and touch; pointer capture keeps a drag
+  // alive when the cursor leaves the canvas. Each gesture is one undo step.
 
-  const getCanvasOffset = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    const rect = (e.target as HTMLCanvasElement).getBoundingClientRect();
+  const getCanvasOffset = useCallback((e: { clientX: number; clientY: number }) => {
+    const rect = interactiveCanvasRef.current!.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }, []);
 
-  const handleWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
+  const applyCursor = useCallback(() => {
+    const canvas = interactiveCanvasRef.current;
     const mgr = interactionRef.current;
-    if (!mgr) return;
-    const pos = getCanvasOffset(e as unknown as React.MouseEvent<HTMLCanvasElement>);
-    mgr.onWheel(pos.x, pos.y, e.deltaX, e.deltaY, e.ctrlKey || e.metaKey);
-  }, [getCanvasOffset]);
+    if (!canvas || !mgr) return;
+    canvas.style.cursor =
+      useToolStore.getState().activeTool === 'select' && mgr.getMode() === 'idle'
+        ? mgr.getHoverCursor()
+        : '';
+  }, []);
 
-  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    // Close text editor if open
-    if (textEditState) {
-      finalizeTextEdit();
-    }
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      if (textEditState) finalizeTextEdit();
+      setContextMenu(null);
 
-    const mgr = interactionRef.current;
-    if (!mgr) return;
-    const pos = getCanvasOffset(e);
-    mgr.onPointerDown(pos.x, pos.y, { button: e.button, shiftKey: e.shiftKey });
-  }, [getCanvasOffset, textEditState, finalizeTextEdit]);
+      const mgr = interactionRef.current;
+      if (!mgr) return;
+      const pos = getCanvasOffset(e);
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+      activePointersRef.current.set(e.pointerId, pos);
 
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    const mgr = interactionRef.current;
-    if (!mgr) return;
-    const pos = getCanvasOffset(e);
-    mgr.onPointerMove(pos.x, pos.y);
+      // Second finger: turn the gesture into a pinch (zoom + pan)
+      if (e.pointerType === 'touch' && activePointersRef.current.size === 2) {
+        mgr.cancelGesture();
+        useElementsStore.getState().endHistoryBatch();
+        const [a, b] = Array.from(activePointersRef.current.values());
+        pinchRef.current = {
+          distance: Math.hypot(a.x - b.x, a.y - b.y),
+          midX: (a.x + b.x) / 2,
+          midY: (a.y + b.y) / 2,
+        };
+        return;
+      }
+      if (activePointersRef.current.size > 1) return;
 
-    // Send cursor position to collaboration (in canvas coordinates)
-    const renderer = rendererRef.current;
-    if (renderer) {
+      useElementsStore.getState().beginHistoryBatch();
+      mgr.onPointerDown(pos.x, pos.y, { button: e.button, shiftKey: e.shiftKey });
+    },
+    [getCanvasOffset, textEditState, finalizeTextEdit],
+  );
+
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      const mgr = interactionRef.current;
+      const renderer = rendererRef.current;
+      if (!mgr || !renderer) return;
+      const pos = getCanvasOffset(e);
+
+      if (activePointersRef.current.has(e.pointerId)) {
+        activePointersRef.current.set(e.pointerId, pos);
+      }
+
+      const pinch = pinchRef.current;
+      if (pinch && activePointersRef.current.size >= 2) {
+        const [a, b] = Array.from(activePointersRef.current.values());
+        const distance = Math.hypot(a.x - b.x, a.y - b.y);
+        const midX = (a.x + b.x) / 2;
+        const midY = (a.y + b.y) / 2;
+        const viewport = renderer.getViewport();
+        viewport.pan(midX - pinch.midX, midY - pinch.midY);
+        if (pinch.distance > 0) viewport.zoomAt(midX, midY, distance / pinch.distance);
+        pinchRef.current = { distance, midX, midY };
+        renderer.invalidateStatic();
+        return;
+      }
+
+      mgr.onPointerMove(pos.x, pos.y, { shiftKey: e.shiftKey });
+      applyCursor();
+
       const canvasPos = renderer.getViewport().screenToCanvas(pos.x, pos.y);
+      lastPointerCanvasRef.current = canvasPos;
       handleCollabMouseMove(canvasPos.x, canvasPos.y);
-    }
-  }, [getCanvasOffset, handleCollabMouseMove]);
+    },
+    [getCanvasOffset, handleCollabMouseMove, applyCursor],
+  );
 
-  const handleMouseUp = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    const mgr = interactionRef.current;
-    if (!mgr) return;
-    const pos = getCanvasOffset(e);
-    mgr.onPointerUp(pos.x, pos.y);
-  }, [getCanvasOffset]);
+  const handlePointerUp = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      const mgr = interactionRef.current;
+      if (!mgr) return;
+      const wasTracked = activePointersRef.current.delete(e.pointerId);
+
+      if (pinchRef.current) {
+        if (activePointersRef.current.size < 2) pinchRef.current = null;
+        return;
+      }
+      if (!wasTracked) return;
+
+      const pos = getCanvasOffset(e);
+      mgr.onPointerUp(pos.x, pos.y);
+      useElementsStore.getState().endHistoryBatch();
+      applyCursor();
+
+      if (mgr.consumeContextMenuRequest()) {
+        // Right-click on an unselected element selects it first (like every desktop app)
+        const hit = mgr.hitTestAt(pos.x, pos.y);
+        const selected = useSelectionStore.getState().selectedIds;
+        if (hit && !selected.has(hit.id)) {
+          useSelectionStore.getState().selectMultiple(mgr.getSelectionFor(hit));
+        } else if (!hit) {
+          useSelectionStore.getState().clearSelection();
+        }
+        const canvasPoint = rendererRef.current!.getViewport().screenToCanvas(pos.x, pos.y);
+        lastPointerCanvasRef.current = canvasPoint;
+        setContextMenu({ x: pos.x, y: pos.y, canvasPoint, onElement: !!hit });
+      }
+    },
+    [getCanvasOffset, applyCursor],
+  );
 
   const handleContextMenu = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Our own menu opens on right-button release (so right-drag can pan)
     e.preventDefault();
   }, []);
 
-  // ─── Image Drop/Paste ──────────────────────────────────────
+  // Wheel must be a non-passive native listener, otherwise preventDefault()
+  // is ignored and pinch-zoom zooms the whole page instead of the canvas.
+  useEffect(() => {
+    const canvas = interactiveCanvasRef.current;
+    if (!canvas) return;
+    const interpreter = new WheelInterpreter('auto');
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const mgr = interactionRef.current;
+      if (!mgr) return;
+      const rect = canvas.getBoundingClientRect();
+      const intent = interpreter.interpret({
+        deltaX: e.deltaX,
+        deltaY: e.deltaY,
+        deltaMode: e.deltaMode,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        shiftKey: e.shiftKey,
+        timeStamp: e.timeStamp,
+        wheelDeltaY: (e as WheelEvent & { wheelDeltaY?: number }).wheelDeltaY,
+      });
+      mgr.onWheel(e.clientX - rect.left, e.clientY - rect.top, intent);
+      setContextMenu(null);
+    };
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel);
+  }, []);
+
+  // ─── Image Drop ────────────────────────────────────────────
 
   const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -719,148 +938,14 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
   const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
-
-    const files = Array.from(e.dataTransfer.files);
-    const imageFiles = files.filter((f) => f.type.startsWith('image/'));
-
-    if (imageFiles.length === 0) return;
-
     const renderer = rendererRef.current;
     if (!renderer) return;
-
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-
-    const screenX = e.clientX - rect.left;
-    const screenY = e.clientY - rect.top;
-    const canvasPoint = renderer.getViewport().screenToCanvas(screenX, screenY);
-
-    for (const file of imageFiles) {
-      const reader = new FileReader();
-      reader.onload = (evt) => {
-        const dataUrl = evt.target?.result as string;
-        if (!dataUrl) return;
-
-        // Create an image to get dimensions
-        const img = new Image();
-        img.onload = () => {
-          const maxWidth = 400;
-          const maxHeight = 400;
-          let width = img.naturalWidth;
-          let height = img.naturalHeight;
-
-          // Scale down if too large
-          if (width > maxWidth || height > maxHeight) {
-            const scale = Math.min(maxWidth / width, maxHeight / height);
-            width = width * scale;
-            height = height * scale;
-          }
-
-          const aspectRatio = width / height;
-
-          const imageEl = useElementsStore.getState().createElement(
-            'image',
-            activeDiagramIdRef.current,
-            canvasPoint.x,
-            canvasPoint.y,
-            width,
-            height,
-          ) as ImageElement;
-
-          const finalEl: ImageElement = {
-            ...imageEl,
-            imageUrl: dataUrl,
-            aspectRatio,
-          };
-
-          useElementsStore.getState().addElement(finalEl);
-          select(finalEl.id);
-          renderer.invalidateStatic();
-        };
-        img.src = dataUrl;
-      };
-      reader.readAsDataURL(file);
+    const pos = getCanvasOffset(e);
+    const at = renderer.getViewport().screenToCanvas(pos.x, pos.y);
+    for (const file of Array.from(e.dataTransfer.files)) {
+      if (file.type.startsWith('image/')) insertImageFile(file, at);
     }
-  }, [select]);
-
-  // Handle paste for images from clipboard
-  useEffect(() => {
-    const handlePaste = (e: ClipboardEvent) => {
-      // Don't handle if editing text
-      if (textEditState) return;
-
-      const items = e.clipboardData?.items;
-      if (!items) return;
-
-      for (const item of Array.from(items)) {
-        if (item.type.startsWith('image/')) {
-          e.preventDefault();
-          const blob = item.getAsFile();
-          if (!blob) continue;
-
-          const reader = new FileReader();
-          reader.onload = (evt) => {
-            const dataUrl = evt.target?.result as string;
-            if (!dataUrl) return;
-
-            const img = new Image();
-            img.onload = () => {
-              const maxWidth = 400;
-              const maxHeight = 400;
-              let width = img.naturalWidth;
-              let height = img.naturalHeight;
-
-              if (width > maxWidth || height > maxHeight) {
-                const scale = Math.min(maxWidth / width, maxHeight / height);
-                width = width * scale;
-                height = height * scale;
-              }
-
-              const aspectRatio = width / height;
-              const renderer = rendererRef.current;
-              if (!renderer) return;
-
-              // Paste at center of viewport
-              const vp = renderer.getViewport().getViewport();
-              const container = containerRef.current;
-              if (!container) return;
-              const rect = container.getBoundingClientRect();
-              const centerScreen = { x: rect.width / 2, y: rect.height / 2 };
-              const canvasPoint = renderer.getViewport().screenToCanvas(
-                centerScreen.x,
-                centerScreen.y,
-              );
-
-              const imageEl = useElementsStore.getState().createElement(
-                'image',
-                activeDiagramIdRef.current,
-                canvasPoint.x - width / 2,
-                canvasPoint.y - height / 2,
-                width,
-                height,
-              ) as ImageElement;
-
-              const finalEl: ImageElement = {
-                ...imageEl,
-                imageUrl: dataUrl,
-                aspectRatio,
-              };
-
-              useElementsStore.getState().addElement(finalEl);
-              useSelectionStore.getState().select(finalEl.id);
-              renderer.invalidateStatic();
-            };
-            img.src = dataUrl;
-          };
-          reader.readAsDataURL(blob);
-          break; // Only handle first image
-        }
-      }
-    };
-
-    window.addEventListener('paste', handlePaste);
-    return () => window.removeEventListener('paste', handlePaste);
-  }, [textEditState]);
+  }, [getCanvasOffset]);
 
   // ─── Text Editor Key Handling ──────────────────────────────
 
@@ -904,20 +989,13 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     const vp = renderer.getViewport().getViewport();
     const screenPos = renderer.getViewport().canvasToScreen(textEl.x, textEl.y);
 
-    let fontFace = 'sans-serif';
-    if (textEl.fontFamily === 'hand-drawn') {
-      fontFace = '"Virgil", "Segoe UI Emoji", cursive';
-    } else if (textEl.fontFamily === 'monospace') {
-      fontFace = '"Cascadia Code", "Fira Code", monospace';
-    }
-
     return {
       position: 'absolute',
       left: `${screenPos.x}px`,
       top: `${screenPos.y}px`,
       width: `${textEl.width * vp.zoom}px`,
       minHeight: `${textEl.height * vp.zoom}px`,
-      font: `${textEl.fontSize * vp.zoom}px ${fontFace}`,
+      font: cssFont(textEl.fontSize * vp.zoom, textEl.fontFamily),
       color: textEl.strokeColor,
       textAlign: textEl.textAlign,
       outline: 'none',
@@ -955,14 +1033,18 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
       <canvas
         ref={interactiveCanvasRef}
         className="absolute inset-0"
-        onWheel={handleWheel}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
+        style={{ touchAction: 'none' }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
         onContextMenu={handleContextMenu}
       />
       <CursorOverlay />
+      <ZoomControls />
+      {contextMenu && (
+        <ContextMenu state={contextMenu} onClose={() => setContextMenu(null)} />
+      )}
       {textEditState && textEditorStyle && (
         <div
           ref={textEditorRef}
@@ -970,7 +1052,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
           suppressContentEditableWarning
           style={textEditorStyle}
           onKeyDown={handleTextEditorKeyDown}
-          onBlur={finalizeTextEdit}
+          onBlur={() => finalizeTextEdit('blur')}
         />
       )}
     </div>

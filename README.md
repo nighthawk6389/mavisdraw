@@ -42,7 +42,8 @@ pnpm run dev
 | `pnpm run test` | Run unit tests across all packages |
 | `pnpm run lint` | Lint all packages with ESLint |
 | `pnpm run typecheck` | Type-check all packages |
-| `cd apps/web && pnpm run test:e2e` | Run Playwright e2e tests |
+| `cd apps/web && pnpm run test:e2e` | Run Playwright e2e tests (mocked API) |
+| `cd apps/web && pnpm run test:e2e:real` | Run e2e tests against the real API + Postgres |
 | `cd apps/server && pnpm run db:push` | Push schema to database |
 | `cd apps/server && pnpm run db:seed` | Seed database with sample data |
 
@@ -151,23 +152,26 @@ See `.github/workflows/ci.yml` for the full configuration.
 
 ## Keyboard Shortcuts
 
+`Mod` is ⌘ on macOS and Ctrl elsewhere.
+
 | Key | Action |
 |-----|--------|
-| `V` | Select tool |
-| `H` | Hand (pan) tool |
-| `R` | Rectangle |
-| `E` | Ellipse |
-| `D` | Diamond |
-| `L` | Line |
-| `A` | Arrow |
-| `P` | Freedraw (pen) |
-| `T` | Text |
-| `Space` | Temporary pan mode |
-| `Escape` | Deselect / cancel |
-| `Delete` / `Backspace` | Delete selected |
-| `Ctrl+Z` | Undo |
-| `Ctrl+Shift+Z` / `Ctrl+Y` | Redo |
-| `Ctrl+A` | Select all |
+| `V` / `H` | Select / Hand (pan) tool |
+| `R` `E` `D` `L` `A` `P` `T` `O` | Rectangle, Ellipse, Diamond, Line, Arrow, Pen, Text, Portal |
+| `Space` (hold) | Temporary pan |
+| Mouse wheel / pinch | Zoom (trackpad two-finger scroll pans) |
+| Right-drag / right-click | Pan / context menu |
+| `Shift+1` / `Shift+2` | Zoom to fit / zoom to selection |
+| `Mod+=` `Mod+-` `Mod+0` | Zoom in / out / reset to 100% |
+| Arrow keys (`Shift` = 10px) | Nudge selection |
+| `Mod+Z` / `Mod+Shift+Z` | Undo / redo (one step per gesture; never undoes collaborators) |
+| `Mod+C` `Mod+X` `Mod+V` `Mod+D` | Copy, cut, paste at cursor (works across tabs), duplicate |
+| `Shift+Alt+C` | Copy selection as PNG |
+| `Mod+]` / `Mod+[` | Bring forward / send backward (`Shift` = to front / back) |
+| `Mod+G` / `Mod+Shift+G` | Group / ungroup |
+| `Mod+Shift+L` | Lock / unlock |
+| `Delete` / `Backspace` | Delete selected (labels go with their shape) |
+| `Mod+A` / `Escape` | Select all / deselect |
 
 ## License
 

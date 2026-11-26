@@ -14,6 +14,10 @@ import type {
 import { ViewportManager } from './ViewportManager';
 import { GridRenderer } from './GridRenderer';
 import { renderPortalSketchy, renderPortalClean } from '../elements/PortalRenderer';
+import { SELECTION_PADDING_PX } from './HitTesting';
+import { cssFont } from '../../utils/fonts';
+import type { Drawable } from 'roughjs/bin/core';
+import type { Viewport } from '@mavisdraw/types';
 import { getCubicControlPoints, calculateElbowRoute, getConnectionSide } from '@mavisdraw/math';
 
 /**
@@ -82,6 +86,23 @@ export class CanvasRenderer {
   private gridRenderer: GridRenderer;
   private animationFrameId: number | null = null;
   private needsStaticRedraw = true;
+  private needsInteractiveRedraw = true;
+  private lastInteractiveSignature: unknown[] = [];
+  private lastPublishedViewport: Viewport | null = null;
+
+  /** Called (at most once per frame) when pan or zoom changes. */
+  onViewportChange: ((viewport: Viewport) => void) | null = null;
+
+  /**
+   * Rough.js drawables keyed by the (immutable) element object. Any edit
+   * creates a new element object, so stale entries simply become garbage.
+   */
+  private roughCache = new WeakMap<MavisElement, Drawable[]>();
+  private cacheElement: MavisElement | null = null;
+  private cachePart = 0;
+
+  /** Number of elements drawn in the last static pass (for perf tests). */
+  lastDrawnCount = 0;
 
   // Image cache to prevent re-decoding
   private imageCache: Map<string, HTMLImageElement> = new Map();
@@ -134,6 +155,11 @@ export class CanvasRenderer {
     this.needsStaticRedraw = true;
   }
 
+  /** Force the overlay layer (selection, handles, previews) to repaint. */
+  invalidateInteractive(): void {
+    this.needsInteractiveRedraw = true;
+  }
+
   /**
    * Start the animation-frame render loop.
    *
@@ -147,13 +173,47 @@ export class CanvasRenderer {
     const loop = () => {
       const elements = getElements();
       const state = getState();
+      const vp = this.viewport.getViewport();
 
+      const last = this.lastPublishedViewport;
+      if (!last || last.zoom !== vp.zoom || last.scrollX !== vp.scrollX || last.scrollY !== vp.scrollY) {
+        this.lastPublishedViewport = vp;
+        this.onViewportChange?.(vp);
+      }
+
+      let staticRedrawn = false;
       if (this.needsStaticRedraw) {
         this.renderStaticLayer(elements, state);
         this.needsStaticRedraw = false;
+        staticRedrawn = true;
       }
 
-      this.renderInteractiveLayer(elements, state);
+      // Repaint overlays only when something they depend on changed
+      const signature: unknown[] = [
+        elements,
+        state.selectedIds,
+        state.hoveredId,
+        state.selectionBox,
+        state.creatingElement,
+        state.smartGuides,
+        state.remoteSelections,
+        state.anchorTarget,
+        state.hoveredAnchor,
+        state.snapTarget,
+        state.renderMode,
+        vp.zoom,
+        vp.scrollX,
+        vp.scrollY,
+      ];
+      const prev = this.lastInteractiveSignature;
+      const changed =
+        prev.length !== signature.length || signature.some((v, i) => v !== prev[i]);
+      if (this.needsInteractiveRedraw || staticRedrawn || changed) {
+        this.renderInteractiveLayer(elements, state);
+        this.lastInteractiveSignature = signature;
+        this.needsInteractiveRedraw = false;
+      }
+
       this.animationFrameId = requestAnimationFrame(loop);
     };
     loop();
@@ -189,6 +249,7 @@ export class CanvasRenderer {
     this.roughCanvas = rough.canvas(this.staticCanvas);
 
     this.needsStaticRedraw = true;
+    this.needsInteractiveRedraw = true;
   }
 
   /** Clean up resources and stop the render loop. */
@@ -225,8 +286,20 @@ export class CanvasRenderer {
     // Draw grid
     this.gridRenderer.render(ctx, vp, width, height, state.gridSize, state.showGrid);
 
-    // Draw each committed element
+    // Draw each committed element that intersects the visible area
+    const margin = 64 / vp.zoom;
+    const viewLeft = -vp.scrollX / vp.zoom - margin;
+    const viewTop = -vp.scrollY / vp.zoom - margin;
+    const viewRight = viewLeft + width / vp.zoom + margin * 2;
+    const viewBottom = viewTop + height / vp.zoom + margin * 2;
+    let drawn = 0;
+
     for (const element of elements) {
+      const b = elementWorldBounds(element);
+      if (b.maxX < viewLeft || b.minX > viewRight || b.maxY < viewTop || b.minY > viewBottom) {
+        continue;
+      }
+      drawn++;
       this.renderElement(ctx, element, state.renderMode, state.portalActiveUsers);
 
       // Render bound text for shape elements
@@ -242,6 +315,7 @@ export class CanvasRenderer {
       }
     }
 
+    this.lastDrawnCount = drawn;
     ctx.restore();
   }
 
@@ -282,7 +356,11 @@ export class CanvasRenderer {
             : nonLinearSelected,
         );
         this.renderSelectionBox(ctx, bounds);
-        this.renderResizeHandles(ctx, bounds);
+        if (selectedElements.some((e) => e.isLocked)) {
+          this.renderLockBadge(ctx, bounds);
+        } else {
+          this.renderResizeHandles(ctx, bounds);
+        }
       }
     }
 
@@ -368,6 +446,14 @@ export class CanvasRenderer {
     ctx.translate(-element.width / 2, -element.height / 2);
     ctx.globalAlpha = element.opacity / 100;
 
+    // Cache rough drawables for elements whose shape depends only on themselves
+    const dependsOnOthers =
+      element.type === 'portal' ||
+      ((element.type === 'arrow' || element.type === 'line') &&
+        (element as LinearElement).routingMode === 'elbow');
+    this.cacheElement = renderMode === 'sketchy' && !dependsOnOthers ? element : null;
+    this.cachePart = 0;
+
     switch (element.type) {
       case 'rectangle':
         this.renderRectangle(ctx, element, renderMode);
@@ -409,6 +495,7 @@ export class CanvasRenderer {
         break;
     }
 
+    this.cacheElement = null;
     ctx.restore();
   }
 
@@ -1003,23 +1090,7 @@ export class CanvasRenderer {
 
     if (!text) return;
 
-    // Map font family to CSS
-    let fontFace: string;
-    switch (fontFamily) {
-      case 'hand-drawn':
-        fontFace = '"Virgil", "Segoe UI Emoji", cursive';
-        break;
-      case 'sans-serif':
-        fontFace = '"Helvetica Neue", Helvetica, Arial, sans-serif';
-        break;
-      case 'monospace':
-        fontFace = '"Cascadia Code", "Fira Code", monospace';
-        break;
-      default:
-        fontFace = 'sans-serif';
-    }
-
-    ctx.font = `${fontSize}px ${fontFace}`;
+    ctx.font = cssFont(fontSize, fontFamily);
     ctx.fillStyle = strokeColor;
     ctx.textAlign = textAlign;
     ctx.textBaseline = 'top';
@@ -1229,9 +1300,21 @@ export class CanvasRenderer {
    */
   private drawRoughShape(
     ctx: CanvasRenderingContext2D,
-    createDrawable: () => import('roughjs/bin/core').Drawable,
+    createDrawable: () => Drawable,
   ): void {
-    const drawable = createDrawable();
+    let drawable: Drawable;
+    const cacheFor = this.cacheElement;
+    if (cacheFor) {
+      const part = this.cachePart++;
+      let parts = this.roughCache.get(cacheFor);
+      if (!parts) {
+        parts = [];
+        this.roughCache.set(cacheFor, parts);
+      }
+      drawable = parts[part] ?? (parts[part] = createDrawable());
+    } else {
+      drawable = createDrawable();
+    }
 
     // If we're drawing on the static canvas context, we can use the
     // RoughCanvas.draw() method directly for best quality.
@@ -1289,7 +1372,7 @@ export class CanvasRenderer {
    * Draw a dashed blue rectangle around the given bounds to indicate selection.
    */
   renderSelectionBox(ctx: CanvasRenderingContext2D, bounds: Bounds): void {
-    const padding = 4;
+    const padding = SELECTION_PADDING_PX / this.viewport.getViewport().zoom;
     ctx.save();
     ctx.strokeStyle = CanvasRenderer.SELECTION_COLOR;
     ctx.lineWidth = 1 / this.viewport.getViewport().zoom; // 1px on screen
@@ -1307,8 +1390,8 @@ export class CanvasRenderer {
    * Draw 8 resize handles (corners + edge midpoints) around the selection bounds.
    */
   renderResizeHandles(ctx: CanvasRenderingContext2D, bounds: Bounds): void {
-    const padding = 4;
     const zoom = this.viewport.getViewport().zoom;
+    const padding = SELECTION_PADDING_PX / zoom;
     const handleSize = CanvasRenderer.HANDLE_SIZE / zoom;
     const half = handleSize / 2;
 
@@ -1340,6 +1423,32 @@ export class CanvasRenderer {
       ctx.strokeRect(hx - half, hy - half, handleSize, handleSize);
     }
 
+    ctx.restore();
+  }
+
+  /** Small padlock at the selection's top-right corner for locked elements. */
+  private renderLockBadge(ctx: CanvasRenderingContext2D, bounds: Bounds): void {
+    const zoom = this.viewport.getViewport().zoom;
+    const pad = SELECTION_PADDING_PX / zoom;
+    const size = 16 / zoom;
+    const x = bounds.x + bounds.width + pad - size / 2;
+    const y = bounds.y - pad - size / 2;
+
+    ctx.save();
+    ctx.fillStyle = CanvasRenderer.SELECTION_COLOR;
+    ctx.beginPath();
+    ctx.roundRect(x, y, size, size, 3 / zoom);
+    ctx.fill();
+
+    // Shackle + body
+    ctx.strokeStyle = '#ffffff';
+    ctx.fillStyle = '#ffffff';
+    ctx.lineWidth = 1.5 / zoom;
+    const cx = x + size / 2;
+    ctx.beginPath();
+    ctx.arc(cx, y + size * 0.42, size * 0.18, Math.PI, 0);
+    ctx.stroke();
+    ctx.fillRect(x + size * 0.27, y + size * 0.45, size * 0.46, size * 0.33);
     ctx.restore();
   }
 
@@ -1731,4 +1840,51 @@ export class CanvasRenderer {
       height: canvas.height / dpr,
     };
   }
+}
+
+/**
+ * Axis-aligned world-space bounds of an element including stroke and
+ * arrowheads, used for viewport culling.
+ */
+export function elementWorldBounds(el: MavisElement): {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+} {
+  let minX = el.x;
+  let minY = el.y;
+  let maxX = el.x + el.width;
+  let maxY = el.y + el.height;
+
+  let pad = (el.strokeWidth ?? 0) * 2;
+  if (el.type === 'line' || el.type === 'arrow' || el.type === 'freedraw') {
+    const linear = el as LinearElement;
+    if (linear.points.length > 0) {
+      minX = Infinity;
+      minY = Infinity;
+      maxX = -Infinity;
+      maxY = -Infinity;
+      for (const [px, py] of linear.points) {
+        minX = Math.min(minX, el.x + px);
+        minY = Math.min(minY, el.y + py);
+        maxX = Math.max(maxX, el.x + px);
+        maxY = Math.max(maxY, el.y + py);
+      }
+    }
+    // Arrowheads, curve bulges and elbow detours extend past the points
+    pad += linear.routingMode === 'straight' ? 24 : 80;
+  }
+
+  if (el.angle) {
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const r = Math.hypot(maxX - minX, maxY - minY) / 2;
+    minX = cx - r;
+    maxX = cx + r;
+    minY = cy - r;
+    maxY = cy + r;
+  }
+
+  return { minX: minX - pad, minY: minY - pad, maxX: maxX + pad, maxY: maxY + pad };
 }

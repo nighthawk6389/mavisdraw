@@ -1,0 +1,187 @@
+import type { MavisElement, Point } from '@mavisdraw/types';
+import {
+  useElementsStore,
+  type ClipboardEnvelope,
+  type ZOrderAction,
+} from '../stores/elementsStore';
+import { useSelectionStore } from '../stores/selectionStore';
+import { useDiagramStore } from '../stores/diagramStore';
+import { useUIStore } from '../stores/uiStore';
+import { getCanvasController } from '../components/canvas/canvasController';
+
+/**
+ * Editor commands shared by keyboard shortcuts, the context menu and (later)
+ * the command palette, so every entry point behaves identically.
+ */
+
+function selectedIds(): string[] {
+  return Array.from(useSelectionStore.getState().selectedIds);
+}
+
+function selectedElements(): MavisElement[] {
+  const elements = useElementsStore.getState().elements;
+  return selectedIds()
+    .map((id) => elements.get(id))
+    .filter((el): el is MavisElement => !!el && !el.isDeleted);
+}
+
+function pasteAnchor(): Point | undefined {
+  return getCanvasController()?.getPasteAnchor();
+}
+
+/** Serialize the selection for the system clipboard (cross-tab paste). */
+export function copySelection(): ClipboardEnvelope | null {
+  const ids = selectedIds();
+  if (ids.length === 0) return null;
+  return useElementsStore.getState().copyElements(ids);
+}
+
+/** Best-effort write to the async clipboard API (menus can't use copy events). */
+async function writeEnvelopeToSystemClipboard(envelope: ClipboardEnvelope | null): Promise<void> {
+  if (!envelope) return;
+  try {
+    await navigator.clipboard?.writeText(JSON.stringify(envelope));
+  } catch {
+    // Permission denied or unsupported: the in-app clipboard still works
+  }
+}
+
+export function copy(): void {
+  void writeEnvelopeToSystemClipboard(copySelection());
+}
+
+export function cut(): void {
+  const envelope = copySelection();
+  if (!envelope) return;
+  void writeEnvelopeToSystemClipboard(envelope);
+  deleteSelection();
+}
+
+/** Paste the in-app clipboard at the pointer (or viewport center). */
+export function pasteInternal(at: Point | undefined = pasteAnchor()): MavisElement[] {
+  const diagramId = useDiagramStore.getState().activeDiagramId;
+  const pasted = useElementsStore.getState().pasteElements(diagramId, at);
+  if (pasted.length > 0) {
+    useSelectionStore.getState().selectMultiple(topLevelIds(pasted));
+  }
+  return pasted;
+}
+
+/** Paste from the system clipboard when allowed, falling back to the in-app clipboard. */
+export async function paste(at: Point | undefined = pasteAnchor()): Promise<void> {
+  try {
+    const text = await navigator.clipboard?.readText();
+    const envelope = text ? parseClipboardEnvelope(text) : null;
+    if (envelope) useElementsStore.getState().setClipboardFromEnvelope(envelope);
+  } catch {
+    // Reading the clipboard needs permission; the in-app clipboard is fine
+  }
+  pasteInternal(at);
+}
+
+export function parseClipboardEnvelope(text: string): ClipboardEnvelope | null {
+  if (!text.includes('mavisdraw-clipboard')) return null;
+  try {
+    const parsed = JSON.parse(text) as Partial<ClipboardEnvelope>;
+    if (parsed.type === 'mavisdraw-clipboard' && Array.isArray(parsed.elements)) {
+      return parsed as ClipboardEnvelope;
+    }
+  } catch {
+    // Not ours
+  }
+  return null;
+}
+
+/** Labels are selected along with their shape; don't list them separately. */
+function topLevelIds(elements: MavisElement[]): string[] {
+  const ids = new Set(elements.map((el) => el.id));
+  return elements
+    .filter((el) => !(el.type === 'text' && el.containerId && ids.has(el.containerId)))
+    .map((el) => el.id);
+}
+
+export function duplicate(): void {
+  const ids = selectedIds();
+  if (ids.length === 0) return;
+  const created = useElementsStore.getState().duplicateElements(ids);
+  if (created.length > 0) useSelectionStore.getState().selectMultiple(topLevelIds(created));
+}
+
+export function deleteSelection(): void {
+  const ids = selectedIds();
+  if (ids.length === 0) return;
+  useElementsStore.getState().deleteElements(ids);
+  useSelectionStore.getState().clearSelection();
+}
+
+export function selectAll(): void {
+  const diagramId = useDiagramStore.getState().activeDiagramId;
+  const ids: string[] = [];
+  for (const el of useElementsStore.getState().elements.values()) {
+    if (el.isDeleted || el.diagramId !== diagramId) continue;
+    if (el.type === 'text' && el.containerId) continue;
+    ids.push(el.id);
+  }
+  useSelectionStore.getState().selectAll(ids);
+}
+
+export function reorder(action: ZOrderAction): void {
+  useElementsStore.getState().reorderElements(selectedIds(), action);
+}
+
+export function group(): void {
+  const ids = selectedIds();
+  if (ids.length >= 2) useElementsStore.getState().groupElements(ids);
+}
+
+export function ungroup(): void {
+  const ids = selectedIds();
+  if (ids.length > 0) useElementsStore.getState().ungroupElements(ids);
+}
+
+export function isSelectionLocked(): boolean {
+  const els = selectedElements();
+  return els.length > 0 && els.every((el) => el.isLocked);
+}
+
+export function toggleLock(): void {
+  const ids = selectedIds();
+  if (ids.length === 0) return;
+  useElementsStore.getState().setElementsLocked(ids, !isSelectionLocked());
+}
+
+export function canGroup(): boolean {
+  return selectedIds().length >= 2;
+}
+
+export function canUngroup(): boolean {
+  return selectedElements().some((el) => el.groupIds.length > 0);
+}
+
+export async function copySelectionAsPng(): Promise<boolean> {
+  const els = selectedElements();
+  const diagramId = useDiagramStore.getState().activeDiagramId;
+  const elements = useElementsStore.getState().elements;
+  // Labels of selected shapes are part of the picture
+  const ids = new Set(els.map((e) => e.id));
+  for (const el of els) {
+    for (const b of el.boundElements) if (b.type === 'text') ids.add(b.id);
+  }
+  const toRender =
+    els.length > 0
+      ? Array.from(ids)
+          .map((id) => elements.get(id))
+          .filter((el): el is MavisElement => !!el && !el.isDeleted)
+      : Array.from(elements.values()).filter((el) => el.diagramId === diagramId && !el.isDeleted);
+  if (toRender.length === 0) return false;
+  const { copyElementsAsPng } = await import('../utils/exportImage');
+  return copyElementsAsPng(toRender, useUIStore.getState().renderMode);
+}
+
+export function zoomToFit(): void {
+  getCanvasController()?.zoomToFit();
+}
+
+export function zoomToSelection(): void {
+  getCanvasController()?.zoomToSelection();
+}

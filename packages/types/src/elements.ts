@@ -60,6 +60,12 @@ export interface BaseElement {
   groupIds: string[];
   isLocked: boolean;
   isDeleted: boolean;
+  /**
+   * Stacking order within a diagram (higher renders on top). Optional for
+   * backward compatibility: elements without it render in insertion order
+   * beneath elements that have one.
+   */
+  zIndex?: number;
 
   // Binding
   boundElements: { id: string; type: string }[];

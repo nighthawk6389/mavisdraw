@@ -401,10 +401,25 @@ export function hitTestElements(
   // Iterate in reverse to find topmost element first
   for (let i = elements.length - 1; i >= 0; i--) {
     if (hitTestElement(canvasPoint, elements[i], map)) {
-      return elements[i];
+      return resolveLabelToContainer(elements[i], map);
     }
   }
   return null;
+}
+
+/**
+ * A label is part of its shape: clicking it selects (and drags) the shape.
+ * Editing the label happens through a double-click on the shape.
+ */
+function resolveLabelToContainer(
+  el: MavisElement,
+  map: Map<string, MavisElement>,
+): MavisElement {
+  if (el.type === 'text' && el.containerId) {
+    const container = map.get(el.containerId);
+    if (container && !container.isDeleted) return container;
+  }
+  return el;
 }
 
 /**
@@ -416,9 +431,28 @@ export function hitTestSelectionBox(
 ): MavisElement[] {
   return elements.filter((element) => {
     if (element.isDeleted) return false;
-    const eb = getElementBounds(element);
-    return boundsOverlap(selectionBounds, eb);
+    // Labels come along with their shape, never on their own
+    if (element.type === 'text' && element.containerId) return false;
+    return boundsOverlap(selectionBounds, getVisualBounds(element));
   });
+}
+
+/** Bounds of what's actually drawn: linear elements are measured by their points. */
+function getVisualBounds(element: MavisElement): Bounds {
+  if (
+    (element.type === 'line' || element.type === 'arrow' || element.type === 'freedraw') &&
+    element.points.length > 0
+  ) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const [px, py] of element.points) {
+      minX = Math.min(minX, element.x + px);
+      minY = Math.min(minY, element.y + py);
+      maxX = Math.max(maxX, element.x + px);
+      maxY = Math.max(maxY, element.y + py);
+    }
+    return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+  }
+  return getElementBounds(element);
 }
 
 function boundsOverlap(a: Bounds, b: Bounds): boolean {
@@ -448,22 +482,40 @@ export function getResizeHandles(bounds: Bounds): { handle: ResizeHandle; x: num
   ];
 }
 
+/** Gap between the selection outline and the selected bounds, in screen pixels. */
+export const SELECTION_PADDING_PX = 4;
+/** Half the clickable size of a resize handle, in screen pixels (generous on purpose). */
+const HANDLE_HIT_HALF_PX = 7;
+
 /**
  * Test if a point hits a resize handle. Returns the handle if hit, null otherwise.
+ * Uses the same geometry the renderer draws: handles centred on the corners and
+ * edge midpoints of the selection outline, sized in screen pixels.
  */
 export function hitTestResizeHandle(
   canvasPoint: Point,
   selectionBounds: Bounds,
+  zoom = 1,
 ): ResizeHandle | null {
-  const handles = getResizeHandles(selectionBounds);
-  for (const h of handles) {
-    if (
-      canvasPoint.x >= h.x &&
-      canvasPoint.x <= h.x + HANDLE_SIZE &&
-      canvasPoint.y >= h.y &&
-      canvasPoint.y <= h.y + HANDLE_SIZE
-    ) {
-      return h.handle;
+  const pad = SELECTION_PADDING_PX / zoom;
+  const half = HANDLE_HIT_HALF_PX / zoom;
+  const x = selectionBounds.x - pad;
+  const y = selectionBounds.y - pad;
+  const w = selectionBounds.width + pad * 2;
+  const h = selectionBounds.height + pad * 2;
+  const centers: [ResizeHandle, number, number][] = [
+    ['top-left', x, y],
+    ['top-right', x + w, y],
+    ['bottom-left', x, y + h],
+    ['bottom-right', x + w, y + h],
+    ['top-center', x + w / 2, y],
+    ['bottom-center', x + w / 2, y + h],
+    ['middle-left', x, y + h / 2],
+    ['middle-right', x + w, y + h / 2],
+  ];
+  for (const [handle, cx, cy] of centers) {
+    if (Math.abs(canvasPoint.x - cx) <= half && Math.abs(canvasPoint.y - cy) <= half) {
+      return handle;
     }
   }
   return null;
@@ -678,7 +730,7 @@ export function hitTestElementsWithGroups(
 
   for (let i = elements.length - 1; i >= 0; i--) {
     if (hitTestElement(canvasPoint, elements[i], map)) {
-      const el = elements[i];
+      const el = resolveLabelToContainer(elements[i], map);
 
       // If element has group IDs, find the outermost group that hasn't been entered
       if (el.groupIds.length > 0) {
