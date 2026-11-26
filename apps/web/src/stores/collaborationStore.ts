@@ -2,10 +2,37 @@ import { create } from 'zustand';
 import * as Y from 'yjs';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { useElementsStore, applyRemoteChanges } from './elementsStore';
+import { docVersion, readElement, writeElement } from '../collab/ydocElements';
+
+/** True while remote changes are being written into the store (no echo back). */
+let applyingRemote = false;
+
+/** True when the diagram's elements are persisted by the live collaboration room. */
+export function isLiveSynced(diagramId: string): boolean {
+  const s = useCollaborationStore.getState();
+  return s.connectionStatus === 'connected' && s.syncedDiagramId === diagramId;
+}
 import { getAccessToken } from '../services/api';
 import type { MavisElement, Viewport, ConnectionStatus } from '@mavisdraw/types';
 
-const WS_URL = import.meta.env.VITE_WS_URL ?? 'ws://localhost:3001';
+/**
+ * WebSocket endpoint of the collaboration server. Accepts VITE_WS_URL or
+ * VITE_API_URL in any form (http(s)/ws(s), with or without the path) and
+ * always returns ws(s)://host/collaboration — the server's route.
+ */
+export function collaborationUrl(
+  wsUrl: string | undefined = import.meta.env.VITE_WS_URL,
+  apiUrl: string | undefined = import.meta.env.VITE_API_URL,
+): string {
+  const url = new URL(wsUrl || apiUrl || 'http://localhost:3001');
+  url.protocol = url.protocol === 'https:' || url.protocol === 'wss:' ? 'wss:' : 'ws:';
+  if (!url.pathname.replace(/\/+$/, '').endsWith('/collaboration')) {
+    url.pathname = `${url.pathname.replace(/\/+$/, '')}/collaboration`;
+  }
+  return url.toString();
+}
+
+const WS_URL = collaborationUrl();
 
 export interface RemoteCursor {
   x: number;
@@ -44,8 +71,8 @@ interface CollaborationState {
   localUserId: string | null;
   /** Unsubscribe function for elementsStore listener */
   _elementsUnsubscribe: (() => void) | null;
-  /** Flag to prevent sync loops: true when applying remote changes to Zustand */
-  _applyingRemoteChanges: boolean;
+  /** Diagram whose room has completed its initial sync (Y.js persists it). */
+  syncedDiagramId: string | null;
 
   // Actions
   connect: (diagramId: string, userId: string, userName: string) => void;
@@ -81,7 +108,7 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
   followingUserId: null,
   localUserId: null,
   _elementsUnsubscribe: null,
-  _applyingRemoteChanges: false,
+  syncedDiagramId: null,
 
   connect: (diagramId: string, userId: string, userName: string) => {
     const state = get();
@@ -107,33 +134,41 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
       },
 
       onDisconnect() {
-        set({ connectionStatus: 'disconnected' });
+        set({ connectionStatus: 'disconnected', syncedDiagramId: null });
       },
 
       onSynced() {
-        // Initial sync complete — load remote elements into Zustand
-        const elementsMap = doc.getMap('elements');
-        if (elementsMap.size > 0) {
-          set({ _applyingRemoteChanges: true });
-          const elements = new Map<string, MavisElement>();
-          elementsMap.forEach((value, key) => {
-            if (value instanceof Y.Map) {
-              elements.set(key, value.toJSON() as MavisElement);
-            }
-          });
-          if (elements.size > 0) {
-            applyRemoteChanges(() =>
-              useElementsStore.setState((prev) => {
-                const next = new Map(prev.elements);
-                for (const [id, el] of elements) {
-                  next.set(id, el);
+        // Two-way initial sync, newest version wins per element:
+        // remote → store, then local-only / newer local → doc
+        const yElements = doc.getMap('elements');
+        applyingRemote = true;
+        try {
+          applyRemoteChanges(() =>
+            useElementsStore.setState((prev) => {
+              const next = new Map(prev.elements);
+              let changed = false;
+              yElements.forEach((value, id) => {
+                const remote = readElement(value);
+                if (!remote) return;
+                const local = next.get(id);
+                if (!local || local.version < remote.version) {
+                  next.set(id, remote);
+                  changed = true;
                 }
-                return { elements: next };
-              }),
-            );
-          }
-          set({ connectionStatus: 'connected', _applyingRemoteChanges: false });
+              });
+              return changed ? { elements: next } : prev;
+            }),
+          );
+        } finally {
+          applyingRemote = false;
         }
+        doc.transact(() => {
+          for (const el of useElementsStore.getState().elements.values()) {
+            if (el.diagramId !== diagramId) continue;
+            if (el.version > docVersion(yElements, el.id)) writeElement(yElements, el);
+          }
+        });
+        set({ connectionStatus: 'connected', syncedDiagramId: diagramId });
       },
 
       onAwarenessUpdate({
@@ -197,81 +232,51 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
     });
     provider.setAwarenessField('diagramId', diagramId);
 
-    // Listen for Y.js element changes from remote peers
+    // Remote → store: observe nested changes too (property-level updates)
     const elementsMap = doc.getMap('elements');
-    elementsMap.observe((event) => {
-      if (event.transaction.local) return;
-
-      set({ _applyingRemoteChanges: true });
-      event.changes.keys.forEach((change, key) => {
-        if (change.action === 'add' || change.action === 'update') {
-          const yElement = elementsMap.get(key);
-          if (yElement && typeof yElement === 'object') {
-            const element =
-              yElement instanceof Y.Map
-                ? (yElement.toJSON() as MavisElement)
-                : (yElement as MavisElement);
-
-            applyRemoteChanges(() =>
-              useElementsStore.setState((state) => {
-                const next = new Map(state.elements);
-                next.set(key, element);
-                return { elements: next };
-              }),
-            );
-          }
-        } else if (change.action === 'delete') {
-          applyRemoteChanges(() =>
-            useElementsStore.setState((state) => {
-              const next = new Map(state.elements);
-              next.delete(key);
-              return { elements: next };
-            }),
-          );
+    elementsMap.observeDeep((events, transaction) => {
+      if (transaction.local) return;
+      const changed = new Set<string>();
+      for (const event of events) {
+        if (event.target === elementsMap) {
+          event.changes.keys.forEach((_change, key) => changed.add(key));
+        } else if (typeof event.path[0] === 'string') {
+          changed.add(event.path[0]);
         }
-      });
-      set({ _applyingRemoteChanges: false });
+      }
+      if (changed.size === 0) return;
+      applyingRemote = true;
+      try {
+        applyRemoteChanges(() =>
+          useElementsStore.setState((state) => {
+            const next = new Map(state.elements);
+            for (const id of changed) {
+              const element = readElement(elementsMap.get(id));
+              if (element) next.set(id, element);
+              else next.delete(id);
+            }
+            return { elements: next };
+          }),
+        );
+      } finally {
+        applyingRemote = false;
+      }
     });
 
-    // Subscribe to Zustand elementsStore for automatic Zustand → Y.js sync
+    // Store → Y.js: write only the elements (and properties) that changed
     const unsubscribe = useElementsStore.subscribe((newState, prevState) => {
-      const currentGet = get();
-      if (currentGet._applyingRemoteChanges || !currentGet.doc) return;
-
-      const yDoc = currentGet.doc;
-      const yElements = yDoc.getMap('elements');
-      const newElements = newState.elements;
-      const oldElements = prevState.elements;
-
-      // Batch Y.js changes in a single transaction
-      yDoc.transact(() => {
-        // Find added or updated elements
-        for (const [id, el] of newElements) {
-          if (el.diagramId !== currentGet.currentDiagramId) continue;
-          const old = oldElements.get(id);
-          if (!old || old.version !== el.version || old.updatedAt !== el.updatedAt) {
-            const yElement = new Y.Map();
-            for (const [key, value] of Object.entries(el)) {
-              yElement.set(key, value);
-            }
-            yElements.set(id, yElement);
-          }
+      if (applyingRemote || newState.elements === prevState.elements) return;
+      const currentDiagramId = get().currentDiagramId;
+      const yElements = doc.getMap('elements');
+      const prevElements = prevState.elements;
+      doc.transact(() => {
+        for (const [id, el] of newState.elements) {
+          if (el.diagramId !== currentDiagramId || prevElements.get(id) === el) continue;
+          writeElement(yElements, el);
         }
-
-        // Find deleted elements (soft-deleted or removed from map)
-        for (const [id, el] of oldElements) {
-          if (el.diagramId !== currentGet.currentDiagramId) continue;
-          const newEl = newElements.get(id);
-          if (!newEl) {
-            yElements.delete(id);
-          } else if (newEl.isDeleted && !el.isDeleted) {
-            // Sync soft-delete
-            const yElement = new Y.Map();
-            for (const [key, value] of Object.entries(newEl)) {
-              yElement.set(key, value);
-            }
-            yElements.set(id, yElement);
-          }
+        for (const [id, el] of prevElements) {
+          if (el.diagramId !== currentDiagramId || newState.elements.has(id)) continue;
+          yElements.delete(id);
         }
       });
     });
@@ -301,7 +306,7 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
       remoteCursors: new Map(),
       followingUserId: null,
       _elementsUnsubscribe: null,
-      _applyingRemoteChanges: false,
+      syncedDiagramId: null,
     });
   },
 
@@ -346,21 +351,13 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
   syncElementToYjs: (element: MavisElement) => {
     const { doc } = get();
     if (!doc) return;
-
-    const elementsMap = doc.getMap('elements');
-    const yElement = new Y.Map();
-    for (const [key, value] of Object.entries(element)) {
-      yElement.set(key, value);
-    }
-    elementsMap.set(element.id, yElement);
+    doc.transact(() => writeElement(doc.getMap('elements'), element));
   },
 
   deleteElementFromYjs: (elementId: string) => {
     const { doc } = get();
     if (!doc) return;
-
-    const elementsMap = doc.getMap('elements');
-    elementsMap.delete(elementId);
+    doc.getMap('elements').delete(elementId);
   },
 
   getRemoteSelectionsForElement: (elementId: string): CollaborationUser[] => {

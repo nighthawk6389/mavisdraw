@@ -8,7 +8,14 @@ import { diagramRoutes } from './routes/diagrams.js';
 import { sharingRoutes } from './routes/sharing.js';
 import { githubRoutes } from './routes/github.js';
 import { agentRoutes } from './routes/agent.js';
-import { createHocuspocusServer } from './ws/hocuspocus.js';
+import { createHocuspocusServer, persistOpenDocuments } from './ws/hocuspocus.js';
+import type { Hocuspocus } from '@hocuspocus/server';
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    hocuspocus: Hocuspocus;
+  }
+}
 
 export async function buildApp() {
   const app = Fastify({
@@ -29,8 +36,14 @@ export async function buildApp() {
 
   await app.register(websocket);
 
-  // Create Hocuspocus server for Y.js collaboration
+  // Create Hocuspocus server for Y.js collaboration; routes use it to write
+  // into live documents instead of racing them
   const hocuspocus = createHocuspocusServer();
+  app.decorate('hocuspocus', hocuspocus);
+  // Live edits are persisted on a debounce; flush them before shutting down
+  app.addHook('onClose', async () => {
+    await persistOpenDocuments(hocuspocus);
+  });
 
   // WebSocket route for collaboration — room per diagram
   app.get('/collaboration', { websocket: true }, (socket, request) => {

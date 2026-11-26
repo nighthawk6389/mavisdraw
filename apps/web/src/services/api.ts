@@ -50,8 +50,10 @@ export async function apiFetch<T = unknown>(
   options: RequestInit = {},
 ): Promise<T> {
   const url = `${API_BASE}${path}`;
+  // Only declare a JSON body when there is one: Fastify rejects an empty
+  // body sent as application/json (e.g. POST /api/share/:token)
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
     ...(options.headers as Record<string, string>),
   };
 
@@ -248,6 +250,28 @@ export async function apiSaveDiagram(
     method: 'POST',
     body: JSON.stringify({ trigger, label }),
   });
+}
+
+export interface SnapshotSummary {
+  id: string;
+  diagramId: string;
+  version: number;
+  label: string | null;
+  trigger: 'auto' | 'manual';
+  createdBy: string;
+  elementCount: number;
+  createdAt: string;
+}
+
+export async function apiListSnapshots(diagramId: string): Promise<{ snapshots: SnapshotSummary[] }> {
+  return apiFetch(`/api/diagrams/${diagramId}/snapshots?limit=100`);
+}
+
+export async function apiRestoreSnapshot(
+  diagramId: string,
+  snapshotId: string,
+): Promise<{ diagram: DiagramResponse }> {
+  return apiFetch(`/api/diagrams/${diagramId}/snapshots/${snapshotId}/restore`, { method: 'POST' });
 }
 
 export async function apiListDiagrams(projectId: string): Promise<{ diagrams: DiagramResponse[] }> {

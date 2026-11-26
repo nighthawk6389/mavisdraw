@@ -12,13 +12,32 @@ const savedElements = new Map<string, Map<string, number>>();
 const savedMeta = new Map<string, number>();
 
 /** Record what the server holds for a diagram (after a load or a save). */
-export function recordSaved(diagramId: string, elements: MavisElement[], metaUpdatedAt?: number): void {
+export function recordSaved(
+  diagramId: string,
+  elements: MavisElement[],
+  metaUpdatedAt?: number,
+): void {
   const versions = new Map<string, number>();
   for (const el of elements) {
     if (el.diagramId === diagramId && !el.isDeleted) versions.set(el.id, el.version);
   }
   savedElements.set(diagramId, versions);
   if (metaUpdatedAt !== undefined) savedMeta.set(diagramId, metaUpdatedAt);
+}
+
+// ── Flushing pending saves ─────────────────────────────────────────────
+// The autosave hook registers its "save everything dirty now" function so
+// other code (e.g. taking a version snapshot) can make sure the server has
+// the latest edits first instead of waiting out the debounce.
+let saveFlusher: (() => Promise<void>) | null = null;
+
+export function registerSaveFlusher(flush: (() => Promise<void>) | null): void {
+  saveFlusher = flush;
+}
+
+/** Save any unsaved edits now. Resolves once the server has them (or no autosave is mounted). */
+export async function flushPendingSaves(): Promise<void> {
+  if (saveFlusher) await saveFlusher();
 }
 
 export function resetSaveTracking(): void {
@@ -71,3 +90,8 @@ export function findDirtyDiagrams(
   return dirty;
 }
 
+/** True when the diagram's own fields (title, background, layers...) changed since the last save. */
+export function isMetaDirty(diagram: Diagram): boolean {
+  const meta = savedMeta.get(diagram.id);
+  return meta === undefined || meta !== diagram.updatedAt;
+}

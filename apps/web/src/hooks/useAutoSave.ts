@@ -1,6 +1,12 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import type { Diagram, MavisElement } from '@mavisdraw/types';
-import { findDirtyDiagrams, recordSaved } from '../services/saveTracker';
+import {
+  findDirtyDiagrams,
+  isMetaDirty,
+  recordSaved,
+  registerSaveFlusher,
+} from '../services/saveTracker';
+import { isLiveSynced } from '../stores/collaborationStore';
 import { useElementsStore } from '../stores/elementsStore';
 import { useDiagramStore } from '../stores/diagramStore';
 import { useAuthStore } from '../stores/authStore';
@@ -12,6 +18,23 @@ export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 const DEBOUNCE_MS = 1500;
 
 async function saveDiagram(diagram: Diagram, elements: MavisElement[]): Promise<void> {
+  // A live collaboration room persists the elements itself (and merges
+  // everyone's edits); writing them over REST too would just race it.
+  if (isLiveSynced(diagram.id)) {
+    if (isMetaDirty(diagram)) {
+      await apiUpdateDiagram(diagram.id, {
+        title: diagram.title,
+        viewBackgroundColor: diagram.viewBackgroundColor,
+        gridEnabled: diagram.gridEnabled,
+        gridSize: diagram.gridSize,
+        renderMode: diagram.renderMode,
+        layers: diagram.layers,
+      });
+    }
+    recordSaved(diagram.id, elements, diagram.updatedAt);
+    return;
+  }
+
   const body = {
     elements,
     title: diagram.title,
@@ -92,6 +115,16 @@ export function useAutoSave(activeDiagramId: string | null) {
     });
     return savingRef.current;
   }, []);
+
+  // Let other code (version snapshots) save pending edits immediately
+  useEffect(() => {
+    const flush = async () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      await saveDirty();
+    };
+    registerSaveFlusher(flush);
+    return () => registerSaveFlusher(null);
+  }, [saveDirty]);
 
   // Debounce after any change to elements or diagram metadata
   useEffect(() => {

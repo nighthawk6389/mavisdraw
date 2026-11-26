@@ -16,6 +16,7 @@ import { installTestHooks } from '../../utils/testHooks';
 import { cssFont, measureText, whenFontsReady } from '../../utils/fonts';
 import { insertImageFile } from '../../utils/imageInsert';
 import { registerNewDiagram } from '../../services/diagramSync';
+import { usePermissionStore } from '../../stores/permissionStore';
 import { useViewportStore } from '../../stores/viewportStore';
 import { sortByStacking, withoutHistory } from '../../stores/elementsStore';
 import { WheelInterpreter } from './wheel';
@@ -615,6 +616,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         );
       },
       getDrawnCount: () => renderer.lastDrawnCount,
+      getConnectionStatus: () => useCollaborationStore.getState().connectionStatus,
     });
 
     // Publish pan/zoom to React UI (zoom readout) and collaborators
@@ -792,6 +794,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         onPortalCreated: (portalElement: MavisElement) => {
           handlePortalCreated(portalElement);
         },
+        isReadOnly: () => !usePermissionStore.getState().canEdit,
       },
       activeDiagramIdRef.current,
     );

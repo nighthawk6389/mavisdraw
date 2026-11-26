@@ -1,20 +1,60 @@
 import { Hocuspocus } from '@hocuspocus/server';
 import { verifyAccessToken } from '../services/authService.js';
 import { getDiagram, updateDiagram, checkProjectAccess } from '../services/diagramService.js';
+import type * as Y from 'yjs';
+import {
+  applyState,
+  encodeState,
+  readLiveElements,
+  seedElements,
+  type ElementJSON,
+} from './ydocElements.js';
 
-export function createHocuspocusServer() {
+export const DOCUMENT_PREFIX = 'diagram:';
+
+export function documentNameFor(diagramId: string): string {
+  return `${DOCUMENT_PREFIX}${diagramId}`;
+}
+
+/** Write a live document to the database: readable JSON (REST, exports) plus the CRDT state. */
+export async function persistDocument(documentName: string, document: Y.Doc): Promise<void> {
+  const diagramId = documentName.replace(DOCUMENT_PREFIX, '');
+  await updateDiagram(diagramId, {
+    elements: readLiveElements(document),
+    yjsState: encodeState(document),
+  });
+}
+
+/**
+ * Persist every open document now, bypassing the store debounce. Called on
+ * shutdown so a deploy never drops the last few seconds of live edits.
+ */
+export async function persistOpenDocuments(server: Pick<Hocuspocus, 'documents'>): Promise<void> {
+  const pending: Promise<void>[] = [];
+  server.documents.forEach((document, name) => {
+    // A document still loading holds nothing worth saving (and would overwrite)
+    if (document.isLoading) return;
+    pending.push(
+      persistDocument(name, document).catch((err) => {
+        console.error(`Failed to persist ${name} on shutdown:`, err);
+      }),
+    );
+  });
+  await Promise.all(pending);
+}
+
+export function createHocuspocusServer(): Hocuspocus {
   const server = new Hocuspocus({
     port: 0, // Don't listen on its own port — we attach to Fastify
 
-    async onAuthenticate({ token, documentName }) {
+    async onAuthenticate({ token, documentName, connection }) {
       if (!token) {
         throw new Error('Authentication required');
       }
 
       const payload = verifyAccessToken(token);
 
-      // documentName format: "diagram:<diagramId>"
-      const diagramId = documentName.replace('diagram:', '');
+      const diagramId = documentName.replace(DOCUMENT_PREFIX, '');
       const diagram = await getDiagram(diagramId);
       if (!diagram) {
         throw new Error('Diagram not found');
@@ -24,6 +64,9 @@ export function createHocuspocusServer() {
       if (!access) {
         throw new Error('Access denied');
       }
+
+      // Viewers can watch live but their updates are rejected server-side
+      connection.readOnly = access === 'viewer';
 
       return {
         user: {
@@ -35,63 +78,28 @@ export function createHocuspocusServer() {
     },
 
     async onLoadDocument({ document, documentName }) {
-      const diagramId = documentName.replace('diagram:', '');
+      const diagramId = documentName.replace(DOCUMENT_PREFIX, '');
       const diagram = await getDiagram(diagramId);
+      if (!diagram) return document;
 
-      if (diagram) {
-        // Load existing elements into the Y.Doc
-        const elementsMap = document.getMap('elements');
-        const elements = diagram.elements as Record<string, unknown>[];
-
-        if (Array.isArray(elements)) {
-          for (const element of elements) {
-            const el = element as { id?: string };
-            if (el.id) {
-              const elementMap = new (await import('yjs')).Map();
-              for (const [key, value] of Object.entries(element)) {
-                elementMap.set(key, value);
-              }
-              elementsMap.set(el.id, elementMap);
-            }
-          }
-        }
-
-        // Load app state
-        const appState = document.getMap('appState');
-        appState.set('viewBackgroundColor', diagram.viewBackgroundColor);
-        appState.set('gridEnabled', diagram.gridEnabled);
-        appState.set('gridSize', diagram.gridSize);
-        appState.set('renderMode', diagram.renderMode);
+      if (diagram.yjsState) {
+        // Resume the CRDT exactly where the last session left it
+        applyState(document, diagram.yjsState);
+      } else if (Array.isArray(diagram.elements)) {
+        seedElements(document, diagram.elements as ElementJSON[]);
       }
+
+      const appState = document.getMap('appState');
+      appState.set('viewBackgroundColor', diagram.viewBackgroundColor);
+      appState.set('gridEnabled', diagram.gridEnabled);
+      appState.set('gridSize', diagram.gridSize);
+      appState.set('renderMode', diagram.renderMode);
 
       return document;
     },
 
     async onStoreDocument({ documentName, document }) {
-      const diagramId = documentName.replace('diagram:', '');
-
-      // Convert Y.js elements map back to array
-      const elementsMap = document.getMap('elements');
-      const elements: Record<string, unknown>[] = [];
-
-      elementsMap.forEach((value, key) => {
-        if (value instanceof (globalThis as any).Map || (value && typeof value === 'object' && 'toJSON' in value)) {
-          elements.push((value as any).toJSON());
-        } else {
-          elements.push(value as Record<string, unknown>);
-        }
-      });
-
-      // Get app state
-      const appState = document.getMap('appState');
-
-      await updateDiagram(diagramId, {
-        elements,
-        viewBackgroundColor: (appState.get('viewBackgroundColor') as string) ?? '#ffffff',
-        gridEnabled: (appState.get('gridEnabled') as boolean) ?? true,
-        gridSize: (appState.get('gridSize') as number) ?? 20,
-        renderMode: (appState.get('renderMode') as string) ?? 'sketchy',
-      });
+      await persistDocument(documentName, document);
     },
 
     // Debounce persistence to avoid too many writes

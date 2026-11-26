@@ -1306,6 +1306,54 @@ export function reorder(order: string[], moving: Set<string>, action: ZOrderActi
   return result;
 }
 
+// ── Read-only mode (viewers) ───────────────────────────────────
+// Every local mutation becomes a no-op; remote updates (setState via
+// applyRemoteChanges) still flow in so viewers watch edits live.
+let readOnly = false;
+
+export function setElementsReadOnly(value: boolean): void {
+  readOnly = value;
+}
+
+export function isElementsReadOnly(): boolean {
+  return readOnly;
+}
+
+const MUTATORS = [
+  'addElement',
+  'updateElement',
+  'updateElementSilent',
+  'updateElements',
+  'deleteElement',
+  'deleteElements',
+  'discardElements',
+  'bindArrow',
+  'unbindArrow',
+  'moveElementWithBindings',
+  'groupElements',
+  'ungroupElements',
+  'pasteElements',
+  'duplicateElements',
+  'alignElements',
+  'distributeElements',
+  'reorderElements',
+  'setElementsLocked',
+  'undo',
+  'redo',
+] as const;
+
+{
+  const original = useElementsStore.getState();
+  const guarded: Partial<ElementsState> = {};
+  for (const name of MUTATORS) {
+    const fn = original[name] as (...args: unknown[]) => unknown;
+    const fallback = name === 'pasteElements' || name === 'duplicateElements' ? [] : name === 'groupElements' ? '' : undefined;
+    (guarded as Record<string, unknown>)[name] = (...args: unknown[]) =>
+      readOnly ? fallback : fn(...args);
+  }
+  useElementsStore.setState(guarded);
+}
+
 // ── History recorder ───────────────────────────────────────────
 // Observe every elements change and attribute it to the open undo step.
 // Store operations that manage history themselves (undo/redo/reset) change

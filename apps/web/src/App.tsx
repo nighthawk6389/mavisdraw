@@ -33,7 +33,10 @@ import { openImportDialog } from './components/export/ImportHandler';
 import { useDiagramStore } from './stores/diagramStore';
 import LoginPage from './routes/login';
 import Dashboard from './routes/dashboard';
-import { apiGetDiagram, apiListDiagrams } from './services/api';
+import { apiGetDiagram, apiGetProject, apiJoinViaShareLink, apiListDiagrams } from './services/api';
+import { navigate, projectPath, reflectPath, useRoute } from './routing';
+import { usePermissionStore, type ProjectRole } from './stores/permissionStore';
+import { toast } from './stores/toastStore';
 import {
   isDiagramLoaded,
   loadDiagramElements,
@@ -44,7 +47,6 @@ import {
 import { recordSaved, resetSaveTracking } from './services/saveTracker';
 import type { MavisElement, Diagram } from '@mavisdraw/types';
 
-type AppView = 'loading' | 'login' | 'dashboard' | 'editor';
 
 function SaveIndicator({ status }: { status: SaveStatus }) {
   if (status === 'idle') return null;
@@ -88,6 +90,16 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
 
   const diagrams = useDiagramStore((s) => s.diagrams);
   const projectId = diagrams.get(activeDiagramId)?.projectId ?? null;
+  const rootDiagramId = useDiagramStore((s) => s.diagramPath[0]);
+  const canEditProject = usePermissionStore((s) => s.canEdit);
+  const role = usePermissionStore((s) => s.role);
+  const canShare = role === 'owner' || role === 'admin';
+
+  // The address bar always points at what's on screen (shareable deep link)
+  useEffect(() => {
+    if (!projectId) return;
+    reflectPath(projectPath(projectId, activeDiagramId === rootDiagramId ? null : activeDiagramId));
+  }, [projectId, activeDiagramId, rootDiagramId]);
 
   // Nested diagrams load their contents the first time they're opened
   useEffect(() => {
@@ -129,6 +141,15 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
           <SaveIndicator status={saveStatus} />
         </div>
         <div className="flex items-center gap-3 pr-3">
+          {!canEditProject && (
+            <span
+              className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800"
+              title="You have view access to this project"
+              data-testid="view-only-badge"
+            >
+              View only
+            </span>
+          )}
           <PresenceAvatars />
           <button
             onClick={() => useUIStore.getState().setShowCommandPalette(true)}
@@ -139,13 +160,15 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
             Search
             <kbd className="rounded bg-gray-100 px-1 text-[10px] text-gray-500">{shortcut('Mod+K')}</kbd>
           </button>
-          <button
-            onClick={openImportDialog}
-            className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 border border-gray-300 rounded"
-            title="Import file"
-          >
-            Import
-          </button>
+          {canEditProject && (
+            <button
+              onClick={openImportDialog}
+              className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 border border-gray-300 rounded"
+              title="Import file"
+            >
+              Import
+            </button>
+          )}
           <button
             onClick={() => useUIStore.getState().toggleExportDialog()}
             className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 border border-gray-300 rounded"
@@ -160,33 +183,41 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
           >
             History
           </button>
-          <button
-            onClick={() => useUIStore.getState().toggleGitHubDialog()}
-            className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 border border-gray-300 rounded"
-            title="GitHub connections"
-          >
-            GitHub
-          </button>
-          <button
-            onClick={() => useUIStore.getState().toggleAgentChat()}
-            className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 border border-gray-300 rounded"
-            title="AI Chat"
-          >
-            AI Chat
-          </button>
+          {canEditProject && (
+            <>
+              <button
+                onClick={() => useUIStore.getState().toggleGitHubDialog()}
+                className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 border border-gray-300 rounded"
+                title="GitHub connections"
+              >
+                GitHub
+              </button>
+              <button
+                onClick={() => useUIStore.getState().toggleAgentChat()}
+                className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 border border-gray-300 rounded"
+                title="AI Chat"
+              >
+                AI Chat
+              </button>
+            </>
+          )}
           <div className="w-px h-4 bg-gray-300" />
-          <button
-            onClick={() => setShowShareDialog(true)}
-            className="text-xs text-white bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded"
-          >
-            Share
-          </button>
-          <button
-            onClick={manualSave}
-            className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 border border-gray-300 rounded"
-          >
-            Save
-          </button>
+          {canShare && (
+            <button
+              onClick={() => setShowShareDialog(true)}
+              className="text-xs text-white bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded"
+            >
+              Share
+            </button>
+          )}
+          {canEditProject && (
+            <button
+              onClick={manualSave}
+              className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 border border-gray-300 rounded"
+            >
+              Save
+            </button>
+          )}
           <span className="text-xs text-gray-500">{user?.name}</span>
           <button onClick={logout} className="text-xs text-gray-400 hover:text-gray-600">
             Sign out
@@ -220,10 +251,10 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
           )}
         </div>
 
-        <StylePanel />
-        <LayerPanel />
+        {canEditProject && <StylePanel />}
+        {canEditProject && <LayerPanel />}
         <VersionHistoryPanel />
-        {showAgentChat && (
+        {showAgentChat && canEditProject && (
           <Suspense fallback={null}>
             <AgentPanel />
           </Suspense>
@@ -253,62 +284,109 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
   );
 }
 
+/** Load a project into the editor stores; optionally open a nested diagram. */
+async function loadProject(projectId: string, diagramId: string | null): Promise<void> {
+  const { project } = await apiGetProject(projectId);
+  if (!project.rootDiagramId) throw new Error('Project has no root diagram');
+  usePermissionStore.getState().setRole((project.role as ProjectRole | undefined) ?? 'viewer');
+
+  // The whole hierarchy (titles/structure); elements load per diagram on open
+  const response = await apiListDiagrams(projectId);
+  const newDiagrams = new Map<string, Diagram>();
+  for (const d of response.diagrams) {
+    const diagram = toDiagram(d);
+    newDiagrams.set(diagram.id, diagram);
+  }
+
+  resetDiagramSync(newDiagrams.keys());
+  resetSaveTracking();
+
+  const rootId = project.rootDiagramId;
+  const rootResponse = await apiGetDiagram(rootId);
+  const elements = rootResponse.diagram.elements as MavisElement[];
+  useElementsStore.getState().setElements(elements);
+  markDiagramLoaded(rootId);
+  recordSaved(rootId, elements, newDiagrams.get(rootId)?.updatedAt);
+
+  useDiagramStore.setState({
+    diagrams: newDiagrams,
+    activeDiagramId: rootId,
+    diagramPath: [rootId],
+    viewportCache: new Map(),
+  });
+  // Deep link into a nested diagram
+  if (diagramId && diagramId !== rootId && newDiagrams.has(diagramId)) {
+    useDiagramStore.getState().navigateToDiagram(diagramId);
+  }
+}
+
 export default function App() {
   const { isAuthenticated, isLoading, initialize } = useAuthStore();
-  const [userView, setUserView] = useState<'dashboard' | 'editor'>('dashboard');
+  const route = useRoute();
+  const [openedProjectId, setOpenedProjectId] = useState<string | null>(null);
+  const [openError, setOpenError] = useState<string | null>(null);
 
   useEffect(() => {
     initialize();
   }, [initialize]);
 
-  // Determine active view based on auth state and user selection
-  const view: AppView = isLoading
-    ? 'loading'
-    : !isAuthenticated
-      ? 'login'
-      : userView;
+  // /share/:token → join the project, then open it
+  useEffect(() => {
+    if (!isAuthenticated || route.name !== 'share') return;
+    let cancelled = false;
+    apiJoinViaShareLink(route.token)
+      .then(({ projectId, role }) => {
+        if (cancelled) return;
+        toast(`You now have ${role === 'viewer' ? 'view' : 'edit'} access`, 'success');
+        navigate(projectPath(projectId), { replace: true });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        toast(`This share link doesn't work: ${err instanceof Error ? err.message : err}`, 'error');
+        navigate('/', { replace: true });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated, route]);
 
-  const handleOpenProject = useCallback(
-    async (projectId: string, rootDiagramId: string) => {
-      try {
-        // Load the whole hierarchy (titles/structure); elements load per diagram on open
-        const response = await apiListDiagrams(projectId);
-        const newDiagrams = new Map<string, Diagram>();
-        for (const d of response.diagrams) {
-          const diagram = toDiagram(d);
-          newDiagrams.set(diagram.id, diagram);
+  // /p/:projectId[/d/:diagramId] → load the project once
+  const routeProjectId = route.name === 'project' ? route.projectId : null;
+  const routeDiagramId = route.name === 'project' ? route.diagramId : null;
+  useEffect(() => {
+    if (!isAuthenticated || !routeProjectId || routeProjectId === openedProjectId) return;
+    let cancelled = false;
+    loadProject(routeProjectId, routeDiagramId)
+      .then(() => {
+        if (!cancelled) {
+          setOpenError(null);
+          setOpenedProjectId(routeProjectId);
         }
-
-        resetDiagramSync(newDiagrams.keys());
-        resetSaveTracking();
-
-        // Load root diagram elements
-        const rootResponse = await apiGetDiagram(rootDiagramId);
-        const elements = rootResponse.diagram.elements as MavisElement[];
-        useElementsStore.getState().setElements(elements);
-        markDiagramLoaded(rootDiagramId);
-        recordSaved(rootDiagramId, elements, newDiagrams.get(rootDiagramId)?.updatedAt);
-
-        // Replace all diagrams with only this project's diagrams
-        useDiagramStore.setState({
-          diagrams: newDiagrams,
-          activeDiagramId: rootDiagramId,
-          diagramPath: [rootDiagramId],
-        });
-
-        setUserView('editor');
-      } catch (err) {
+      })
+      .catch((err) => {
+        if (cancelled) return;
         console.error('Failed to open project:', err);
-      }
-    },
-    [],
-  );
+        setOpenError(err instanceof Error ? err.message : 'Failed to open project');
+        toast("Couldn't open that project", 'error');
+        navigate('/', { replace: true });
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Only the project id triggers a (re)load; diagram changes are handled in the editor
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, routeProjectId, openedProjectId]);
 
-  const handleBackToDashboard = useCallback(() => {
-    setUserView('dashboard');
+  const handleOpenProject = useCallback((projectId: string) => {
+    navigate(projectPath(projectId));
   }, []);
 
-  if (view === 'loading') {
+  const handleBackToDashboard = useCallback(() => {
+    setOpenedProjectId(null);
+    navigate('/');
+  }, []);
+
+  if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-gray-500">Loading...</div>
@@ -316,13 +394,27 @@ export default function App() {
     );
   }
 
-  if (view === 'login') {
-    return <LoginPage />;
+  if (!isAuthenticated) {
+    return <LoginPage sharedLink={route.name === 'share'} />;
   }
 
-  if (view === 'dashboard') {
-    return <Dashboard onOpenProject={handleOpenProject} />;
+  if (route.name === 'project' && openedProjectId === route.projectId) {
+    return <EditorView onBackToDashboard={handleBackToDashboard} />;
   }
 
-  return <EditorView onBackToDashboard={handleBackToDashboard} />;
+  if (route.name === 'project' || route.name === 'share') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-gray-500">{openError ?? 'Opening…'}</div>
+        <Toaster />
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <Dashboard onOpenProject={handleOpenProject} />
+      <Toaster />
+    </>
+  );
 }

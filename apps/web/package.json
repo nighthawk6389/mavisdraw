@@ -24,7 +24,6 @@
     "@mavisdraw/math": "workspace:*",
     "@mavisdraw/types": "workspace:*",
     "ai": "^6.0.116",
-    "idb": "^8.0.0",
     "lib0": "^0.2.0",
     "nanoid": "^5.1.0",
     "react": "^19.0.0",

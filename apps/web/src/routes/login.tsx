@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import LoginForm from '../components/auth/LoginForm';
 import SignupForm from '../components/auth/SignupForm';
 
-export default function LoginPage() {
+export default function LoginPage({ sharedLink = false }: { sharedLink?: boolean }) {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
 
   return (
@@ -11,6 +11,15 @@ export default function LoginPage() {
         <h1 className="text-4xl font-bold text-gray-900 mb-2">MavisDraw</h1>
         <p className="text-gray-600">Collaborative diagramming with nested drill-down support</p>
       </div>
+
+      {sharedLink && (
+        <p
+          role="status"
+          className="mb-4 max-w-md rounded-md border border-blue-200 bg-white px-4 py-2 text-center text-sm text-blue-800"
+        >
+          Someone shared a diagram with you. Sign in or create an account to open it.
+        </p>
+      )}
 
       {mode === 'login' ? (
         <LoginForm onSwitchToSignup={() => setMode('signup')} />

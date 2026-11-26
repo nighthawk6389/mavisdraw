@@ -92,6 +92,9 @@ export interface InteractionCallbacks {
 
   // Portal drill-down
   onPortalDrillDown?: (portalElement: MavisElement) => void;
+
+  /** Viewers can look, select and drill in, but not change anything. */
+  isReadOnly?: () => boolean;
   onPortalCreated?: (portalElement: MavisElement) => void;
 }
 
@@ -290,6 +293,11 @@ export class InteractionManager {
       this.mode = 'panning';
       this.rightButtonDown = true;
       this.rightButtonTravel = 0;
+      return;
+    }
+
+    if (this.callbacks.isReadOnly?.()) {
+      this.onReadOnlyPointerDown(screenX, screenY, canvasPoint, event.shiftKey);
       return;
     }
 
@@ -1127,6 +1135,36 @@ export class InteractionManager {
     }
 
     this.rightButtonDown = false;
+    this.mode = 'idle';
+  }
+
+  /** Read-only pointer handling: select, box-select and drill into portals. */
+  private onReadOnlyPointerDown(screenX: number, screenY: number, canvasPoint: Point, shiftKey: boolean): void {
+    const elements = this.callbacks.getElements();
+    const hit = hitTestElementsWithGroups(canvasPoint, elements, this.enteredGroupIds);
+    if (!hit) {
+      if (!shiftKey) this.callbacks.clearSelection();
+      this.mode = 'selecting';
+      this.callbacks.startSelectionBox(canvasPoint);
+      this.resetClickTracking();
+      return;
+    }
+    const now = Date.now();
+    const isDoubleClick =
+      now - this.lastClickTime < InteractionManager.DOUBLE_CLICK_THRESHOLD &&
+      this.lastClickId === hit.id &&
+      Math.hypot(screenX - this.lastClickPoint.x, screenY - this.lastClickPoint.y) <=
+        InteractionManager.DOUBLE_CLICK_SLOP_PX;
+    this.lastClickTime = now;
+    this.lastClickId = hit.id;
+    this.lastClickPoint = { x: screenX, y: screenY };
+    if (isDoubleClick && hit.type === 'portal') {
+      this.callbacks.onPortalDrillDown?.(hit);
+      return;
+    }
+    const groupIds = getGroupElementIds(hit, elements, this.enteredGroupIds);
+    if (shiftKey) groupIds.forEach((id) => this.callbacks.addToSelection(id));
+    else this.callbacks.selectMultiple(groupIds);
     this.mode = 'idle';
   }
 

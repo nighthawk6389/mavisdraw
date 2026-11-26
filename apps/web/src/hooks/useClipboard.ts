@@ -12,6 +12,7 @@ import { useSelectionStore } from '../stores/selectionStore';
 import { getCanvasController } from '../components/canvas/canvasController';
 import { insertImageFile } from '../utils/imageInsert';
 import { measureText } from '../utils/fonts';
+import { canEdit } from '../stores/permissionStore';
 
 /**
  * Text pasted onto the canvas that isn't MavisDraw data. Returns true when
@@ -88,7 +89,7 @@ export function useClipboard(enabled = true): void {
     };
 
     const onCut = (e: ClipboardEvent) => {
-      if (isEditableTarget(e.target)) return;
+      if (isEditableTarget(e.target) || !canEdit()) return;
       cancelFallback();
       const envelope = copySelection();
       if (!envelope) return;
@@ -99,6 +100,7 @@ export function useClipboard(enabled = true): void {
 
     const onPaste = (e: ClipboardEvent) => {
       if (isEditableTarget(e.target) || isEditableTarget(document.activeElement)) return;
+      if (!canEdit()) return;
       cancelFallback();
       const data = e.clipboardData;
       e.preventDefault();
@@ -131,6 +133,8 @@ export function useClipboard(enabled = true): void {
       if (key === 'c') {
         // Keep the in-app clipboard current even if no copy event follows
         copySelection();
+      } else if (!canEdit()) {
+        return;
       } else if (key === 'x') {
         scheduleFallback(() => {
           copySelection();

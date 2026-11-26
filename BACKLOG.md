@@ -4,23 +4,28 @@
 
 ### Data integrity (P0)
 
-- **REST autosave and Hocuspocus both write `diagrams.elements`** — last writer wins between collaborators (`useAutoSave.ts:52`, `hocuspocus.ts:88`). Snapshot restore (`routes/diagrams.ts:272`) never reaches the live Y.Doc.
-- **Whole-element `Y.Map` replacement on every change** (`collaborationStore.ts:255-261`) — concurrent edits to different properties of one element don't merge; doc bloat. Remote deletes hard-delete while local deletes are soft (`collaborationStore.ts:224-229`).
-- **Version history is IndexedDB-only** (`utils/versionDb.ts`) — not shared with collaborators or across devices.
+- ~~REST autosave and Hocuspocus both write `diagrams.elements`~~ — fixed in Phase 3: while a room is live, Y.js owns elements (CRDT state persisted in `diagrams.yjs_state`), REST writes merge into the live doc by version, and snapshot restore goes through the live doc.
+- ~~Whole-element `Y.Map` replacement~~ — fixed: per-property writes (`ws/ydocElements.ts`, `src/collab/ydocElements.ts`).
+- ~~Version history is IndexedDB-only~~ — fixed: shared server-side versions.
+- **Undo can revert a teammate's later change to the same property.** Local undo is patch-based (remote changes are never recorded, so it never undoes *their* edits), but undoing your own move restores your "before" value even if a teammate moved the same shape afterwards. A per-origin `Y.UndoManager`, or skipping keys whose live value no longer matches the entry's "after", would fix it (`stores/history.ts`, `elementsStore.undo`).
 
 ### Security (P0)
 
 - **GitHub client secret exfiltration / SSRF via client-supplied `enterpriseUrl`** (`routes/github.ts:57-67` → `githubService.ts:99-116`).
-- **Viewers can write over WebSocket** — no `connection.readOnly` for viewers; access only checked at connect (`ws/hocuspocus.ts:9-35`).
+- ~~Viewers can write over WebSocket~~ — fixed: viewers connect with `connection.readOnly`, and the editor is read-only for them.
 - **Production seeds `demo@mavisdraw.dev` / `password123`** (`render.yaml:16`, `db/seed.ts`).
-- **Share tokens returned to every collaborator** (`routes/sharing.ts:62-77`); links never expire.
+- **Share links never expire** and can't be revoked individually (tokens are now only shown to owners/admins — `routes/sharing.ts`).
 - **AI agent:** the diagram now goes in a delimited data message, client system messages are dropped, and turns are rate-limited/size-capped — but `browse_code`/`read_file` can still read any repo the user's GitHub token can see; restrict them to repos linked in the diagram.
 - OAuth `state` never verified (`githubService.ts:94`); no env validation and a hard-coded JWT fallback secret (`authService.ts:8`); `trustProxy` unset so IP rate limiting is shared by all users behind the proxy (`app.ts:14`).
 
-### Broken features
+### Roadmap Phase 3 items not done yet
 
-- **Share links lead nowhere** — `ShareDialog` builds `/share/:token` but there is no router and `apiJoinViaShareLink` (`api.ts:275`) is never called.
-- **No graceful shutdown** — Hocuspocus debounced writes are lost on deploy (`apps/server/src/index.ts`).
+- **Comments & @mentions** pinned to elements, resolve threads, notifications — not started (the biggest remaining Teams gap).
+- **Visual diff between versions** ("what changed since last week") — versions are full JSON snapshots; there's no diff view yet. Auto versions are pruned to the latest 50 per diagram.
+- **Workspaces/orgs, invite by email, commenter role, folders, transfer ownership** — sharing is still per project (owner/admin/editor/viewer + share links).
+- **Presentation mode** (guided path through zoom levels) — not started; follow mode exists.
+- **Offline editing** — edits made while the room is disconnected are kept locally and REST-saved, then reconciled by version on reconnect; there's no `y-indexeddb` queue, so closing the tab while offline loses unsaved work.
+- **Only the diagram on screen is live.** Nested diagrams you're not looking at load over REST (fresh, since REST reads now come from the live room), but you don't see teammates' edits there until you navigate in.
 
 ### Roadmap Phase 2 items not done yet
 

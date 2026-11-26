@@ -15,6 +15,40 @@ import {
   checkProjectAccess,
 } from '../services/diagramService.js';
 import { requireAuth } from '../middleware/auth.js';
+import { documentNameFor } from '../ws/hocuspocus.js';
+import {
+  mergeElements,
+  readLiveElements,
+  replaceElements,
+  type ElementJSON,
+} from '../ws/ydocElements.js';
+import type { Document } from '@hocuspocus/server';
+
+/** The open collaboration document for a diagram, if anyone is editing it live. */
+function liveDocument(documents: Map<string, Document>, diagramId: string): Document | undefined {
+  return documents.get(documentNameFor(diagramId));
+}
+
+/** Never send the CRDT blob to REST clients. */
+function publicDiagram<T extends { yjsState?: string | null; createdAt: Date; updatedAt: Date }>(
+  d: T,
+) {
+  const { yjsState: _yjsState, ...rest } = d;
+  return { ...rest, createdAt: d.createdAt.toISOString(), updatedAt: d.updatedAt.toISOString() };
+}
+
+/**
+ * A diagram as REST clients should see it: while a live room is open its
+ * contents are newer than the last debounced flush to the database.
+ */
+function currentDiagram<
+  T extends { id: string; yjsState?: string | null; createdAt: Date; updatedAt: Date },
+>(documents: Map<string, Document>, d: T) {
+  const live = liveDocument(documents, d.id);
+  const base = publicDiagram(d);
+  if (!live) return base;
+  return { ...base, elements: readLiveElements(live) };
+}
 
 /** Client-generated ids (nanoid) let the editor create nested diagrams offline-first. */
 const diagramIdSchema = z.string().regex(/^[A-Za-z0-9_-]{8,64}$/, 'Invalid diagram id');
@@ -77,13 +111,7 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
         if (existing.projectId !== parsed.data.projectId) {
           return reply.code(409).send({ error: 'Diagram id already in use' });
         }
-        return reply.code(200).send({
-          diagram: {
-            ...existing,
-            createdAt: existing.createdAt.toISOString(),
-            updatedAt: existing.updatedAt.toISOString(),
-          },
-        });
+        return reply.code(200).send({ diagram: publicDiagram(existing) });
       }
     }
 
@@ -97,11 +125,7 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
     });
 
     return reply.code(201).send({
-      diagram: {
-        ...diagram,
-        createdAt: diagram.createdAt.toISOString(),
-        updatedAt: diagram.updatedAt.toISOString(),
-      },
+      diagram: publicDiagram(diagram!),
     });
   });
 
@@ -121,11 +145,7 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
     }
 
     return reply.code(200).send({
-      diagram: {
-        ...diagram,
-        createdAt: diagram.createdAt.toISOString(),
-        updatedAt: diagram.updatedAt.toISOString(),
-      },
+      diagram: currentDiagram(app.hocuspocus.documents, diagram),
     });
   });
 
@@ -144,11 +164,7 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
 
       const diagramList = await getDiagramsByProject(projectId);
       return reply.code(200).send({
-        diagrams: diagramList.map((d) => ({
-          ...d,
-          createdAt: d.createdAt.toISOString(),
-          updatedAt: d.updatedAt.toISOString(),
-        })),
+        diagrams: diagramList.map((d) => currentDiagram(app.hocuspocus.documents, d)),
       });
     },
   );
@@ -176,17 +192,28 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(403).send({ error: 'Access denied' });
       }
 
-      const diagram = await updateDiagram(id, parsed.data);
+      // While people are editing live, the collaboration document is the
+      // source of truth: merge into it (newer versions win) and let it persist,
+      // instead of writing the row and being overwritten moments later.
+      const { elements, ...metadata } = parsed.data;
+      const live = liveDocument(app.hocuspocus.documents, id);
+      let diagram;
+      if (elements && live) {
+        mergeElements(live, elements as ElementJSON[]);
+        diagram = await updateDiagram(id, metadata);
+      } else {
+        // Direct write: the stored CRDT state is now stale, re-seed next session
+        diagram = await updateDiagram(id, {
+          ...metadata,
+          ...(elements ? { elements, yjsState: null } : {}),
+        });
+      }
       if (!diagram) {
         return reply.code(404).send({ error: 'Diagram not found' });
       }
 
       return reply.code(200).send({
-        diagram: {
-          ...diagram,
-          createdAt: diagram.createdAt.toISOString(),
-          updatedAt: diagram.updatedAt.toISOString(),
-        },
+        diagram: publicDiagram(diagram!),
       });
     },
   );
@@ -230,11 +257,13 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(403).send({ error: 'Access denied' });
     }
 
+    const live = liveDocument(app.hocuspocus.documents, id);
     const snapshot = await createSnapshot(
       id,
       userId,
       parsed.data.trigger ?? 'manual',
       parsed.data.label,
+      live ? readLiveElements(live) : undefined,
     );
 
     return reply.code(201).send({
@@ -265,9 +294,16 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
     const offset = parseInt(query.offset ?? '0', 10);
 
     const snapshotList = await getSnapshots(id, limit, offset);
+    // The list is for browsing: counts, not whole element arrays
     return reply.code(200).send({
       snapshots: snapshotList.map((s) => ({
-        ...s,
+        id: s.id,
+        diagramId: s.diagramId,
+        version: s.version,
+        label: s.label,
+        trigger: s.trigger,
+        createdBy: s.createdBy,
+        elementCount: Array.isArray(s.elements) ? s.elements.length : 0,
         createdAt: s.createdAt.toISOString(),
       })),
     });
@@ -296,29 +332,46 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(404).send({ error: 'Snapshot not found' });
       }
 
+      const live = liveDocument(app.hocuspocus.documents, id);
+      const liveElements = () =>
+        live ? readLiveElements(live) : undefined;
+
       // Create a new snapshot of current state before restoring
-      await createSnapshot(id, userId, 'auto', 'Pre-restore backup');
+      await createSnapshot(id, userId, 'auto', 'Pre-restore backup', liveElements());
 
       // Restore the diagram from the snapshot
       const appState = snapshot.appState as Record<string, unknown>;
-      const diagram = await updateDiagram(id, {
-        elements: snapshot.elements as unknown[],
+      const metadata = {
         viewBackgroundColor: appState.viewBackgroundColor as string | undefined,
         gridEnabled: appState.gridEnabled as boolean | undefined,
         gridSize: appState.gridSize as number | undefined,
         renderMode: appState.renderMode as string | undefined,
         layers: appState.layers as unknown[] | undefined,
-      });
+      };
+      let diagram;
+      if (live) {
+        // Everyone connected sees the restore immediately
+        replaceElements(live, snapshot.elements as ElementJSON[]);
+        diagram = await updateDiagram(id, metadata);
+      } else {
+        diagram = await updateDiagram(id, {
+          ...metadata,
+          elements: snapshot.elements as unknown[],
+          yjsState: null,
+        });
+      }
 
       // Create a post-restore snapshot
-      await createSnapshot(id, userId, 'auto', 'Restored from version ' + snapshot.version);
+      await createSnapshot(
+        id,
+        userId,
+        'auto',
+        'Restored from version ' + snapshot.version,
+        liveElements(),
+      );
 
       return reply.code(200).send({
-        diagram: {
-          ...diagram,
-          createdAt: diagram!.createdAt.toISOString(),
-          updatedAt: diagram!.updatedAt.toISOString(),
-        },
+        diagram: publicDiagram(diagram!),
       });
     },
   );

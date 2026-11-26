@@ -6,12 +6,12 @@ _Research snapshot: 2026-11-26 · Based on a full read of the codebase at `edcb5
 
 ## Progress (updated as phases land)
 
-| Phase                             | Status                                                                                                                                                                                                                |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Real-backend e2e lane + CI        | ✅ Done — `apps/web/e2e-real`, Postgres service job in CI                                                                                                                                                             |
-| 1. Editing on par with Excalidraw | ✅ Core done (collaboration-safe undo, bindings, navigation, context menu, z-order/lock, PNG/PDF, perf, bundle). Remaining items in `BACKLOG.md`                                                                      |
-| 2. Living architecture map        | ✅ Core done (nested diagrams persist + lazy-load, connector labels, Mermaid → nested map, auto-layout/Tidy up, ⌘K jump-to-anything, drill-out animation, AI agent fixed end-to-end). Remaining items in `BACKLOG.md` |
-| 3. Teams                          | In progress                                                                                                                                                                                                           |
+| Phase                             | Status                                                                                                                                                                                                                                                                                                         |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Real-backend e2e lane + CI        | ✅ Done — `apps/web/e2e-real`, Postgres service job in CI                                                                                                                                                                                                                                                      |
+| 1. Editing on par with Excalidraw | ✅ Core done (collaboration-safe undo, bindings, navigation, context menu, z-order/lock, PNG/PDF, perf, bundle). Remaining items in `BACKLOG.md`                                                                                                                                                               |
+| 2. Living architecture map        | ✅ Core done (nested diagrams persist + lazy-load, connector labels, Mermaid → nested map, auto-layout/Tidy up, ⌘K jump-to-anything, drill-out animation, AI agent fixed end-to-end). Remaining items in `BACKLOG.md`                                                                                          |
+| 3. Teams                          | ✅ Core done (Y.js owns live elements with per-property merge, URLs + share links + deep links, viewer role enforced end-to-end, shared server-side version history with live restore, REST reads see live state, graceful shutdown). Comments, visual diff, orgs, presentation mode remain — see `BACKLOG.md` |
 
 ## 1. TL;DR
 

@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid';
-import { eq, and, desc } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { diagrams, diagramSnapshots, projects, projectPermissions } from '../db/schema.js';
 import type { PermissionRole } from '../db/schema.js';
@@ -22,6 +22,7 @@ export interface UpdateDiagramInput {
   gridSize?: number;
   renderMode?: string;
   layers?: unknown[];
+  yjsState?: string | null;
 }
 
 export async function createDiagram(input: CreateDiagramInput) {
@@ -90,6 +91,8 @@ export async function createSnapshot(
   userId: string,
   trigger: 'auto' | 'manual' = 'auto',
   label?: string,
+  /** Live elements (from an open collaboration document), if fresher than the DB. */
+  liveElements?: unknown[],
 ) {
   const diagram = await getDiagram(diagramId);
   if (!diagram) throw new Error('Diagram not found');
@@ -107,7 +110,7 @@ export async function createSnapshot(
       id: nanoid(),
       diagramId,
       version: nextVersion,
-      elements: diagram.elements,
+      elements: liveElements ?? diagram.elements,
       appState: {
         viewBackgroundColor: diagram.viewBackgroundColor,
         gridEnabled: diagram.gridEnabled,
@@ -120,6 +123,9 @@ export async function createSnapshot(
       label: label ?? null,
     })
     .returning();
+
+  // Keep the history useful: automatic snapshots are capped per diagram
+  if (trigger === 'auto') await pruneAutoSnapshots(diagramId);
 
   return snapshot;
 }
@@ -158,4 +164,16 @@ export async function checkProjectAccess(
   });
 
   return permission?.role ?? null;
+}
+
+const MAX_AUTO_SNAPSHOTS = 50;
+
+async function pruneAutoSnapshots(diagramId: string): Promise<void> {
+  const autos = await db.query.diagramSnapshots.findMany({
+    where: and(eq(diagramSnapshots.diagramId, diagramId), eq(diagramSnapshots.trigger, 'auto')),
+    orderBy: [desc(diagramSnapshots.version)],
+    columns: { id: true },
+  });
+  const stale = autos.slice(MAX_AUTO_SNAPSHOTS).map((s) => s.id);
+  if (stale.length > 0) await db.delete(diagramSnapshots).where(inArray(diagramSnapshots.id, stale));
 }

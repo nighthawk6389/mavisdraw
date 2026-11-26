@@ -59,6 +59,11 @@ export async function mockAuthAndOpenEditor(page: Page) {
     return route.continue();
   });
 
+  // Opening a project (router: /p/:id) fetches it, including the caller's role
+  await page.route(`**/api/projects/${TEST_PROJECT.id}`, (route) =>
+    route.fulfill({ status: 200, json: { project: TEST_PROJECT } }),
+  );
+
   // Editor endpoints — diagram listing & fetching + auto-save PUT
   await page.route(`**/api/projects/${TEST_PROJECT.id}/diagrams`, (route) =>
     route.fulfill({ status: 200, json: { diagrams: [TEST_DIAGRAM] } }),
@@ -66,6 +71,26 @@ export async function mockAuthAndOpenEditor(page: Page) {
   await page.route('**/api/diagrams/**', (route) =>
     route.fulfill({ status: 200, json: { diagram: TEST_DIAGRAM } }),
   );
+  // Shared version history (in-memory per page)
+  const snapshots: Record<string, unknown>[] = [];
+  await page.route('**/api/diagrams/*/snapshots**', (route) =>
+    route.fulfill({ status: 200, json: { snapshots } }),
+  );
+  await page.route('**/api/diagrams/*/save', (route) => {
+    const body = (route.request().postDataJSON() ?? {}) as { trigger?: string; label?: string };
+    const snapshot = {
+      id: `snap-${snapshots.length + 1}`,
+      diagramId: TEST_DIAGRAM.id,
+      version: snapshots.length + 1,
+      label: body.label ?? null,
+      trigger: body.trigger ?? 'manual',
+      createdBy: TEST_USER.id,
+      elementCount: 0,
+      createdAt: new Date().toISOString(),
+    };
+    snapshots.unshift(snapshot);
+    return route.fulfill({ status: 201, json: { snapshot } });
+  });
   // Nested diagrams are created on the server as soon as a portal is drawn
   await page.route('**/api/diagrams', (route) => {
     const body = route.request().postDataJSON() as Record<string, unknown> | null;

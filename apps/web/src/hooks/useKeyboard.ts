@@ -7,6 +7,7 @@ import { useUIStore } from '../stores/uiStore';
 import { openImportDialog } from '../components/export/ImportHandler';
 import { getCanvasController } from '../components/canvas/canvasController';
 import * as actions from '../editor/actions';
+import { canEdit } from '../stores/permissionStore';
 
 const KEY_TO_TOOL: Record<string, Tool> = {
   v: 'select',
@@ -62,6 +63,35 @@ export function useKeyboard(
       const code = event.code;
       const mod = event.ctrlKey || event.metaKey;
       const selectedIds = useSelectionStore.getState().selectedIds;
+      const editable = canEdit();
+
+      // Viewers: navigation, selection, search, copy/export only
+      if (!editable) {
+        if (key === 'escape') {
+          useSelectionStore.getState().clearSelection();
+          return;
+        }
+        if (key === 'enter' && selectedIds.size === 1) {
+          const [id] = Array.from(selectedIds);
+          if (useElementsStore.getState().elements.get(id)?.type === 'portal') {
+            event.preventDefault();
+            getCanvasController()?.openPortal?.(id);
+          }
+          return;
+        }
+        if (key === 'backspace' && selectedIds.size === 0 && useDiagramStore.getState().diagramPath.length > 1) {
+          event.preventDefault();
+          useDiagramStore.getState().navigateUp();
+          return;
+        }
+        const allowed =
+          (mod && ['a', 'k', '=', '+', '-', '0'].includes(key)) ||
+          (event.shiftKey && !mod && (code === 'Digit1' || code === 'Digit2')) ||
+          (event.shiftKey && event.altKey && code === 'KeyC') ||
+          (mod && event.shiftKey && (key === 'e' || key === 't')) ||
+          (!mod && !event.altKey && (key === 'v' || key === 'h' || key === ' '));
+        if (!allowed) return;
+      }
 
       // Space = temporary pan mode
       if (key === ' ') {

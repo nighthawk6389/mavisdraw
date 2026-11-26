@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAuthStore } from '../stores/authStore';
+import { projectPath } from '../routing';
 import {
   apiListProjects,
   apiCreateProject,
@@ -8,7 +9,7 @@ import {
 } from '../services/api';
 
 interface DashboardProps {
-  onOpenProject: (projectId: string, rootDiagramId: string) => void;
+  onOpenProject: (projectId: string) => void;
 }
 
 export default function Dashboard({ onOpenProject }: DashboardProps) {
@@ -184,13 +185,15 @@ export default function Dashboard({ onOpenProject }: DashboardProps) {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {filteredProjects.map((project) => (
-              <div
+              <a
                 key={project.id}
-                className="bg-white rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition-shadow cursor-pointer group"
-                onClick={() => {
-                  if (project.rootDiagramId) {
-                    onOpenProject(project.id, project.rootDiagramId);
-                  }
+                href={projectPath(project.id)}
+                className="block bg-white rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition-shadow cursor-pointer group focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                onClick={(e) => {
+                  // Let modified clicks open a new tab; plain clicks route in-app
+                  if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                  e.preventDefault();
+                  if (project.rootDiagramId) onOpenProject(project.id);
                 }}
               >
                 {/* Thumbnail placeholder */}
@@ -227,6 +230,7 @@ export default function Dashboard({ onOpenProject }: DashboardProps) {
                   {(!project.role || project.role === 'owner') && (
                     <button
                       onClick={(e) => {
+                        e.preventDefault();
                         e.stopPropagation();
                         handleDeleteProject(project.id);
                       }}
@@ -236,7 +240,7 @@ export default function Dashboard({ onOpenProject }: DashboardProps) {
                     </button>
                   )}
                 </div>
-              </div>
+              </a>
             ))}
           </div>
         )}

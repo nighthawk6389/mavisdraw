@@ -110,6 +110,12 @@ export const diagrams = pgTable(
     gridSize: integer('grid_size').notNull().default(20),
     renderMode: varchar('render_mode', { length: 20 }).notNull().default('sketchy'),
     layers: jsonb('layers').notNull().default([]),
+    /**
+     * Collaboration document (Y.js update, base64). Source of truth while it
+     * exists; cleared whenever `elements` is written directly so the next
+     * live session re-seeds from the JSON.
+     */
+    yjsState: text('yjs_state'),
     createdBy: text('created_by')
       .notNull()
       .references(() => users.id),

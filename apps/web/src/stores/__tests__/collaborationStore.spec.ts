@@ -53,7 +53,7 @@ describe('collaborationStore', () => {
       followingUserId: null,
       localUserId: null,
       _elementsUnsubscribe: null,
-      _applyingRemoteChanges: false,
+      syncedDiagramId: null,
     });
     useElementsStore.setState({
       elements: new Map(),

@@ -3,6 +3,7 @@ import type { LinearElement, MavisElement, Point, PortalElement, RoutingMode } f
 import { useSelectionStore } from '../../stores/selectionStore';
 import { useElementsStore } from '../../stores/elementsStore';
 import { useUIStore } from '../../stores/uiStore';
+import { usePermissionStore } from '../../stores/permissionStore';
 import { getCanvasController } from './canvasController';
 import * as actions from '../../editor/actions';
 import { shortcut } from '../../utils/platform';
@@ -265,12 +266,17 @@ export default function ContextMenu({
   const renderMode = useUIStore((s) => s.renderMode);
   const showGrid = useUIStore((s) => s.showGrid);
 
+  const editable = usePermissionStore((s) => s.canEdit);
   const items = useMemo(() => {
     const selected = Array.from(selectedIds)
       .map((id) => elements.get(id))
       .filter((el): el is MavisElement => !!el && !el.isDeleted);
-    return buildItems(selected, state.canvasPoint, renderMode, showGrid);
-  }, [selectedIds, elements, state.canvasPoint, renderMode, showGrid]);
+    const all = buildItems(selected, state.canvasPoint, renderMode, showGrid);
+    if (editable) return all;
+    // Viewers: look, copy and navigate only
+    const allowed = new Set(['open-portal', 'copy', 'copy-png', 'select-all', 'fit', 'grid', 'sketchy']);
+    return all.filter((item) => item.kind === 'separator' || allowed.has(item.id));
+  }, [selectedIds, elements, state.canvasPoint, renderMode, showGrid, editable]);
 
   // Keep the menu inside the canvas area
   useLayoutEffect(() => {

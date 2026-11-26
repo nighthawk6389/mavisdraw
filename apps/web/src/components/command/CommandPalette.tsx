@@ -4,6 +4,7 @@ import { useElementsStore } from '../../stores/elementsStore';
 import { useDiagramStore } from '../../stores/diagramStore';
 import { useSelectionStore } from '../../stores/selectionStore';
 import { useUIStore } from '../../stores/uiStore';
+import { usePermissionStore } from '../../stores/permissionStore';
 import { loadDiagramElements } from '../../services/diagramSync';
 import { getCanvasController } from '../canvas/canvasController';
 import * as actions from '../../editor/actions';
@@ -173,7 +174,9 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
       }
     }
 
+    const editable = usePermissionStore.getState().canEdit;
     for (const c of commands) {
+      if (!editable && (c.id === 'cmd-tidy' || c.id === 'cmd-mermaid')) continue;
       const s = score(c.title, q);
       if (s > 0) out.push({ ...c, score: q ? s - 0.25 : 0 });
     }

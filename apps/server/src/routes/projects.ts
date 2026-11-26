@@ -123,7 +123,8 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(404).send({ error: 'Project not found' });
     }
 
-    // Check access
+    // Check access, and tell the client what it may do
+    let role: string = 'owner';
     if (project.ownerId !== userId) {
       const permission = await db.query.projectPermissions.findFirst({
         where: and(eq(projectPermissions.projectId, id), eq(projectPermissions.userId, userId)),
@@ -131,11 +132,13 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       if (!permission && !project.isPublic) {
         return reply.code(403).send({ error: 'Access denied' });
       }
+      role = permission?.role ?? 'viewer';
     }
 
     return reply.code(200).send({
       project: {
         ...project,
+        role,
         createdAt: project.createdAt.toISOString(),
         updatedAt: project.updatedAt.toISOString(),
       },

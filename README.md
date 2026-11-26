@@ -185,6 +185,18 @@ Paste a Mermaid flowchart (from a README, PR or design doc) straight onto the ca
 drill into, links that cross subgraphs are drawn between the right portals, and every level is
 auto-laid out — a flat README diagram becomes a navigable, multi-level map.
 
+### Working together
+
+- **Every project and nested diagram has a URL** (`/p/:project/d/:diagram`) — paste it in Slack and
+  teammates land on the same level.
+- **Share links** (`Share` → copy link) add whoever opens them to the project with the chosen role.
+- **Live editing** merges per property: one person can move a shape while another recolours it.
+  Undo only ever undoes your own changes.
+- **Viewers** can pan, zoom, select, copy and drill through every level, but can't change anything
+  (enforced on the server too).
+- **Version history** (`Mod+S`) is shared by everyone on the project. Restoring a version updates
+  every open editor live, and the previous state is kept as a backup version.
+
 ## License
 
 Private — not yet open sourced.

@@ -14,6 +14,8 @@ export interface MavisDrawTestHooks {
   seedRectangles: (count: number) => void;
   /** Elements drawn in the last static pass (after viewport culling). */
   getDrawnCount: () => number;
+  /** Live-collaboration connection state. */
+  getConnectionStatus: () => string;
 }
 
 interface TestWindow {

@@ -72,7 +72,17 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const permissions = await getProjectPermissions(id);
-      return reply.code(200).send({ permissions });
+      // Share links are bearer credentials: only people who can manage
+      // sharing get to see them (an editor link in a viewer's hands is an
+      // escalation)
+      const canManage = access === 'owner' || access === 'admin';
+      return reply.code(200).send({
+        permissions: canManage
+          ? permissions
+          : permissions
+              .filter((p) => p.userId !== null)
+              .map((p) => ({ ...p, shareToken: null })),
+      });
     },
   );
 
