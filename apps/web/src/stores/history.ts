@@ -83,23 +83,64 @@ export function isNoopEntry(entry: HistoryEntry): boolean {
   return true;
 }
 
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 /**
- * Write recorded values back into `next`. Restored elements get a version
- * higher than whatever is currently in the map so that collaborators and
- * autosave treat the restore as a new edit.
+ * Write recorded values back into `next` (undo: target = before, expected =
+ * after; redo: the reverse).
+ *
+ * It's a three-way apply per property: a property is restored only if it
+ * still holds the value this user left it at. If a collaborator changed it
+ * since (moved the shape you'd moved, renamed the label you'd edited),
+ * their newer value is kept, so undo never silently reverts someone else's
+ * work. Restored elements get a version higher than the current one so
+ * collaborators and autosave treat the restore as a new edit.
  */
 export function applyValues(
   next: Map<string, MavisElement>,
-  values: Map<string, MavisElement | undefined>,
+  target: Map<string, MavisElement | undefined>,
+  expected: Map<string, MavisElement | undefined> = new Map(),
 ): void {
   const now = Date.now();
-  for (const [id, value] of values) {
+  for (const [id, value] of target) {
+    const current = next.get(id);
+    const mine = expected.get(id);
+
+    // Undoing a creation (or redoing a discard) removes the element
     if (value === undefined) {
       next.delete(id);
       continue;
     }
-    const current = next.get(id);
-    const version = Math.max(current?.version ?? 0, value.version) + 1;
-    next.set(id, { ...value, version, updatedAt: now } as MavisElement);
+    // Bringing back an element that no longer exists, or a fast path when
+    // nothing else touched it since: restore the whole recorded value
+    if (current === undefined || mine === undefined || current === mine) {
+      const version = Math.max(current?.version ?? 0, value.version) + 1;
+      next.set(id, { ...value, version, updatedAt: now } as MavisElement);
+      continue;
+    }
+
+    const cur = current as unknown as Record<string, unknown>;
+    const from = mine as unknown as Record<string, unknown>;
+    const to = value as unknown as Record<string, unknown>;
+    const merged: Record<string, unknown> = { ...cur };
+    let changed = false;
+    for (const key of new Set([...Object.keys(from), ...Object.keys(to)])) {
+      if (IGNORED_KEYS.has(key)) continue;
+      // Only properties this step actually changed…
+      if (sameValue(from[key], to[key])) continue;
+      // …and only if nobody has changed them since
+      if (!sameValue(cur[key], from[key])) continue;
+      if (to[key] === undefined) delete merged[key];
+      else merged[key] = to[key];
+      changed = true;
+    }
+    if (!changed) continue;
+    merged.version = current.version + 1;
+    merged.updatedAt = now;
+    next.set(id, merged as unknown as MavisElement);
   }
 }

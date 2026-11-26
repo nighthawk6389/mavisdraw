@@ -40,6 +40,14 @@ async function isConnected(page: Page) {
     .toBe('connected');
 }
 
+/** Drag between two page (not canvas-relative) points, e.g. from screenCenterOf. */
+async function dragPage(page: Page, from: { x: number; y: number }, to: { x: number; y: number }) {
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(to.x, to.y, { steps: 8 });
+  await page.mouse.up();
+}
+
 const types = async (page: Page) => (await getActiveElements(page)).map((e) => e.type).sort();
 
 /** Owner + a second user who joined through a share link, both in the editor. */
@@ -122,6 +130,42 @@ test.describe('Teams', () => {
         { timeout: 20_000 },
       )
       .toEqual(['diamond', 'ellipse']);
+
+    await ctxA.close();
+    await ctxB.close();
+  });
+
+  test("undo never reverts a teammate's later change to the same shape", async ({ browser }) => {
+    const { ctxA, ctxB, a, b } = await twoPeople(browser, 'editor');
+    const undo = process.platform === 'darwin' ? 'Meta+z' : 'Control+z';
+
+    // Alice draws a box and drags it sideways
+    await a.keyboard.press('r');
+    await dragOnCanvas(a, { x: 150, y: 150 }, { x: 300, y: 250 });
+    await expect.poll(async () => (await getActiveElements(b)).length).toBe(1);
+    const [drawn] = await getActiveElements(a);
+    let c = await screenCenterOf(a, drawn);
+    await dragPage(a, c, { x: c.x + 100, y: c.y });
+    await expect.poll(async () => (await getActiveElements(a))[0].x).toBeGreaterThan(drawn.x + 50);
+    const aliceX = (await getActiveElements(a))[0].x;
+    await expect.poll(async () => (await getActiveElements(b))[0].x).toBe(aliceX);
+
+    // Then Bob drags the same box down
+    const [seen] = await getActiveElements(b);
+    c = await screenCenterOf(b, seen);
+    await dragPage(b, c, { x: c.x, y: c.y + 150 });
+    await expect.poll(async () => (await getActiveElements(b))[0].y).toBeGreaterThan(drawn.y + 50);
+    const bobY = (await getActiveElements(b))[0].y;
+    await expect.poll(async () => (await getActiveElements(a))[0].y).toBe(bobY);
+
+    // Alice undoes her drag: her sideways move is reverted, but the box stays
+    // at the height Bob put it — on both screens
+    await a.keyboard.press('Escape');
+    await a.keyboard.press(undo);
+    for (const page of [a, b]) {
+      await expect.poll(async () => (await getActiveElements(page))[0]?.x).toBe(drawn.x);
+      expect((await getActiveElements(page))[0].y).toBe(bobY);
+    }
 
     await ctxA.close();
     await ctxB.close();

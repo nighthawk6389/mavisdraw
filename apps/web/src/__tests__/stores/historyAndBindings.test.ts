@@ -16,7 +16,12 @@ function store() {
 }
 
 function reset() {
-  useElementsStore.setState({ elements: new Map(), history: [], historyIndex: -1, clipboard: null });
+  useElementsStore.setState({
+    elements: new Map(),
+    history: [],
+    historyIndex: -1,
+    clipboard: null,
+  });
 }
 
 function addRect(x = 0, y = 0, w = 100, h = 60): MavisElement {
@@ -67,6 +72,44 @@ describe('patch-based history', () => {
     expect(get(mine.id).x).toBe(0);
     // The collaborator's element and edit are untouched
     expect(get(theirs.id).x).toBe(999);
+  });
+
+  it('undo keeps a collaborator’s later change to the same shape', () => {
+    const shape = addRect(0, 0);
+    store().updateElement(shape.id, { x: 50 }); // I move it
+    remoteUpdate(shape.id, { x: 400 }); // then a teammate moves it
+    store().undo();
+    expect(get(shape.id).x).toBe(400);
+  });
+
+  it('undo reverts my property but keeps their different property', () => {
+    const shape = addRect(0, 0);
+    store().updateElement(shape.id, { strokeColor: '#e03131' }); // I recolour it
+    remoteUpdate(shape.id, { x: 400 }); // a teammate moves it
+    store().undo();
+    expect(get(shape.id).strokeColor).not.toBe('#e03131');
+    expect(get(shape.id).x).toBe(400);
+
+    store().redo();
+    expect(get(shape.id).strokeColor).toBe('#e03131');
+    expect(get(shape.id).x).toBe(400);
+  });
+
+  it('undo of a resize keeps a teammate’s later move', () => {
+    const shape = addRect(0, 0, 100, 60);
+    store().updateElement(shape.id, { width: 300, height: 200 });
+    remoteUpdate(shape.id, { x: 80, y: 90 });
+    store().undo();
+    expect(get(shape.id)).toMatchObject({ width: 100, height: 60, x: 80, y: 90 });
+  });
+
+  it('a skipped undo does not bump the version (no needless sync traffic)', () => {
+    const shape = addRect(0, 0);
+    store().updateElement(shape.id, { x: 50 });
+    remoteUpdate(shape.id, { x: 400 });
+    const version = get(shape.id).version;
+    store().undo();
+    expect(get(shape.id).version).toBe(version);
   });
 
   it('undo never deletes elements a collaborator added', () => {
@@ -155,7 +198,9 @@ describe('patch-based history', () => {
     store().beginHistoryBatch();
     store().addElement(el);
     store().endHistoryBatch();
-    store().amendLastHistoryEntry(() => store().updateElement(el.id, { text: 'Hello' } as Partial<MavisElement>));
+    store().amendLastHistoryEntry(() =>
+      store().updateElement(el.id, { text: 'Hello' } as Partial<MavisElement>),
+    );
     store().undo();
     expect(store().elements.has(el.id)).toBe(false);
     expect(store().canUndo()).toBe(false);
@@ -189,7 +234,14 @@ describe('binding integrity', () => {
   }
 
   function boundArrow(from: MavisElement, to: MavisElement): LinearElement {
-    const arrow = store().createElement('arrow', D, from.x + from.width, from.y + 50, 100, 0) as LinearElement;
+    const arrow = store().createElement(
+      'arrow',
+      D,
+      from.x + from.width,
+      from.y + 50,
+      100,
+      0,
+    ) as LinearElement;
     store().addElement(arrow);
     store().bindArrow(arrow.id, 'start', from.id, 0);
     store().bindArrow(arrow.id, 'end', to.id, 0);
@@ -318,8 +370,7 @@ describe('stacking order', () => {
     const b = addRect();
     const c = addRect();
     store().reorderElements([a.id], 'front');
-    const ids = () =>
-      sortByStacking(Array.from(store().elements.values())).map((e) => e.id);
+    const ids = () => sortByStacking(Array.from(store().elements.values())).map((e) => e.id);
     expect(ids()).toEqual([b.id, c.id, a.id]);
     store().reorderElements([a.id], 'back');
     expect(ids()).toEqual([a.id, b.id, c.id]);

@@ -538,7 +538,7 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
     const entry = history[idx];
     set((prev) => {
       const next = new Map(prev.elements);
-      applyValues(next, entry.before);
+      applyValues(next, entry.before, entry.after);
       return { elements: next, historyIndex: idx - 1 };
     });
   },
@@ -551,7 +551,7 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
     const entry = history[idx];
     set((prev) => {
       const next = new Map(prev.elements);
-      applyValues(next, entry.after);
+      applyValues(next, entry.after, entry.before);
       return { elements: next, historyIndex: idx };
     });
   },

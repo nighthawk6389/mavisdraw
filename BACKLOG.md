@@ -7,7 +7,7 @@
 - ~~REST autosave and Hocuspocus both write `diagrams.elements`~~ — fixed in Phase 3: while a room is live, Y.js owns elements (CRDT state persisted in `diagrams.yjs_state`), REST writes merge into the live doc by version, and snapshot restore goes through the live doc.
 - ~~Whole-element `Y.Map` replacement~~ — fixed: per-property writes (`ws/ydocElements.ts`, `src/collab/ydocElements.ts`).
 - ~~Version history is IndexedDB-only~~ — fixed: shared server-side versions.
-- **Undo can revert a teammate's later change to the same property.** Local undo is patch-based (remote changes are never recorded, so it never undoes *their* edits), but undoing your own move restores your "before" value even if a teammate moved the same shape afterwards. A per-origin `Y.UndoManager`, or skipping keys whose live value no longer matches the entry's "after", would fix it (`stores/history.ts`, `elementsStore.undo`).
+- ~~Undo can revert a teammate's later change to the same property~~ — fixed: undo/redo apply per property and skip any property a collaborator changed since (`stores/history.ts` `applyValues`).
 
 ### Security (P0)
 
