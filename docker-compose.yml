@@ -18,7 +18,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Schema push + seed (runs once, then exits) ──────────
+  # ── Migrations + seed (runs once, then exits) ──────────
   db-init:
     build:
       context: .

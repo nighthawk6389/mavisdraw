@@ -12,9 +12,10 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
+    "db:migrate": "tsx src/db/migrate.ts",
     "db:push": "drizzle-kit push",
-    "db:seed": "tsx src/db/seed.ts"
+    "db:seed": "tsx src/db/seed.ts",
+    "db:migrate:deploy": "node dist/db/migrate.js"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.58",

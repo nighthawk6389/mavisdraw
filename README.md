@@ -44,7 +44,8 @@ pnpm run dev
 | `pnpm run typecheck` | Type-check all packages |
 | `cd apps/web && pnpm run test:e2e` | Run Playwright e2e tests (mocked API) |
 | `cd apps/web && pnpm run test:e2e:real` | Run e2e tests against the real API + Postgres |
-| `cd apps/server && pnpm run db:push` | Push schema to database |
+| `cd apps/server && pnpm run db:migrate` | Apply database migrations (`apps/server/drizzle`) |
+| `cd apps/server && pnpm run db:generate --name <change>` | Create a migration after editing `schema.ts` |
 | `cd apps/server && pnpm run db:seed` | Seed database with sample data |
 
 ## Project Structure

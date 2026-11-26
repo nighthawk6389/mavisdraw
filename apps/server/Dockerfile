@@ -29,6 +29,8 @@ COPY --from=builder /app/packages/types/package.json packages/types/
 RUN pnpm install --frozen-lockfile --prod
 
 COPY --from=builder /app/apps/server/dist apps/server/dist
+# Migrations, applied by `node apps/server/dist/db/migrate.js` before start
+COPY --from=builder /app/apps/server/drizzle apps/server/drizzle
 COPY --from=builder /app/packages/types/src packages/types/src
 
 EXPOSE 3001

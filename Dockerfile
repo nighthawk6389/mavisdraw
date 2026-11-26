@@ -44,7 +44,8 @@ COPY --from=base /app/apps/server/package.json ./apps/server/
 COPY --from=build /app/packages/types/dist ./packages/types/dist
 COPY --from=base /app/packages/types/package.json ./packages/types/
 
-# Drizzle config + schema source (needed for db:push and db:seed)
+# Migrations (applied by dist/db/migrate.js) + schema source (db:seed, dev only)
+COPY apps/server/drizzle/ ./apps/server/drizzle/
 COPY apps/server/drizzle.config.ts ./apps/server/
 COPY apps/server/src/db/ ./apps/server/src/db/
 

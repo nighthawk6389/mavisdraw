@@ -35,7 +35,7 @@ Fixed (each with a regression test; two-browser e2e in `apps/web/e2e-real/sync-i
 Still open:
 - **Presence identity is client-asserted** (awareness `user.id`/`name`): someone can show up as someone else in the avatar list. Fix: stamp identity server-side (e.g. relay presence through a server-validated stateless channel).
 - **Y.Doc growth**: tombstones are kept forever; state is stored base64 and rewritten whole on every persist. Needs tombstone compaction (e.g. drop tombstones older than N days on load, re-encode), binary storage, incremental persistence.
-- **No migrations** (`db:push` only) — Phase 0 item 0.9.
+- ~~No migrations~~ — fixed: versioned migrations in `apps/server/drizzle`, applied by `db:migrate` / Render's pre-deploy step; databases created with `db:push` are adopted automatically.
 - **Single process assumed**: no Redis extension, so two instances during a deploy overlap can both host a room (last persist wins). Add `@hocuspocus/extension-redis` before scaling out.
 - **Version history is per diagram**: restoring a parent doesn't restore its nested levels; no preview before restore.
 - **Follow mode doesn't follow across nested diagrams**; there's no project-wide "who's where".
