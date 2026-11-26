@@ -109,7 +109,7 @@ export const useAuthStore = create<AuthState>((set, _get) => {
         console.log('[auth] Token refresh failed:', refreshErr);
         // In dev mode, auto-login as demo user
         console.log('[auth] DEV mode:', import.meta.env.DEV);
-        if (import.meta.env.DEV) {
+        if (import.meta.env.DEV && import.meta.env.VITE_DISABLE_DEV_AUTO_LOGIN !== 'true') {
           try {
             console.log('[auth] Attempting dev auto-login as demo@mavisdraw.dev...');
             const response = await apiLogin('demo@mavisdraw.dev', 'password123');

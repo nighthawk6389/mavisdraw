@@ -12,6 +12,7 @@ import { useCollaborationStore } from '../../stores/collaborationStore';
 import { useCollaboration } from '../../hooks/useCollaboration';
 import CursorOverlay from '../collaboration/CursorOverlay';
 import { generateThumbnail } from '../../utils/thumbnailGenerator';
+import { installTestHooks } from '../../utils/testHooks';
 import type { MavisElement, TextElement, ImageElement, PortalElement, RenderMode } from '@mavisdraw/types';
 
 interface TextEditState {
@@ -462,8 +463,19 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     const { width, height } = container.getBoundingClientRect();
     renderer.resize(width, height);
 
-    // Expose viewport getter for e2e tests
-    (window as any).__MAVISDRAW_GET_VIEWPORT__ = () => renderer.getViewport().getViewport();
+    // Expose editor state for e2e tests (dev builds only)
+    const uninstallTestHooks = installTestHooks({
+      getViewport: () => renderer.getViewport().getViewport(),
+      getActiveElements: () => {
+        const diagramId = activeDiagramIdRef.current;
+        const result: MavisElement[] = [];
+        for (const el of useElementsStore.getState().elements.values()) {
+          if (el.diagramId === diagramId && !el.isDeleted) result.push(el);
+        }
+        return result;
+      },
+      getActiveDiagramId: () => activeDiagramIdRef.current,
+    });
 
     renderer.startRenderLoop(
       () => {
@@ -486,7 +498,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     );
 
     return () => {
-      delete (window as any).__MAVISDRAW_GET_VIEWPORT__;
+      uninstallTestHooks();
       renderer.destroy();
       rendererRef.current = null;
     };
