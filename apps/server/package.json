@@ -24,6 +24,7 @@
     "@fastify/websocket": "^11.0.0",
     "@hocuspocus/server": "^2.15.0",
     "@mavisdraw/types": "workspace:*",
+    "@sentry/node": "^9.47.2",
     "ai": "^6.0.116",
     "bcryptjs": "^2.4.3",
     "drizzle-orm": "^0.38.0",

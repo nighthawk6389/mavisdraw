@@ -2,7 +2,11 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import websocket from '@fastify/websocket';
+import { randomUUID } from 'node:crypto';
+import { sql } from 'drizzle-orm';
 import { config } from './config.js';
+import { db } from './db/client.js';
+import { acceptRequestId, checkReadiness, errorResponse, reportError } from './observability.js';
 import { authRoutes } from './routes/auth.js';
 import { projectRoutes } from './routes/projects.js';
 import { diagramRoutes } from './routes/diagrams.js';
@@ -35,7 +39,24 @@ export async function buildApp() {
   const app = Fastify({
     logger: {
       level: config.logLevel,
+      // Credentials never reach the logs
+      redact: {
+        paths: [
+          'req.headers.authorization',
+          'req.headers.cookie',
+          'res.headers["set-cookie"]',
+          '*.password',
+          '*.accessToken',
+          '*.refreshToken',
+          '*.token',
+        ],
+        censor: '[redacted]',
+      },
     },
+    // Every request gets an id (or keeps a proxy's), returned as
+    // x-request-id and attached to logs and error reports
+    requestIdHeader: false,
+    genReqId: (req) => acceptRequestId(req.headers['x-request-id']) ?? randomUUID(),
     // Behind a load balancer (Render, Fly, nginx) the client address is in
     // X-Forwarded-For; without this every user shares the proxy's IP for
     // rate limiting
@@ -46,6 +67,8 @@ export async function buildApp() {
   await app.register(cors, {
     origin: config.corsOrigin,
     credentials: true,
+    // Lets the web app quote the request id when something fails
+    exposedHeaders: ['x-request-id'],
   });
 
   await app.register(cookie, {
@@ -86,9 +109,38 @@ export async function buildApp() {
     hocuspocus.handleConnection(socket, request.raw, { gate });
   });
 
-  // Health check
+  app.addHook('onSend', async (request, reply) => {
+    reply.header('x-request-id', request.id);
+  });
+
+  // Liveness: the process is up
   app.get('/api/health', async () => {
     return { status: 'ok', timestamp: new Date().toISOString() };
+  });
+
+  // Readiness: this instance can serve (the database answers). Used by the
+  // load balancer so a deploy never takes traffic it can't handle.
+  app.get('/api/ready', async (_request, reply) => {
+    const result = await checkReadiness(() => db.execute(sql`select 1`));
+    return reply.code(result.ready ? 200 : 503).send(result);
+  });
+
+  // Global error handler. Must be set before the route plugins register:
+  // they inherit the handler that exists when they load.
+  app.setErrorHandler((error: Error & { statusCode?: number }, request, reply) => {
+    const { status, body } = errorResponse(error, request.id);
+    if (status >= 500) {
+      request.log.error({ err: error }, 'Request failed');
+      reportError(error, {
+        requestId: request.id,
+        userId: request.user?.userId,
+        route: request.routeOptions?.url,
+        method: request.method,
+      });
+    } else {
+      request.log.info({ err: error }, 'Request rejected');
+    }
+    reply.code(status).send(body);
   });
 
   // Register routes
@@ -101,14 +153,6 @@ export async function buildApp() {
   await app.register(commentRoutes);
   await app.register(tourRoutes);
   await app.register(workspaceRoutes);
-
-  // Global error handler
-  app.setErrorHandler((error: Error & { statusCode?: number }, _request, reply) => {
-    app.log.error(error);
-    reply.code(error.statusCode ?? 500).send({
-      error: error.message ?? 'Internal server error',
-    });
-  });
 
   return app;
 }

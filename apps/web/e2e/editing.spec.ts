@@ -15,18 +15,24 @@ type El = {
 
 const hooks = {
   elements: (page: Page) =>
-    page.evaluate(
-      () => (window as unknown as { __MAVISDRAW__: { getActiveElements: () => El[] } }).__MAVISDRAW__.getActiveElements(),
+    page.evaluate(() =>
+      (
+        window as unknown as { __MAVISDRAW__: { getActiveElements: () => El[] } }
+      ).__MAVISDRAW__.getActiveElements(),
     ),
   selected: (page: Page) =>
-    page.evaluate(
-      () => (window as unknown as { __MAVISDRAW__: { getSelectedIds: () => string[] } }).__MAVISDRAW__.getSelectedIds(),
+    page.evaluate(() =>
+      (
+        window as unknown as { __MAVISDRAW__: { getSelectedIds: () => string[] } }
+      ).__MAVISDRAW__.getSelectedIds(),
     ),
   viewport: (page: Page) =>
-    page.evaluate(
-      () =>
-        (window as unknown as { __MAVISDRAW__: { getViewport: () => { zoom: number; scrollX: number; scrollY: number } } })
-          .__MAVISDRAW__.getViewport(),
+    page.evaluate(() =>
+      (
+        window as unknown as {
+          __MAVISDRAW__: { getViewport: () => { zoom: number; scrollX: number; scrollY: number } };
+        }
+      ).__MAVISDRAW__.getViewport(),
     ),
 };
 
@@ -226,7 +232,10 @@ test.describe('Phase 1 editing', () => {
     await page.getByRole('button', { name: 'Export' }).click();
     await page.locator('select').first().selectOption('png');
     const downloadPromise = page.waitForEvent('download');
-    await page.getByRole('button', { name: /^Export$/ }).last().click();
+    await page
+      .getByRole('button', { name: /^Export$/ })
+      .last()
+      .click();
     const download = await downloadPromise;
     expect(download.suggestedFilename()).toMatch(/\.png$/);
     const path = await download.path();
@@ -244,5 +253,18 @@ test.describe('Phase 1 editing', () => {
     await page.keyboard.press(`${mod}+z`);
     await page.keyboard.press('Shift+1');
     expect(errors).toEqual([]);
+  });
+});
+
+test.describe('Crash recovery', () => {
+  test('a crash shows a way out instead of a blank page', async ({ page }) => {
+    await mockAuthAndOpenEditor(page);
+    page.on('pageerror', () => undefined); // the crash is the point of this test
+    await page.evaluate(() => window.dispatchEvent(new Event('mavisdraw:test-crash')));
+    const screen = page.getByTestId('crash-screen');
+    await expect(screen).toContainText('Something went wrong');
+    await expect(screen).toContainText('kept in this browser');
+    await page.getByRole('button', { name: 'Reload' }).click();
+    await expect(page.locator('canvas').first()).toBeVisible();
   });
 });

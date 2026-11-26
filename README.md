@@ -139,6 +139,16 @@ Create three Render resources:
    - Publish dir: `apps/web/dist`
    - Set env: `VITE_API_URL` (backend URL), `VITE_WS_URL` (backend URL with `wss://`)
 
+## Operations
+
+- `GET /api/health` — liveness (the process is up). `GET /api/ready` — readiness (the database
+  answers); Render's health check uses it.
+- Logs are JSON with a request id per request (returned as `x-request-id`); credentials are redacted.
+  Server errors (5xx) return a generic message plus that id, never internal details.
+- Error reporting is optional: set `SENTRY_DSN` (server) and `VITE_SENTRY_DSN` (web). The browser
+  SDK loads after startup, so it isn't in the main bundle.
+- In production the server refuses to start without real secrets — see `apps/server/src/config.ts`.
+
 ## CI/CD
 
 GitHub Actions runs on every push to `main` and on pull requests:

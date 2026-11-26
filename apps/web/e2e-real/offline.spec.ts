@@ -47,7 +47,7 @@ test.describe('Offline', () => {
     await page.keyboard.press('e');
     await dragOnCanvas(page, { x: 400, y: 150 }, { x: 520, y: 250 });
     await expect(page.getByTestId('offline-indicator')).toContainText('kept on this device');
-    await page.waitForTimeout(600);
+    // Then the tab is killed outright (no unload events, like a crash)
     await page.close();
 
     // Later, back online, the project is opened again

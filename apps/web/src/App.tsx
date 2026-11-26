@@ -483,6 +483,8 @@ async function loadProject(projectId: string, diagramId: string | null): Promise
       toast(
         `Recovered ${result.restored} unsaved ${result.restored === 1 ? 'change' : 'changes'} from your last session.`,
         'success',
+        undefined,
+        10_000, // worth reading: it's about their work
       );
     }
     if (result.conflicts > 0) {

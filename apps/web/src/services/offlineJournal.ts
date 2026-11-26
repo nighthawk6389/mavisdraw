@@ -23,7 +23,42 @@ export interface JournalEntry {
 
 interface StoredJournal {
   v: 1;
+  /** When it was written (the newer of the two copies wins on read). */
+  savedAt?: number;
   entries: JournalEntry[];
+}
+
+/**
+ * Synchronous backup written when the page is hidden or closed: an
+ * IndexedDB write still in flight when the tab goes away may never land,
+ * a localStorage write does. Skipped if it doesn't fit (images can be big).
+ */
+const backupKey = (projectId: string) => `mavisdraw:journal:${projectId}`;
+
+function writeBackup(id: string): void {
+  try {
+    if (entries.size === 0) {
+      localStorage.removeItem(backupKey(id));
+      return;
+    }
+    const payload: StoredJournal = {
+      v: 1,
+      savedAt: Date.now(),
+      entries: Array.from(entries.values()),
+    };
+    localStorage.setItem(backupKey(id), JSON.stringify(payload));
+  } catch {
+    // Quota exceeded or storage blocked: the IndexedDB copy is all we have
+  }
+}
+
+function readBackup(id: string): StoredJournal | null {
+  try {
+    const raw = localStorage.getItem(backupKey(id));
+    return raw ? (JSON.parse(raw) as StoredJournal) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** For the UI: how many edits are only on this device right now. */
@@ -34,20 +69,34 @@ const keyFor = (projectId: string) => `journal:${projectId}`;
 let projectId: string | null = null;
 let entries = new Map<string, JournalEntry>();
 let unsubscribe: (() => void) | null = null;
-let writeTimer: ReturnType<typeof setTimeout> | null = null;
 
 function publish(): void {
   useJournalStore.setState({ pending: entries.size });
 }
 
-function persistSoon(delay = 250): void {
+/**
+ * Write the journal now: one IndexedDB write in flight at a time, plus at
+ * most one queued behind it with the latest state. No debounce, so even a
+ * tab that's killed a moment after an edit (crash, OOM, forced close — no
+ * unload events) has it on disk.
+ */
+let writing: Promise<void> | null = null;
+let queued = false;
+
+function persistSoon(): void {
   if (!projectId) return;
+  if (writing) {
+    queued = true;
+    return;
+  }
   const id = projectId;
-  if (writeTimer) clearTimeout(writeTimer);
-  writeTimer = setTimeout(() => {
-    writeTimer = null;
-    void persistNow(id);
-  }, delay);
+  writing = persistNow(id).finally(() => {
+    writing = null;
+    if (queued && projectId === id) {
+      queued = false;
+      persistSoon();
+    }
+  });
 }
 
 async function persistNow(id: string): Promise<void> {
@@ -55,16 +104,22 @@ async function persistNow(id: string): Promise<void> {
   else
     await kvSet(keyFor(id), {
       v: 1,
+      savedAt: Date.now(),
       entries: Array.from(entries.values()),
     } satisfies StoredJournal);
+  // The IndexedDB copy is current again; an older backup must not win
+  try {
+    localStorage.removeItem(backupKey(id));
+  } catch {
+    // ignore
+  }
 }
 
-function flushOnHide(): void {
-  if (document.visibilityState === 'hidden' && projectId) {
-    if (writeTimer) clearTimeout(writeTimer);
-    writeTimer = null;
-    void persistNow(projectId);
-  }
+function flushOnHide(event?: Event): void {
+  if (!projectId) return;
+  if (event?.type !== 'pagehide' && document.visibilityState !== 'hidden') return;
+  writeBackup(projectId); // lands even if the tab is gone a moment later
+  void persistNow(projectId).then(() => writeBackup(projectId ?? ''));
 }
 
 /** Start journaling local edits in a project (after its contents have loaded). */
@@ -73,7 +128,7 @@ export function startJournal(id: string, restored: JournalEntry[] = []): void {
   projectId = id;
   entries = new Map(restored.map((e) => [e.element.id, e]));
   publish();
-  persistSoon(0);
+  persistSoon();
 
   unsubscribe = useElementsStore.subscribe((state, prev) => {
     if (state.elements === prev.elements || isApplyingUnrecorded()) return;
@@ -110,9 +165,8 @@ function record(el: MavisElement): void {
 export function stopJournal(): void {
   unsubscribe?.();
   unsubscribe = null;
-  if (writeTimer && projectId) {
-    clearTimeout(writeTimer);
-    writeTimer = null;
+  if (queued && projectId) {
+    queued = false;
     void persistNow(projectId);
   }
   window.removeEventListener('visibilitychange', flushOnHide);
@@ -187,7 +241,14 @@ export interface RestoreResult {
 /** Read the journal a previous session left for this project. */
 export async function readJournal(id: string): Promise<JournalEntry[]> {
   const stored = await kvGet<StoredJournal>(keyFor(id));
-  return stored?.v === 1 && Array.isArray(stored.entries) ? stored.entries : [];
+  const backup = readBackup(id);
+  const valid = (j: StoredJournal | null | undefined): j is StoredJournal =>
+    j?.v === 1 && Array.isArray(j.entries);
+  // Whichever copy was written last
+  const newest = [stored, backup]
+    .filter(valid)
+    .sort((a, b) => (b.savedAt ?? 0) - (a.savedAt ?? 0))[0];
+  return newest?.entries ?? [];
 }
 
 /**

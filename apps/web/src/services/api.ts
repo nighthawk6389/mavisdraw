@@ -114,7 +114,11 @@ export async function apiFetch<T = unknown>(
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({ error: 'Request failed' }));
-    throw new ApiError(body.error ?? 'Request failed', response.status);
+    throw new ApiError(
+      body.error ?? 'Request failed',
+      response.status,
+      body.requestId ?? response.headers?.get?.('x-request-id') ?? undefined,
+    );
   }
 
   // 204 No Content (deletes, mark-as-read) has no JSON to parse
@@ -126,6 +130,8 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public statusCode: number,
+    /** Server request id: quote it in bug reports (it's in the logs and Sentry). */
+    public requestId?: string,
   ) {
     super(message);
     this.name = 'ApiError';

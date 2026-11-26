@@ -1,5 +1,6 @@
 import { buildApp } from './app.js';
 import { assertValidConfig } from './config.js';
+import { flushErrorReporting, initErrorReporting } from './observability.js';
 
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
 const HOST = process.env.HOST ?? '0.0.0.0';
@@ -7,6 +8,7 @@ const HOST = process.env.HOST ?? '0.0.0.0';
 async function start() {
   // Refuse to run with missing or default secrets in production
   assertValidConfig();
+  initErrorReporting();
   const app = await buildApp();
 
   try {
@@ -26,6 +28,7 @@ async function start() {
     app.log.info(`${signal} received, shutting down`);
     try {
       await app.close();
+      await flushErrorReporting();
       process.exit(0);
     } catch (err) {
       app.log.error(err);

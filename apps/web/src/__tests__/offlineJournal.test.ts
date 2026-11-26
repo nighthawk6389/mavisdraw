@@ -114,4 +114,18 @@ describe('journal', () => {
     // Not an undo step: it's last session's work
     expect(useElementsStore.getState().history).toHaveLength(historyBefore);
   });
+
+  it('closing the tab leaves a synchronous backup, and the newest copy wins', async () => {
+    const a = box('a', { version: 3 });
+    withoutHistory(() => useElementsStore.setState({ elements: new Map([['a', a]]) }));
+    recordSaved(D, [a]);
+    startJournal('p2');
+    useElementsStore.getState().updateElement('a', { x: 99 });
+    // The tab goes away before the debounced IndexedDB write
+    window.dispatchEvent(new Event('pagehide'));
+    expect(localStorage.getItem('mavisdraw:journal:p2')).toContain('"x":99');
+    const saved = await readJournal('p2');
+    expect(saved[0].element.x).toBe(99);
+    stopJournal();
+  });
 });

@@ -44,7 +44,9 @@ services:
       # GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_REDIRECT_URI,
       # GITHUB_TOKEN_ENCRYPTION_KEY (64 hex chars: openssl rand -hex 32)
       # and optionally GITHUB_ENTERPRISE_URL + GITHUB_ENTERPRISE_CLIENT_ID/SECRET
-    healthCheckPath: /api/health
+      # Error reporting (optional): SENTRY_DSN
+    # Readiness (database reachable), so a deploy only takes traffic it can serve
+    healthCheckPath: /api/ready
 
   # ── Frontend static site ────────────────────────────────
   - type: web
@@ -65,6 +67,7 @@ services:
           name: mavisdraw-api
           type: web
           envVarKey: RENDER_EXTERNAL_URL
+      # Error reporting in the browser (optional): VITE_SENTRY_DSN
     headers:
       - path: /*
         name: Cache-Control
