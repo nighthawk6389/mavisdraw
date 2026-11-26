@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useCallback, useState } from 'react';
+import React, { useRef, useEffect, useCallback, useState, lazy, Suspense } from 'react';
 import { CanvasRenderer } from './CanvasRenderer';
 import type { RenderState, RemoteSelectionInfo } from './CanvasRenderer';
 import { InteractionManager } from './InteractionManager';
@@ -12,6 +12,10 @@ import { useCollaborationStore } from '../../stores/collaborationStore';
 import { useCollaboration } from '../../hooks/useCollaboration';
 import CursorOverlay from '../collaboration/CursorOverlay';
 import CommentLayer from '../comments/CommentLayer';
+import { useVersionStore } from '../../stores/versionStore';
+
+// Only needed while comparing with a version
+const DiffOverlay = lazy(() => import('../version/DiffOverlay'));
 import { useCommentsStore } from '../../stores/commentsStore';
 import { generateThumbnail } from '../../utils/thumbnailGenerator';
 import { installTestHooks } from '../../utils/testHooks';
@@ -79,6 +83,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
   const createBoundText = useElementsStore((s) => s.createBoundText);
 
   const activeTool = useToolStore((s) => s.activeTool);
+  const comparing = useVersionStore((s) => s.compare !== null);
   const isToolLocked = useToolStore((s) => s.isToolLocked);
   const resetToSelect = useToolStore((s) => s.resetToSelect);
 
@@ -202,9 +207,31 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
   // ─── Text editing callbacks ────────────────────────────────
 
+  // Characters typed between "start editing" (e.g. a double-click) and the
+  // editor actually having focus. Without this, fast typing loses the first
+  // letters, and they trigger tool shortcuts instead ("A" → arrow tool).
+  const typeaheadRef = useRef<{ text: string; since: number } | null>(null);
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const pending = typeaheadRef.current;
+      if (!pending) return;
+      if (Date.now() - pending.since > 1000) {
+        typeaheadRef.current = null; // the editor never opened; stop capturing
+        return;
+      }
+      if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return;
+      pending.text += e.key;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, []);
+
   const startTextEditing = useCallback(
     (element: MavisElement, isNew: boolean) => {
       textEditStartTimeRef.current = Date.now();
+      typeaheadRef.current = { text: '', since: Date.now() };
 
       // Connectors: edit the existing label or start a new one at the midpoint
       if (element.type === 'arrow' || element.type === 'line') {
@@ -885,6 +912,8 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
       // Focus and select all
       editor.focus();
+      const typedAhead = typeaheadRef.current?.text ?? '';
+      typeaheadRef.current = null;
       const selection = window.getSelection();
       if (selection) {
         const range = document.createRange();
@@ -894,6 +923,11 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         }
         selection.removeAllRanges();
         selection.addRange(range);
+      }
+      // Replay what was typed while the editor was opening (as real input,
+      // so the editor's own handlers run)
+      if (typedAhead && !document.execCommand('insertText', false, typedAhead)) {
+        editor.textContent = (editor.textContent ?? '') + typedAhead;
       }
     }
   }, [textEditState]);
@@ -1177,6 +1211,11 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         onPointerCancel={handlePointerUp}
         onContextMenu={handleContextMenu}
       />
+      {comparing && (
+        <Suspense fallback={null}>
+          <DiffOverlay />
+        </Suspense>
+      )}
       <CommentLayer />
       <CursorOverlay />
       <ZoomControls />

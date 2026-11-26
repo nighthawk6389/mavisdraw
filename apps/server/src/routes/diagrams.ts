@@ -331,6 +331,37 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Get snapshots for a diagram
+  // One version's full contents (to preview or compare with now)
+  app.get(
+    '/api/diagrams/:id/snapshots/:snapshotId',
+    { preHandler: [requireAuth] },
+    async (request, reply) => {
+      const { id, snapshotId } = request.params as { id: string; snapshotId: string };
+      const existing = await getDiagram(id);
+      if (!existing) return reply.code(404).send({ error: 'Diagram not found' });
+      if (!(await checkProjectAccess(existing.projectId, request.user!.userId))) {
+        return reply.code(403).send({ error: 'Access denied' });
+      }
+      const snapshot = await getSnapshot(snapshotId);
+      if (!snapshot || snapshot.diagramId !== id) {
+        return reply.code(404).send({ error: 'Snapshot not found' });
+      }
+      return reply.send({
+        snapshot: {
+          id: snapshot.id,
+          diagramId: snapshot.diagramId,
+          version: snapshot.version,
+          label: snapshot.label,
+          trigger: snapshot.trigger,
+          createdBy: snapshot.createdBy,
+          createdAt: snapshot.createdAt.toISOString(),
+          elements: snapshot.elements,
+          appState: snapshot.appState,
+        },
+      });
+    },
+  );
+
   app.get('/api/diagrams/:id/snapshots', { preHandler: [requireAuth] }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const userId = request.user!.userId;

@@ -30,8 +30,10 @@ export default function ToolButton({
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       title={`${label}${shortcut ? ` (${shortcut})` : ''}`}
+      aria-label={label}
+      aria-pressed={isActive}
     >
-      <span>{icon}</span>
+      <span aria-hidden>{icon}</span>
       <span className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-xs rounded
         opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 transition-opacity">
         {label}

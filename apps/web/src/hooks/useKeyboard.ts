@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useCommentsStore } from '../stores/commentsStore';
+import { useVersionStore } from '../stores/versionStore';
 import { useToolStore, type Tool } from '../stores/toolStore';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useElementsStore } from '../stores/elementsStore';
@@ -69,10 +70,6 @@ export function useKeyboard(
 
       // Viewers: navigation, selection, search, copy/export only
       if (!editable) {
-        if (key === 'escape') {
-          useSelectionStore.getState().clearSelection();
-          return;
-        }
         if (key === 'enter' && selectedIds.size === 1) {
           const [id] = Array.from(selectedIds);
           if (useElementsStore.getState().elements.get(id)?.type === 'portal') {
@@ -104,7 +101,11 @@ export function useKeyboard(
       }
 
       if (key === 'escape') {
-        // Close an open comment first, then leave comment mode / clear selection
+        // Close an open comment / comparison first, then leave comment mode / clear selection
+        if (useVersionStore.getState().compare) {
+          useVersionStore.getState().stopCompare();
+          return;
+        }
         const comments = useCommentsStore.getState();
         if (comments.draft || comments.activeThreadId) {
           comments.cancelDraft();

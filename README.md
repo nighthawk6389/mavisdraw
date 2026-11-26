@@ -198,7 +198,9 @@ auto-laid out — a flat README diagram becomes a navigable, multi-level map.
   teammate and notifies them, and the Comments panel lists threads on every nested level.
   Viewers can comment too.
 - **Version history** (`Mod+S`) is shared by everyone on the project. Restoring a version updates
-  every open editor live, and the previous state is kept as a backup version.
+  every open editor live, and the previous state is kept as a backup version. **Compare** shows
+  what changed since any version: added, changed and removed shapes are outlined on the canvas, with
+  a plain-language list ("Renamed “Auth” → “Auth Service”", "Moved", "Reconnected").
 
 ## License
 

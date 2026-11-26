@@ -105,6 +105,20 @@ test.describe('Phase 1 editing', () => {
     await expect(level).toHaveText('200%');
   });
 
+  test('typing right after double-clicking a shape keeps every letter', async ({ page }) => {
+    await drawRect(page, 200, 200, 360, 280);
+    const box = await canvasBox(page);
+    // No pause between the double-click and the keystrokes: "A" must not
+    // switch to the arrow tool, and nothing may be lost
+    await page.mouse.dblclick(box.x + 280, box.y + 240);
+    await page.keyboard.type('Auth API', { delay: 0 });
+    await page.keyboard.press('Enter');
+    await expect
+      .poll(async () => (await hooks.elements(page)).find((e) => e.type === 'text')?.text)
+      .toBe('Auth API');
+    await expect(page.locator('button[title^="Select"]')).toHaveAttribute('aria-pressed', 'true');
+  });
+
   test('a drag is a single undo step', async ({ page }) => {
     await drawRect(page, 200, 200, 320, 280);
     const [rect] = await hooks.elements(page);

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { MavisElement } from '@mavisdraw/types';
 import {
+  apiGetSnapshot,
   apiListSnapshots,
   apiRestoreSnapshot,
   apiSaveDiagram,
@@ -27,12 +28,45 @@ interface VersionState {
   /** Called by the auto-snapshot hook after bursts of edits. */
   autoSnapshot: (diagramId?: string) => Promise<void>;
   restoreSnapshot: (snapshotId: string) => Promise<void>;
+
+  /** A version being compared with what's on the canvas now. */
+  compare: {
+    diagramId: string;
+    snapshotId: string;
+    title: string;
+    createdAt: string;
+    elements: MavisElement[];
+  } | null;
+  startCompare: (snapshotId: string) => Promise<void>;
+  stopCompare: () => void;
 }
 
 export const useVersionStore = create<VersionState>((set, get) => ({
   diagramId: null,
   snapshots: [],
   isLoading: false,
+  compare: null,
+
+  startCompare: async (snapshotId) => {
+    const diagramId = useDiagramStore.getState().activeDiagramId;
+    try {
+      const { snapshot } = await apiGetSnapshot(diagramId, snapshotId);
+      if (useDiagramStore.getState().activeDiagramId !== diagramId) return;
+      set({
+        compare: {
+          diagramId,
+          snapshotId,
+          title: snapshot.label || `Version ${snapshot.version}`,
+          createdAt: snapshot.createdAt,
+          elements: (snapshot.elements ?? []) as MavisElement[],
+        },
+      });
+    } catch (err) {
+      toast(`Couldn't load that version: ${(err as Error).message}`, 'error');
+    }
+  },
+
+  stopCompare: () => set({ compare: null }),
 
   load: async (diagramId) => {
     set({ diagramId, isLoading: true });

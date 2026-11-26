@@ -298,6 +298,18 @@ export interface SnapshotSummary {
   createdAt: string;
 }
 
+export interface SnapshotDetail extends Omit<SnapshotSummary, 'elementCount'> {
+  elements: unknown[];
+  appState: Record<string, unknown>;
+}
+
+export async function apiGetSnapshot(
+  diagramId: string,
+  snapshotId: string,
+): Promise<{ snapshot: SnapshotDetail }> {
+  return apiFetch(`/api/diagrams/${diagramId}/snapshots/${snapshotId}`);
+}
+
 export async function apiListSnapshots(diagramId: string): Promise<{ snapshots: SnapshotSummary[] }> {
   return apiFetch(`/api/diagrams/${diagramId}/snapshots?limit=100`);
 }

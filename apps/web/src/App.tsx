@@ -4,6 +4,7 @@ import Canvas from './components/canvas/Canvas';
 // Heavy, rarely-open panels load on first use
 const ExportDialog = lazy(() => import('./components/export/ExportDialog'));
 const AgentPanel = lazy(() => import('./components/agent/AgentPanel'));
+const VersionHistoryPanel = lazy(() => import('./components/version/VersionHistoryPanel'));
 const CommandPalette = lazy(() => import('./components/command/CommandPalette'));
 const MermaidDialog = lazy(() => import('./components/command/MermaidDialog'));
 import Toolbar from './components/toolbar/Toolbar';
@@ -13,7 +14,6 @@ import Breadcrumb from './components/navigation/Breadcrumb';
 import DiagramTreeSidebar from './components/navigation/DiagramTreeSidebar';
 import PortalProperties from './components/elements/PortalProperties';
 import ImportHandler from './components/export/ImportHandler';
-import VersionHistoryPanel from './components/version/VersionHistoryPanel';
 import CommentsPanel from './components/comments/CommentsPanel';
 import NotificationBell from './components/comments/NotificationBell';
 import GitHubConnectDialog from './components/github/GitHubConnectDialog';
@@ -96,6 +96,7 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
   const rootDiagramId = useDiagramStore((s) => s.diagramPath[0]);
   const canEditProject = usePermissionStore((s) => s.canEdit);
   const role = usePermissionStore((s) => s.role);
+  const showVersionHistory = useUIStore((s) => s.showVersionHistory);
   const canShare = role === 'owner' || role === 'admin';
 
   // The address bar always points at what's on screen (shareable deep link).
@@ -274,7 +275,11 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
 
         {canEditProject && <StylePanel />}
         {canEditProject && <LayerPanel />}
-        <VersionHistoryPanel />
+        {showVersionHistory && (
+          <Suspense fallback={null}>
+            <VersionHistoryPanel />
+          </Suspense>
+        )}
         <CommentsPanel />
         {showAgentChat && canEditProject && (
           <Suspense fallback={null}>

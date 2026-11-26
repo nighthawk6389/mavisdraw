@@ -45,7 +45,7 @@ Still open:
 ### Roadmap Phase 3 items not done yet
 
 - ~~Comments & @mentions~~ — done: threads pinned to shapes (pins follow them), replies, resolve/reopen, @mention autocomplete, in-app notifications, a panel across every nested level, `?thread=` deep links, live updates through the room. Still missing: email/Slack delivery of notifications, comment reactions, and lazy-loading the comments UI (it added ~7 KB gzip to the main bundle).
-- **Visual diff between versions** ("what changed since last week") — versions are full JSON snapshots; there's no diff view yet. Auto versions are pruned to the latest 50 per diagram.
+- ~~Visual diff between versions~~ — done: Compare any version with now (live), added/changed/removed outlined on the canvas, a plain-language change list ("Renamed “Auth” → “Auth Service”"). Still missing: comparing two past versions with each other, and a project-wide diff across nested levels. Auto versions are pruned to the latest 50 per diagram.
 - **Workspaces/orgs, invite by email, commenter role, folders, transfer ownership** — sharing is still per project (owner/admin/editor/viewer + share links).
 - **Presentation mode** (guided path through zoom levels) — not started; follow mode exists.
 - **Offline editing** — edits made while the room is disconnected are kept locally and REST-saved, then reconciled by version on reconnect; there's no `y-indexeddb` queue, so closing the tab while offline loses unsaved work.
