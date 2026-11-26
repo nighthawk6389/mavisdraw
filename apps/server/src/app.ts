@@ -9,6 +9,7 @@ import { sharingRoutes } from './routes/sharing.js';
 import { githubRoutes } from './routes/github.js';
 import { agentRoutes } from './routes/agent.js';
 import { commentRoutes } from './routes/comments.js';
+import { tourRoutes } from './routes/tours.js';
 import {
   createHocuspocusServer,
   persistOpenDocuments,
@@ -92,6 +93,7 @@ export async function buildApp() {
   await app.register(githubRoutes);
   await app.register(agentRoutes);
   await app.register(commentRoutes);
+  await app.register(tourRoutes);
 
   // Global error handler
   app.setErrorHandler((error: Error & { statusCode?: number }, _request, reply) => {

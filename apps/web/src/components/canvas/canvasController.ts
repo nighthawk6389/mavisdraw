@@ -1,4 +1,4 @@
-import type { Point } from '@mavisdraw/types';
+import type { Point, Viewport } from '@mavisdraw/types';
 
 /**
  * Imperative handle to the mounted canvas, for UI outside the canvas
@@ -21,6 +21,9 @@ export interface CanvasController {
   editLabel?: (elementId: string) => void;
   /** Pan so a canvas point is in the middle of the screen (zoom unchanged). */
   centerOn?: (point: Point) => void;
+  getViewport?: () => Viewport;
+  /** Animate the camera to a viewport (null: frame the diagram's content). */
+  flyTo?: (target: Viewport | null, durationMs?: number) => Promise<void>;
 }
 
 let current: CanvasController | null = null;

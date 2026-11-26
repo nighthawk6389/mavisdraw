@@ -305,6 +305,26 @@ export const notifications = pgTable(
   (table) => [index('notifications_user_id_idx').on(table.userId, table.createdAt)],
 );
 
+// ── Tours (presentation paths through the map) ──────────────
+
+export interface TourStop {
+  id: string;
+  diagramId: string;
+  /** Saved camera; null means "fit the diagram's content". */
+  viewport: { zoom: number; scrollX: number; scrollY: number } | null;
+  title: string;
+  note: string;
+}
+
+export const projectTours = pgTable('project_tours', {
+  projectId: text('project_id')
+    .primaryKey()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  stops: jsonb('stops').notNull().default([]).$type<TourStop[]>(),
+  updatedBy: text('updated_by').references(() => users.id, { onDelete: 'set null' }),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 // ── GitHub Connections ──────────────────────────────────────
 
 export const githubConnections = pgTable(

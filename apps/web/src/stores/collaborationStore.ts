@@ -4,6 +4,7 @@ import { HocuspocusProvider } from '@hocuspocus/provider';
 import { useElementsStore, applyRemoteChanges } from './elementsStore';
 import { docVersion, readElement, writeElement } from '../collab/ydocElements';
 import { useCommentsStore } from './commentsStore';
+import { usePresentStore } from './presentStore';
 import { useDiagramStore } from './diagramStore';
 import { refreshDiagramList } from '../services/diagramSync';
 import { acknowledge } from '../services/offlineJournal';
@@ -404,6 +405,8 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
         void useCommentsStore.getState().refresh();
         void useNotificationStore.getState().load();
       }
+      if (event.keysChanged.has('tour')) void usePresentStore.getState().loadTour();
+      if (event.keysChanged.has('presentation')) void usePresentStore.getState().refreshRemote();
       // Someone's access to the project changed (maybe ours)
       if (event.keysChanged.has('permissions')) void refreshProjectRole();
     });

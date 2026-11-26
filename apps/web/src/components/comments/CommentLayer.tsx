@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useCommentsStore } from '../../stores/commentsStore';
+import { usePresentStore } from '../../stores/presentStore';
 import { useElementsStore } from '../../stores/elementsStore';
 import { useDiagramStore } from '../../stores/diagramStore';
 import { useViewportStore } from '../../stores/viewportStore';
@@ -26,6 +27,7 @@ export default function CommentLayer() {
   const zoom = useViewportStore((s) => s.zoom);
   const scrollX = useViewportStore((s) => s.scrollX);
   const scrollY = useViewportStore((s) => s.scrollY);
+  const presenting = usePresentStore((s) => s.presenting || s.following);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(1200);
 
@@ -74,7 +76,10 @@ export default function CommentLayer() {
     sx + 20 + POPOVER_WIDTH > width ? Math.max(8, sx - POPOVER_WIDTH - 12) : sx + 20;
 
   return (
-    <div ref={wrapperRef} className="pointer-events-none absolute inset-0 z-20 overflow-hidden">
+    <div
+      ref={wrapperRef}
+      className={`pointer-events-none absolute inset-0 z-20 overflow-hidden ${presenting ? 'hidden' : ''}`}
+    >
       {visible.map((thread) => {
         const p = toScreen(threadAnchor(thread, elements));
         return (

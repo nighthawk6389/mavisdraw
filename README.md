@@ -192,6 +192,9 @@ auto-laid out — a flat README diagram becomes a navigable, multi-level map.
 - **Share links** (`Share` → copy link) add whoever opens them to the project with the chosen role.
 - **Live editing** merges per property: one person can move a shape while another recolours it.
   Undo only ever undoes your own changes, and never reverts a property a teammate changed after you.
+- **Present** turns the map into a guided tour: **Generate from map** makes one stop per level,
+  top-down, or add views by hand. Arrow keys fly between stops, drilling in and out of levels;
+  everyone else on the project can **Follow** along, wherever they are in the map.
 - **Offline**: edits made without a connection are kept in the browser — even if you close the tab —
   and saved when you're back. If a teammate changed the same shape meanwhile, theirs is kept and
   you're told.

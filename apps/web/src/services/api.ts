@@ -499,3 +499,48 @@ export function apiMarkNotificationsRead(ids?: string[]): Promise<void> {
     body: JSON.stringify(ids ? { ids } : {}),
   });
 }
+
+// ── Tours & presenting ─────────────────────────────────────────────────
+
+export interface TourStop {
+  id: string;
+  diagramId: string;
+  /** Saved camera; null means "fit the diagram's content". */
+  viewport: { zoom: number; scrollX: number; scrollY: number } | null;
+  title: string;
+  note: string;
+}
+
+export interface PresentationState {
+  presenterId: string;
+  presenterName: string;
+  stop: number;
+  updatedAt: number;
+}
+
+export function apiGetTour(projectId: string): Promise<{ stops: TourStop[] }> {
+  return apiFetch(`/api/projects/${projectId}/tour`);
+}
+
+export function apiSaveTour(projectId: string, stops: TourStop[]): Promise<{ stops: TourStop[] }> {
+  return apiFetch(`/api/projects/${projectId}/tour`, {
+    method: 'PUT',
+    body: JSON.stringify({ stops }),
+  });
+}
+
+export function apiGetPresentation(
+  projectId: string,
+): Promise<{ presentation: PresentationState | null }> {
+  return apiFetch(`/api/projects/${projectId}/presentation`);
+}
+
+export function apiSetPresentation(
+  projectId: string,
+  stop: number | null,
+): Promise<{ presentation: PresentationState | null }> {
+  return apiFetch(`/api/projects/${projectId}/presentation`, {
+    method: 'PUT',
+    body: JSON.stringify({ stop }),
+  });
+}

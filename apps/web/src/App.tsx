@@ -5,6 +5,8 @@ import Canvas from './components/canvas/Canvas';
 const ExportDialog = lazy(() => import('./components/export/ExportDialog'));
 const AgentPanel = lazy(() => import('./components/agent/AgentPanel'));
 const VersionHistoryPanel = lazy(() => import('./components/version/VersionHistoryPanel'));
+const TourPanel = lazy(() => import('./components/present/TourPanel'));
+const PresentationOverlay = lazy(() => import('./components/present/PresentationOverlay'));
 const CommandPalette = lazy(() => import('./components/command/CommandPalette'));
 const MermaidDialog = lazy(() => import('./components/command/MermaidDialog'));
 import Toolbar from './components/toolbar/Toolbar';
@@ -15,6 +17,8 @@ import DiagramTreeSidebar from './components/navigation/DiagramTreeSidebar';
 import PortalProperties from './components/elements/PortalProperties';
 import ImportHandler from './components/export/ImportHandler';
 import CommentsPanel from './components/comments/CommentsPanel';
+import PresenterBanner from './components/present/PresenterBanner';
+import { usePresentStore } from './stores/presentStore';
 import NotificationBell from './components/comments/NotificationBell';
 import GitHubConnectDialog from './components/github/GitHubConnectDialog';
 import PresenceAvatars from './components/collaboration/PresenceAvatars';
@@ -38,7 +42,13 @@ import Dashboard from './routes/dashboard';
 import { apiGetDiagram, apiGetProject, apiJoinViaShareLink, apiListDiagrams } from './services/api';
 import { navigate, projectPath, reflectPath, useRoute } from './routing';
 import { useCommentsStore } from './stores/commentsStore';
-import { applyJournal, readJournal, startJournal, stopJournal, useJournalStore } from './services/offlineJournal';
+import {
+  applyJournal,
+  readJournal,
+  startJournal,
+  stopJournal,
+  useJournalStore,
+} from './services/offlineJournal';
 import { usePermissionStore, type ProjectRole } from './stores/permissionStore';
 import { toast } from './stores/toastStore';
 import {
@@ -50,7 +60,6 @@ import {
 } from './services/diagramSync';
 import { recordSaved, resetSaveTracking } from './services/saveTracker';
 import type { MavisElement, Diagram } from '@mavisdraw/types';
-
 
 function useOnline(): boolean {
   const [online, setOnline] = useState(() => navigator.onLine);
@@ -79,22 +88,17 @@ function SaveIndicator({ status }: { status: SaveStatus }) {
         data-testid="offline-indicator"
         title="Your changes are stored in this browser and will be saved when you're back online, even if you close the tab."
       >
-        {online ? 'Not saved yet' : 'Offline'} · {pending} {pending === 1 ? 'change' : 'changes'} kept on
-        this device
+        {online ? 'Not saved yet' : 'Offline'} · {pending} {pending === 1 ? 'change' : 'changes'}{' '}
+        kept on this device
       </span>
     );
   }
   if (status === 'idle') return null;
 
-  const label =
-    status === 'saving' ? 'Saving...' : status === 'saved' ? 'Saved' : 'Save failed';
+  const label = status === 'saving' ? 'Saving...' : status === 'saved' ? 'Saved' : 'Save failed';
 
   const color =
-    status === 'saving'
-      ? 'text-gray-500'
-      : status === 'saved'
-        ? 'text-green-600'
-        : 'text-red-500';
+    status === 'saving' ? 'text-gray-500' : status === 'saved' ? 'text-green-600' : 'text-red-500';
 
   return <span className={`text-xs ${color} px-2`}>{label}</span>;
 }
@@ -129,6 +133,9 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
   const canEditProject = usePermissionStore((s) => s.canEdit);
   const role = usePermissionStore((s) => s.role);
   const showVersionHistory = useUIStore((s) => s.showVersionHistory);
+  // Presenting (or following someone who is): the map, and nothing else
+  const inPresentation = usePresentStore((s) => s.presenting || s.following);
+  const tourOpen = usePresentStore((s) => s.panelOpen);
   const canShare = role === 'owner' || role === 'admin';
 
   // The address bar always points at what's on screen (shareable deep link).
@@ -161,7 +168,11 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
       .then(() => {
         // First time here: frame the content once it has arrived
         const store = useDiagramStore.getState();
-        if (firstVisit && store.activeDiagramId === activeDiagramId && !store.getViewport(activeDiagramId)) {
+        if (
+          firstVisit &&
+          store.activeDiagramId === activeDiagramId &&
+          !store.getViewport(activeDiagramId)
+        ) {
           getCanvasController()?.zoomToFit();
         }
       })
@@ -180,7 +191,9 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
   return (
     <div className="flex flex-col h-full w-full bg-white">
       {/* Top bar with breadcrumb, save status, and user info */}
-      <div className="flex items-center justify-between border-b border-gray-200 bg-white">
+      <div
+        className={`flex items-center justify-between border-b border-gray-200 bg-white ${inPresentation ? 'hidden' : ''}`}
+      >
         <div className="flex items-center">
           <button
             onClick={onBackToDashboard}
@@ -210,7 +223,9 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
             aria-label="Search"
           >
             Search
-            <kbd className="rounded bg-gray-100 px-1 text-[10px] text-gray-500">{shortcut('Mod+K')}</kbd>
+            <kbd className="rounded bg-gray-100 px-1 text-[10px] text-gray-500">
+              {shortcut('Mod+K')}
+            </kbd>
           </button>
           {canEditProject && (
             <button
@@ -236,6 +251,18 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
             History
           </button>
           <CommentsButton />
+          <button
+            onClick={() => usePresentStore.getState().setPanelOpen(!tourOpen)}
+            className={`text-xs px-2 py-1 border rounded ${
+              tourOpen
+                ? 'border-blue-300 bg-blue-50 text-blue-700'
+                : 'border-gray-300 text-gray-500 hover:text-gray-700'
+            }`}
+            title="Walk people through the map, level by level"
+            aria-pressed={tourOpen}
+          >
+            Present
+          </button>
           {canEditProject && (
             <>
               <button
@@ -290,12 +317,18 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
 
       {/* Main content area */}
       <div className="flex flex-1 min-h-0">
-        <Toolbar />
-        <DiagramTreeSidebar />
+        {!inPresentation && <Toolbar />}
+        {!inPresentation && <DiagramTreeSidebar />}
 
         {/* Canvas area with optional portal properties panel */}
         <div className="flex flex-1 relative">
           <Canvas interactionManagerRef={interactionManagerRef} />
+          <PresenterBanner />
+          {inPresentation && (
+            <Suspense fallback={null}>
+              <PresentationOverlay />
+            </Suspense>
+          )}
 
           {/* Portal properties panel overlay */}
           {showPortalProperties && (
@@ -305,18 +338,27 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
           )}
         </div>
 
-        {canEditProject && <StylePanel />}
-        {canEditProject && <LayerPanel />}
-        {showVersionHistory && (
+        {!inPresentation && (
+          <>
+            {canEditProject && <StylePanel />}
+            {canEditProject && <LayerPanel />}
+            {showVersionHistory && (
+              <Suspense fallback={null}>
+                <VersionHistoryPanel />
+              </Suspense>
+            )}
+            <CommentsPanel />
+            {tourOpen && (
           <Suspense fallback={null}>
-            <VersionHistoryPanel />
+            <TourPanel />
           </Suspense>
         )}
-        <CommentsPanel />
-        {showAgentChat && canEditProject && (
-          <Suspense fallback={null}>
-            <AgentPanel />
-          </Suspense>
+            {showAgentChat && canEditProject && (
+              <Suspense fallback={null}>
+                <AgentPanel />
+              </Suspense>
+            )}
+          </>
         )}
       </div>
 
@@ -432,6 +474,10 @@ async function loadProject(projectId: string, diagramId: string | null): Promise
   const threadId = new URLSearchParams(window.location.search).get('thread');
   useCommentsStore.setState({ pendingThreadId: threadId });
   void useCommentsStore.getState().load(projectId);
+  // Someone may already be presenting
+  usePresentStore.setState({ stops: [], presenting: false, following: false, remote: null });
+  void usePresentStore.getState().loadTour();
+  void usePresentStore.getState().refreshRemote();
 }
 
 export default function App() {

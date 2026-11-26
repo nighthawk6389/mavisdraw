@@ -40,19 +40,12 @@ vi.mock('@hocuspocus/provider', () => {
 });
 
 // Mock getAccessToken
-vi.mock('../../services/api', () => ({
+vi.mock('../../services/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../services/api')>()),
   getAccessToken: vi.fn(() => 'mock-token'),
   getFreshAccessToken: vi.fn(async () => 'mock-token'),
   forceRefreshAccessToken: vi.fn(async () => true),
   apiGetProject: vi.fn(async () => ({ project: { role: 'editor' } })),
-  ApiError: class ApiError extends Error {
-    constructor(
-      message: string,
-      public statusCode: number,
-    ) {
-      super(message);
-    }
-  },
 }));
 
 import { useCollaborationStore, isLiveSynced, colorFor } from '../collaborationStore';

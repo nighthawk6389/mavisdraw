@@ -739,6 +739,34 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         return renderer.getViewport().screenToCanvas(w / 2, h / 2);
       },
       invalidate: () => renderer.invalidateStatic(),
+      getViewport: () => renderer.getViewport().getViewport(),
+      flyTo: (target, durationMs = 450) =>
+        new Promise<void>((resolve) => {
+          const vpm = renderer.getViewport();
+          const start = vpm.getViewport();
+          let end = target;
+          if (!end) {
+            // Work out the framing, then animate to it from where we are
+            fitBounds(computeElementList(false));
+            end = vpm.getViewport();
+            vpm.setViewport(start);
+          }
+          const to = end;
+          const t0 = performance.now();
+          const step = (now: number) => {
+            const t = Math.min(1, (now - t0) / durationMs);
+            const e = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+            vpm.setViewport({
+              zoom: start.zoom + (to.zoom - start.zoom) * e,
+              scrollX: start.scrollX + (to.scrollX - start.scrollX) * e,
+              scrollY: start.scrollY + (to.scrollY - start.scrollY) * e,
+            });
+            renderer.invalidateStatic();
+            if (t < 1) requestAnimationFrame(step);
+            else resolve();
+          };
+          requestAnimationFrame(step);
+        }),
       centerOn: (point: Point) => {
         const { width: w, height: h } = containerSize();
         const vp = renderer.getViewport().getViewport();
