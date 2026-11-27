@@ -13,7 +13,7 @@ import { db } from '../db/client.js';
 import { diagrams, modelComponents, modelRelationships, type RepoSource } from '../db/schema.js';
 import { getDiagram, updateDiagram } from './diagramService.js';
 import { loadProjectScene } from './projectService.js';
-import { documentNameFor } from '../ws/hocuspocus.js';
+import { documentNameFor, persistDocument } from '../ws/hocuspocus.js';
 import {
   applyState,
   encodeState,
@@ -209,7 +209,13 @@ export async function patchDiagramElements(
 ): Promise<number> {
   if (patches.length === 0) return 0;
   const live = await liveRoom(rooms, diagramId);
-  if (live) return patchElements(live, patches).length;
+  if (live) {
+    const changed = patchElements(live, patches);
+    // Saved now, not on the room's debounce: a room nobody is in any more may
+    // be unloading, and an edit after its last save would go with it
+    if (changed.length > 0) await persistDocument(documentNameFor(diagramId), live);
+    return changed.length;
+  }
   const stored = await getDiagram(diagramId);
   if (!stored) return 0;
   const doc = new Y.Doc();
@@ -221,6 +227,13 @@ export async function patchDiagramElements(
       elements: readLiveElements(doc),
       yjsState: encodeState(doc),
     });
+    // Someone may have opened the diagram meanwhile, loading the state from
+    // before this write: give that room the same edit (setting the same
+    // values twice is harmless), or it would save the old ones back
+    const opened = await liveRoom(rooms, diagramId);
+    if (opened && patchElements(opened, patches).length > 0) {
+      await persistDocument(documentNameFor(diagramId), opened);
+    }
   }
   return changed.length;
 }

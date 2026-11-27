@@ -141,11 +141,22 @@ export async function modelRoutes(app: FastifyInstance): Promise<void> {
       if (!current) return reply.code(404).send({ error: 'Component not found' });
 
       const { name, ...rest } = parsed.data;
-      const renamed = name !== undefined && name !== current.name;
-      if (renamed) {
-        await renameComponent(project, componentId, name, app.hocuspocus, request.user!.userId);
+      // Always relabel when a name is given: the model's name is what most
+      // labels say, so with labels that disagree (one just edited, one not
+      // yet) it can already read `name` while other appearances don't.
+      // Labels that already match are left alone.
+      let renamed = false;
+      if (name !== undefined) {
+        const done = await renameComponent(
+          project,
+          componentId,
+          name,
+          app.hocuspocus,
+          request.user!.userId,
+        );
+        renamed = done.labels > 0 || done.diagrams.length > 0;
       }
-      if (Object.keys(rest).length > 0 || (renamed && current.stored)) {
+      if (Object.keys(rest).length > 0 || (name !== undefined && current.stored)) {
         await saveComponentDetails(
           id,
           componentId,
