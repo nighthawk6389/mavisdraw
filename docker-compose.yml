@@ -32,6 +32,8 @@ services:
       DB_HOST: postgres
       DB_PORT: '5432'
       DB_USER: mavisdraw
+      # The image defaults to production; this local stack seeds a demo account
+      NODE_ENV: development
     entrypoint: ['sh', '/app/scripts/db-init.sh']
     volumes:
       - ./scripts:/app/scripts:ro

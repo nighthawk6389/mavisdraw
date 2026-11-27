@@ -130,6 +130,10 @@ Items noticed during PR #9 review (arrow improvements) that weren't fixed immedi
 
 - **Implicit `as Partial<LinearElement>` casts** throughout when calling `updateElement` with linear-specific fields like `points` or `routingMode`. A type-safe approach would use typed overloads or a generic `updateElement<T extends MavisElement>`.
 
+- **Server build compiles its tests into `dist/`** (`apps/server/tsconfig.json` includes `src/__tests__`), so the Docker images and Render deploy ship `dist/__tests__` (they import vitest, which isn't installed in production). Harmless today since nothing loads them, but a `tsconfig.build.json` excluding `__tests__` (like `packages/llm`) would keep the runtime output clean.
+
+- **The web image's nginx sends no security headers** (`nginx.conf`): no `X-Frame-Options`/`frame-ancestors` (except for `/embed.html`), `X-Content-Type-Options` or CSP — the same gap as the Render static site noted above.
+
 - **`createElement` name is misleading** — It only creates and returns an element object with defaults but does not add it to the store. Renaming to `buildElement` or `createElementTemplate` would clarify the contract.
 
 ## Testing

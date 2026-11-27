@@ -1,16 +1,21 @@
+# Targets: `server` (API + collaboration WebSocket) and `web` (static app on nginx).
+# Build from the repository root, e.g. `docker build --target server .`
+
 # ── Base stage: install dependencies ──────────────────────
 FROM node:22-alpine AS base
 RUN corepack enable && corepack prepare pnpm@10.29.3 --activate
 WORKDIR /app
 
-COPY pnpm-workspace.yaml pnpm-lock.yaml package.json turbo.json tsconfig.base.json ./
-COPY packages/types/package.json packages/types/tsconfig.json ./packages/types/
-COPY packages/math/package.json packages/math/tsconfig.json ./packages/math/
-COPY packages/llm/package.json packages/llm/tsconfig.json packages/llm/tsconfig.build.json ./packages/llm/
-COPY packages/compat/package.json packages/compat/tsconfig.json ./packages/compat/
-COPY packages/export/package.json packages/export/tsconfig.json ./packages/export/
-COPY apps/server/package.json apps/server/tsconfig.json ./apps/server/
-COPY apps/web/package.json apps/web/tsconfig.json apps/web/vite.config.ts apps/web/vitest.config.ts apps/web/postcss.config.js apps/web/tailwind.config.ts apps/web/index.html ./apps/web/
+# Every workspace's manifest, so the install matches the lockfile and is
+# cached until a dependency changes
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
+COPY packages/types/package.json ./packages/types/
+COPY packages/math/package.json ./packages/math/
+COPY packages/llm/package.json ./packages/llm/
+COPY packages/compat/package.json ./packages/compat/
+COPY packages/export/package.json ./packages/export/
+COPY apps/server/package.json ./apps/server/
+COPY apps/web/package.json ./apps/web/
 
 RUN pnpm install --frozen-lockfile
 
@@ -22,6 +27,7 @@ ARG VITE_WS_URL=ws://localhost:3001
 ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_WS_URL=$VITE_WS_URL
 
+COPY turbo.json tsconfig.base.json ./
 COPY packages/ ./packages/
 COPY apps/ ./apps/
 
@@ -29,42 +35,44 @@ RUN pnpm turbo run build
 
 # ── Server image ─────────────────────────────────────────
 FROM node:22-alpine AS server
-RUN corepack enable && corepack prepare pnpm@10.29.3 --activate
-RUN apk add --no-cache postgresql-client
+# postgresql-client: pg_isready, used by scripts/db-init.sh (docker-compose)
+RUN apk add --no-cache postgresql-client \
+  && corepack enable && corepack prepare pnpm@10.29.3 --activate
 WORKDIR /app
+# Production config checks apply (the server refuses to start with missing
+# or development secrets); docker-compose overrides it for local use
+ENV NODE_ENV=production
 
-COPY --from=base /app/node_modules ./node_modules
-COPY --from=base /app/package.json ./
-COPY --from=base /app/pnpm-workspace.yaml ./
-COPY --from=base /app/pnpm-lock.yaml ./
+# Production dependencies only: the server and the workspace packages it
+# loads (math is listed because export depends on it)
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
+COPY apps/server/package.json ./apps/server/
+COPY packages/types/package.json ./packages/types/
+COPY packages/math/package.json ./packages/math/
+COPY packages/llm/package.json ./packages/llm/
+COPY packages/compat/package.json ./packages/compat/
+COPY packages/export/package.json ./packages/export/
+RUN pnpm install --frozen-lockfile --prod && rm -rf "$(pnpm store path)"
 
-# Server package + built output
-COPY --from=base /app/apps/server/node_modules ./apps/server/node_modules
+# Built output. The server loads these workspace packages' dist at runtime:
+# llm (map serialization, MCP), export/svg-markup (embeds), compat/repo
+# (repository analysis, pull request checks)
 COPY --from=build /app/apps/server/dist ./apps/server/dist
-COPY --from=base /app/apps/server/package.json ./apps/server/
-
-# Workspace packages the server loads at runtime (built)
 COPY --from=build /app/packages/types/dist ./packages/types/dist
-COPY --from=base /app/packages/types/package.json ./packages/types/
 COPY --from=build /app/packages/llm/dist ./packages/llm/dist
-COPY --from=base /app/packages/llm/package.json ./packages/llm/
 COPY --from=build /app/packages/export/dist ./packages/export/dist
-COPY --from=base /app/packages/export/package.json ./packages/export/
-COPY --from=base /app/packages/export/node_modules ./packages/export/node_modules
-COPY --from=base /app/packages/math/package.json ./packages/math/
 COPY --from=build /app/packages/compat/dist ./packages/compat/dist
-COPY --from=base /app/packages/compat/package.json ./packages/compat/
-
-# Migrations (applied by dist/db/migrate.js) + schema source (db:seed, dev only)
+# Migrations, applied by `node apps/server/dist/db/migrate.js`
 COPY apps/server/drizzle/ ./apps/server/drizzle/
-COPY apps/server/drizzle.config.ts ./apps/server/
-COPY apps/server/src/db/ ./apps/server/src/db/
 
+# Files stay root-owned (read-only for the process); the server writes nothing to disk
+USER node
 EXPOSE 3001
 CMD ["node", "apps/server/dist/index.js"]
 
 # ── Frontend image (nginx) ───────────────────────────────
-FROM nginx:alpine AS web
+# Runs nginx as an unprivileged user (nginx.conf listens on 3000)
+FROM nginxinc/nginx-unprivileged:alpine AS web
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 3000

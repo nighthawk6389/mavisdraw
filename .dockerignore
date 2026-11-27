@@ -5,3 +5,8 @@ node_modules
 .claude
 .env
 *.md
+**/.turbo
+**/*.tsbuildinfo
+**/playwright-report
+**/test-results
+**/coverage
