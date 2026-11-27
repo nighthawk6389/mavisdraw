@@ -43,6 +43,25 @@ Still open:
 - **Title/background/layers aren't live** (REST only, last writer wins for those fields).
 - **Off-screen undo**: undo after drilling into a child can change parent elements you can't see (Figma/tldraw scope or reveal it).
 
+### Second independent review (2026-11, `308bc3c..730bf7e`) — status
+
+Fixed: C1 (REST autosave reverting teammates' work), H1 (unverified emails receiving invites), H2 (ReDoS in the PR-check manifest parser), H3 (cross-tenant PR-comment injection), M1 (SVG embed rendered per request), M2 (`TRUST_PROXY=true` spoofable), M4 (collaborator emails visible to public viewers), M5 (project move/privatize ignored open sockets), M9 (repo links never re-verified), M11 (signals loaded whole diagrams), L1 (admins granting admin, fixed on the testing branch), L2 (any bot's comment edited), L3 (MCP limit error hidden).
+
+Still open:
+- **M3 — outbound email can be abused** (`services/commentService.ts` `emailMentions`, `services/workspaceService.ts` `inviteByEmail`): anyone signed in can @mention the members of a public project, or invite arbitrary addresses, as often as they like, with their own text in the email. Needs per-user and per-recipient limits, and no mention emails from non-members.
+- **M6 — a version restore with no live room writes old versions and no tombstones** (`routes/diagrams.ts` restore): a stale tab joining later reverts it. Restore through the stored CRDT state, like the live path (`replaceElements`).
+- **M7 — the non-live REST merge is an unlocked read-modify-write** (`routes/diagrams.ts`): two concurrent saves both merge into the old state, and the second silently drops the first. Needs `SELECT … FOR UPDATE` in a transaction, plus a per-diagram lock that `onLoadDocument` honours. The model API's rename of non-live diagrams (`services/modelService.ts` `patchDiagramElements`) has the same race.
+- **M8 — the offline journal is per project, not per user or tab** (`services/offlineJournal.ts`):
+  - it survives logout, so the next account on a shared browser restores the previous one's edits;
+  - two tabs overwrite each other's journal;
+  - a nested diagram that fails to load on reopen has its edits dropped as "conflicts".
+- **M10 — proposal claim/apply gaps** (`stores/proposalsStore.ts`, `services/proposalService.ts`):
+  - a lost claim response loses the proposal;
+  - a partial apply followed by a reopen duplicates components;
+  - any editor can reopen any applied proposal;
+  - apply runs on a diagram that failed to load.
+- **L4–L13** (see the review report): the app is frameable; secrets are only enforced when `NODE_ENV=production` (the server Dockerfile doesn't set it); the refresh cookie is `SameSite=Lax` across Render's two sites; `CommentLayer` re-renders on every drag frame; the embed viewer's retry stacks timers; per-process state (single instance only); the pre-auth WebSocket cap is per socket; typeahead capture can swallow keys for 1s; pending invites outlive their inviter's access; MCP `find_component` loads up to 25 scenes per call.
+
 ### Roadmap Phase 3 items not done yet
 
 - ~~Comments & @mentions~~ — done: threads pinned to shapes (pins follow them), replies, resolve/reopen, @mention autocomplete, in-app notifications, a panel across every nested level, `?thread=` deep links, live updates through the room. @mentions are emailed when mail is configured. Still missing: per-user notification settings (email on/off, digests), Slack delivery, comment reactions, and lazy-loading the comments UI (it added ~7 KB gzip to the main bundle).
