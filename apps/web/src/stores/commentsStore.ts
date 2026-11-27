@@ -12,11 +12,7 @@ import {
   type Member,
 } from '../services/api';
 import { useDiagramStore } from './diagramStore';
-import {
-  ensureDiagramKnown,
-  loadDiagramElements,
-  refreshDiagramList,
-} from '../services/diagramSync';
+import { goToDiagram, refreshDiagramList } from '../services/diagramSync';
 import { getCanvasController } from '../components/canvas/canvasController';
 import { useElementsStore } from './elementsStore';
 import { threadAnchor } from '../components/comments/commentUtils';
@@ -212,14 +208,7 @@ export const useCommentsStore = create<CommentsState>((set, get) => ({
       return get().goToThread(threadId);
     }
     set({ pendingThreadId: null, draft: null });
-    if (!(await ensureDiagramKnown(thread.diagramId))) return;
-    const diagrams = useDiagramStore.getState();
-    if (diagrams.activeDiagramId !== thread.diagramId) {
-      diagrams.navigateToDiagram(thread.diagramId);
-      await loadDiagramElements(thread.diagramId).catch(() => undefined);
-      // Let the canvas pick up the new diagram before moving the viewport
-      await new Promise((r) => requestAnimationFrame(r));
-    }
+    if (!(await goToDiagram(thread.diagramId))) return;
     const at = threadAnchor(thread, useElementsStore.getState().elements);
     getCanvasController()?.centerOn?.(at);
     set({ activeThreadId: threadId, showResolved: get().showResolved || !!thread.resolvedAt });

@@ -12,6 +12,7 @@ import {
   type WorkspaceResponse,
 } from '../services/api';
 import WorkspaceMembersDialog from '../components/dashboard/WorkspaceMembersDialog';
+import { useUIStore } from '../stores/uiStore';
 import NotificationBell from '../components/comments/NotificationBell';
 
 interface DashboardProps {
@@ -206,6 +207,14 @@ export default function Dashboard({ onOpenProject }: DashboardProps) {
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           <h1 className="text-xl font-bold text-gray-900">MavisDraw</h1>
           <div className="flex items-center gap-4">
+            <button
+              type="button"
+              onClick={() => useUIStore.getState().setShowAgentAccess(true)}
+              className="text-sm text-gray-600 transition-colors hover:text-gray-900"
+              title="Let coding agents (Claude Code, Cursor…) read your maps and propose updates"
+            >
+              Connect a coding agent
+            </button>
             <NotificationBell />
             <span className="text-sm text-gray-600">{user?.name}</span>
             <button

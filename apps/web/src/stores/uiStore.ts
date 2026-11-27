@@ -18,6 +18,8 @@ interface UIState {
   // Command palette & diagram-as-code import
   showCommandPalette: boolean;
   showMermaidDialog: boolean;
+  /** "Connect a coding agent": MCP access tokens and setup. */
+  showAgentAccess: boolean;
 
   // Diagram render mode
   renderMode: RenderMode;
@@ -37,6 +39,7 @@ interface UIState {
   toggleAgentChat: () => void;
   setShowCommandPalette: (show: boolean) => void;
   setShowMermaidDialog: (show: boolean) => void;
+  setShowAgentAccess: (show: boolean) => void;
   setRenderMode: (mode: RenderMode) => void;
   toggleGrid: () => void;
   toggleSnapToGrid: () => void;
@@ -53,6 +56,7 @@ export const useUIStore = create<UIState>((set) => ({
   showAgentChat: false,
   showCommandPalette: false,
   showMermaidDialog: false,
+  showAgentAccess: false,
   renderMode: 'clean',
   showGrid: true,
   snapToGrid: false,
@@ -88,6 +92,7 @@ export const useUIStore = create<UIState>((set) => ({
 
   setShowCommandPalette: (show: boolean) => set({ showCommandPalette: show }),
   setShowMermaidDialog: (show: boolean) => set({ showMermaidDialog: show }),
+  setShowAgentAccess: (show: boolean) => set({ showAgentAccess: show }),
 
   setRenderMode: (mode: RenderMode) => {
     set({ renderMode: mode });

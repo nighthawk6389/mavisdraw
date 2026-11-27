@@ -146,7 +146,9 @@ let listing: Promise<void> | null = null;
 
 function currentProjectId(): string | null {
   const { diagrams, activeDiagramId } = useDiagramStore.getState();
-  return diagrams.get(activeDiagramId)?.projectId ?? diagrams.values().next().value?.projectId ?? null;
+  return (
+    diagrams.get(activeDiagramId)?.projectId ?? diagrams.values().next().value?.projectId ?? null
+  );
 }
 
 /**
@@ -181,6 +183,22 @@ export async function ensureDiagramKnown(diagramId: string): Promise<boolean> {
   if (useDiagramStore.getState().diagrams.has(diagramId)) return true;
   await refreshDiagramList();
   return useDiagramStore.getState().diagrams.has(diagramId);
+}
+
+/**
+ * Open a diagram of the current project (any level), loading its contents
+ * first. False when it doesn't exist (anymore).
+ */
+export async function goToDiagram(diagramId: string): Promise<boolean> {
+  if (!(await ensureDiagramKnown(diagramId))) return false;
+  const diagrams = useDiagramStore.getState();
+  if (diagrams.activeDiagramId !== diagramId) {
+    diagrams.navigateToDiagram(diagramId);
+    await loadDiagramElements(diagramId).catch(() => undefined);
+    // Let the canvas pick up the new diagram before anything moves the viewport
+    await new Promise((r) => requestAnimationFrame(r));
+  }
+  return true;
 }
 
 /**

@@ -1,12 +1,7 @@
 import type { Diagram } from '@mavisdraw/types';
-import type {
-  MavisElement,
-  PortalElement,
-  LinearElement,
-  TextElement,
-  GitHubLink,
-} from '@mavisdraw/types';
+import type { MavisElement, PortalElement, LinearElement, GitHubLink } from '@mavisdraw/types';
 import type { MavisDrawScene } from '@mavisdraw/types';
+import { getBoundText, getElementLabel } from './labels.js';
 
 // ── Public API ──────────────────────────────────────────────
 
@@ -162,38 +157,6 @@ function serializeDiagram(
       );
     }
   }
-}
-
-function getElementLabel(el: MavisElement, elementMap: Map<string, MavisElement>): string {
-  // If this is a text element, use its text
-  if (el.type === 'text') {
-    return (el as TextElement).text.trim() || 'Unnamed';
-  }
-
-  // If this is a portal, use its label
-  if (el.type === 'portal') {
-    return (el as PortalElement).label || 'Unnamed Portal';
-  }
-
-  // Check for bound text (text inside a shape)
-  const boundText = getBoundText(el, elementMap);
-  if (boundText) return boundText;
-
-  // Fallback to type + truncated id
-  return `${el.type}_${el.id.slice(0, 6)}`;
-}
-
-function getBoundText(
-  el: MavisElement,
-  elementMap: Map<string, MavisElement>,
-): string | null {
-  for (const bound of el.boundElements) {
-    if (bound.type === 'text') {
-      const textEl = elementMap.get(bound.id) as TextElement | undefined;
-      if (textEl?.text) return textEl.text.trim();
-    }
-  }
-  return null;
 }
 
 function getConnections(

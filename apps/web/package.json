@@ -35,6 +35,7 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@playwright/test": "^1.56.1",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

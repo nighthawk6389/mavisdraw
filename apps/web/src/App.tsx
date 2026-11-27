@@ -10,6 +10,8 @@ const RepoMapDialog = lazy(() => import('./components/repo/RepoMapDialog'));
 const PresentationOverlay = lazy(() => import('./components/present/PresentationOverlay'));
 const CommandPalette = lazy(() => import('./components/command/CommandPalette'));
 const MermaidDialog = lazy(() => import('./components/command/MermaidDialog'));
+const ProposalsPanel = lazy(() => import('./components/agent/ProposalsPanel'));
+const AgentAccessDialog = lazy(() => import('./components/agent/AgentAccessDialog'));
 import Toolbar from './components/toolbar/Toolbar';
 import StylePanel from './components/toolbar/StylePanel';
 import LayerPanel from './components/toolbar/LayerPanel';
@@ -52,6 +54,7 @@ import {
 } from './services/api';
 import { navigate, projectPath, reflectPath, useRoute } from './routing';
 import { useCommentsStore } from './stores/commentsStore';
+import { useProposalsStore } from './stores/proposalsStore';
 import {
   applyJournal,
   readJournal,
@@ -146,6 +149,7 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
   // Presenting (or following someone who is): the map, and nothing else
   const inPresentation = usePresentStore((s) => s.presenting || s.following);
   const tourOpen = usePresentStore((s) => s.panelOpen);
+  const proposalsOpen = useProposalsStore((s) => s.panelOpen);
   const repoDialogOpen = useRepoStore((s) => s.dialogOpen);
   const repoDrift = useRepoStore((s) => (s.drift ? s.drift.length - s.applied.size : 0));
   const canShare = role === 'owner' || role === 'admin';
@@ -263,6 +267,7 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
             History
           </button>
           <CommentsButton />
+          <ProposalsButton />
           <button
             onClick={() => usePresentStore.getState().setPanelOpen(!tourOpen)}
             className={`text-xs px-2 py-1 border rounded ${
@@ -280,7 +285,9 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
               <button
                 onClick={() => useRepoStore.getState().setDialogOpen(true)}
                 className={`text-xs px-2 py-1 border rounded ${
-                  repoDrift ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-gray-300 text-gray-500 hover:text-gray-700'
+                  repoDrift
+                    ? 'border-amber-300 bg-amber-50 text-amber-800'
+                    : 'border-gray-300 text-gray-500 hover:text-gray-700'
                 }`}
                 title="Generate the map from a repository, and check it against the code"
               >
@@ -369,6 +376,11 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
               </Suspense>
             )}
             <CommentsPanel />
+            {proposalsOpen && (
+              <Suspense fallback={null}>
+                <ProposalsPanel />
+              </Suspense>
+            )}
             {tourOpen && (
               <Suspense fallback={null}>
                 <TourPanel />
@@ -407,7 +419,43 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
       )}
       <ImportHandler />
       <GitHubConnectDialog />
+      <AgentAccessHost />
     </div>
+  );
+}
+
+/** "Connect a coding agent" (MCP tokens), opened from the dashboard, ⌘K or the proposals panel. */
+function AgentAccessHost() {
+  const open = useUIStore((s) => s.showAgentAccess);
+  if (!open) return null;
+  return (
+    <Suspense fallback={null}>
+      <AgentAccessDialog />
+    </Suspense>
+  );
+}
+
+/**
+ * Header toggle for map updates proposed by coding agents: only there when
+ * something is waiting (or the panel is open), with how many.
+ */
+function ProposalsButton() {
+  const count = useProposalsStore((s) => s.proposals.length);
+  const panelOpen = useProposalsStore((s) => s.panelOpen);
+  if (count === 0 && !panelOpen) return null;
+  return (
+    <button
+      onClick={() => useProposalsStore.getState().setPanelOpen(!panelOpen)}
+      className={`text-xs px-2 py-1 border rounded ${
+        panelOpen
+          ? 'border-violet-400 bg-violet-100 text-violet-900'
+          : 'border-violet-300 bg-violet-50 text-violet-800 hover:bg-violet-100'
+      }`}
+      title="Map updates proposed by coding agents, waiting for review"
+      aria-pressed={panelOpen}
+    >
+      Proposals{count > 0 ? ` · ${count}` : ''}
+    </button>
   );
 }
 
@@ -502,6 +550,8 @@ async function loadProject(projectId: string, diagramId: string | null): Promise
   const threadId = new URLSearchParams(window.location.search).get('thread');
   useCommentsStore.setState({ pendingThreadId: threadId });
   void useCommentsStore.getState().load(projectId);
+  useProposalsStore.getState().reset();
+  void useProposalsStore.getState().load(projectId);
   useRepoStore.getState().setSource(project.repoSource ?? null);
   // Someone may already be presenting
   usePresentStore.setState({ stops: [], presenting: false, following: false, remote: null });
@@ -652,6 +702,7 @@ export default function App() {
   return (
     <>
       <Dashboard onOpenProject={handleOpenProject} />
+      <AgentAccessHost />
       <Toaster />
     </>
   );

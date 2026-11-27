@@ -6,6 +6,9 @@ WORKDIR /app
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json turbo.json tsconfig.base.json ./
 COPY packages/types/package.json packages/types/tsconfig.json ./packages/types/
 COPY packages/math/package.json packages/math/tsconfig.json ./packages/math/
+COPY packages/llm/package.json packages/llm/tsconfig.json packages/llm/tsconfig.build.json ./packages/llm/
+COPY packages/compat/package.json packages/compat/tsconfig.json ./packages/compat/
+COPY packages/export/package.json packages/export/tsconfig.json ./packages/export/
 COPY apps/server/package.json apps/server/tsconfig.json ./apps/server/
 COPY apps/web/package.json apps/web/tsconfig.json apps/web/vite.config.ts apps/web/vitest.config.ts apps/web/postcss.config.js apps/web/tailwind.config.ts apps/web/index.html ./apps/web/
 
@@ -40,9 +43,11 @@ COPY --from=base /app/apps/server/node_modules ./apps/server/node_modules
 COPY --from=build /app/apps/server/dist ./apps/server/dist
 COPY --from=base /app/apps/server/package.json ./apps/server/
 
-# Types package (built)
+# Workspace packages the server loads at runtime (built)
 COPY --from=build /app/packages/types/dist ./packages/types/dist
 COPY --from=base /app/packages/types/package.json ./packages/types/
+COPY --from=build /app/packages/llm/dist ./packages/llm/dist
+COPY --from=base /app/packages/llm/package.json ./packages/llm/
 
 # Migrations (applied by dist/db/migrate.js) + schema source (db:seed, dev only)
 COPY apps/server/drizzle/ ./apps/server/drizzle/

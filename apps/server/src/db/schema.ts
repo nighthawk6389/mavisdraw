@@ -432,3 +432,58 @@ export const githubConnectionsRelations = relations(githubConnections, ({ one })
     references: [users.id],
   }),
 }));
+
+// ── Access tokens (coding agents over MCP) ──────────────────
+
+export const apiTokens = pgTable(
+  'api_tokens',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** What the person called it ("Claude Code on my laptop"). */
+    name: varchar('name', { length: 100 }).notNull(),
+    /** SHA-256 of the token: the token itself is shown once and never stored. */
+    tokenHash: text('token_hash').notNull(),
+    /** Its first characters, so people can tell tokens apart. */
+    prefix: varchar('prefix', { length: 16 }).notNull(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('api_tokens_user_id_idx').on(table.userId),
+    uniqueIndex('api_tokens_token_hash_idx').on(table.tokenHash),
+  ],
+);
+
+// ── Proposed map updates (from coding agents and PR checks) ─
+
+export const diagramProposals = pgTable(
+  'diagram_proposals',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    diagramId: text('diagram_id')
+      .notNull()
+      .references(() => diagrams.id, { onDelete: 'cascade' }),
+    /** Whose behalf it was proposed on (the token's owner). */
+    authorId: text('author_id').references(() => users.id, { onDelete: 'set null' }),
+    /** 'agent' (MCP) or 'pull_request'. */
+    source: varchar('source', { length: 20 }).notNull(),
+    /** Shown as "from …": the token's name, or "acme/shop#12". */
+    sourceLabel: varchar('source_label', { length: 255 }).notNull(),
+    sourceUrl: text('source_url'),
+    description: text('description').notNull(),
+    changes: jsonb('changes').notNull().default([]),
+    connections: jsonb('connections').notNull().default([]),
+    /** pending | applied | dismissed */
+    status: varchar('status', { length: 20 }).notNull().default('pending'),
+    resolvedBy: text('resolved_by').references(() => users.id, { onDelete: 'set null' }),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('diagram_proposals_project_status_idx').on(table.projectId, table.status)],
+);

@@ -23,7 +23,9 @@ export function tokenSecondsLeft(token: string | null, now = Date.now()): number
   if (!token) return 0;
   try {
     const payload = token.split('.')[1];
-    const json = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))) as { exp?: number };
+    const json = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))) as {
+      exp?: number;
+    };
     return json.exp ? Math.max(0, json.exp - now / 1000) : 0;
   } catch {
     return 0;
@@ -73,10 +75,7 @@ async function refreshAccessToken(): Promise<boolean> {
   return refreshPromise;
 }
 
-export async function apiFetch<T = unknown>(
-  path: string,
-  options: RequestInit = {},
-): Promise<T> {
+export async function apiFetch<T = unknown>(path: string, options: RequestInit = {}): Promise<T> {
   const url = `${API_BASE}${path}`;
   // Only declare a JSON body when there is one: Fastify rejects an empty
   // body sent as application/json (e.g. POST /api/share/:token)
@@ -221,7 +220,12 @@ export async function apiGetProject(id: string): Promise<{ project: ProjectRespo
 
 export async function apiUpdateProject(
   id: string,
-  updates: { name?: string; isPublic?: boolean; folder?: string | null; workspaceId?: string | null },
+  updates: {
+    name?: string;
+    isPublic?: boolean;
+    folder?: string | null;
+    workspaceId?: string | null;
+  },
 ): Promise<{ project: ProjectResponse }> {
   return apiFetch(`/api/projects/${id}`, {
     method: 'PUT',
@@ -258,7 +262,18 @@ export async function apiGetDiagram(id: string): Promise<{ diagram: DiagramRespo
 
 export async function apiUpdateDiagram(
   id: string,
-  updates: Partial<Pick<DiagramResponse, 'title' | 'elements' | 'viewBackgroundColor' | 'gridEnabled' | 'gridSize' | 'renderMode' | 'layers'>> & {
+  updates: Partial<
+    Pick<
+      DiagramResponse,
+      | 'title'
+      | 'elements'
+      | 'viewBackgroundColor'
+      | 'gridEnabled'
+      | 'gridSize'
+      | 'renderMode'
+      | 'layers'
+    >
+  > & {
     /** Version of each element the edits are based on (lets the server detect conflicts). */
     baseVersions?: Record<string, number>;
     /** Elements deleted since the base. */
@@ -323,7 +338,9 @@ export async function apiGetSnapshot(
   return apiFetch(`/api/diagrams/${diagramId}/snapshots/${snapshotId}`);
 }
 
-export async function apiListSnapshots(diagramId: string): Promise<{ snapshots: SnapshotSummary[] }> {
+export async function apiListSnapshots(
+  diagramId: string,
+): Promise<{ snapshots: SnapshotSummary[] }> {
   return apiFetch(`/api/diagrams/${diagramId}/snapshots?limit=100`);
 }
 
@@ -603,7 +620,11 @@ export function apiWorkspaceMembers(
   return apiFetch(`/api/workspaces/${id}/members`);
 }
 
-export function apiSetWorkspaceRole(id: string, userId: string, role: WorkspaceRole): Promise<unknown> {
+export function apiSetWorkspaceRole(
+  id: string,
+  userId: string,
+  role: WorkspaceRole,
+): Promise<unknown> {
   return apiFetch(`/api/workspaces/${id}/members/${userId}`, {
     method: 'PATCH',
     body: JSON.stringify({ role }),
@@ -614,7 +635,11 @@ export function apiRemoveWorkspaceMember(id: string, userId: string): Promise<vo
   return apiFetch(`/api/workspaces/${id}/members/${userId}`, { method: 'DELETE' });
 }
 
-export function apiInviteToWorkspace(id: string, email: string, role: 'admin' | 'member'): Promise<InviteResult> {
+export function apiInviteToWorkspace(
+  id: string,
+  email: string,
+  role: 'admin' | 'member',
+): Promise<InviteResult> {
   return apiFetch(`/api/workspaces/${id}/invites`, {
     method: 'POST',
     body: JSON.stringify({ email, role }),
@@ -645,7 +670,10 @@ export function apiRevokeProjectInvite(id: string, inviteId: string): Promise<vo
 }
 
 export function apiTransferProject(id: string, userId: string): Promise<{ ok: true }> {
-  return apiFetch(`/api/projects/${id}/transfer`, { method: 'POST', body: JSON.stringify({ userId }) });
+  return apiFetch(`/api/projects/${id}/transfer`, {
+    method: 'POST',
+    body: JSON.stringify({ userId }),
+  });
 }
 
 export interface InviteInfo {
@@ -662,7 +690,9 @@ export function apiGetInvite(token: string): Promise<{ invite: InviteInfo }> {
   return apiFetch(`/api/invites/${token}`);
 }
 
-export function apiAcceptInvite(token: string): Promise<{ kind: 'project' | 'workspace'; targetId: string }> {
+export function apiAcceptInvite(
+  token: string,
+): Promise<{ kind: 'project' | 'workspace'; targetId: string }> {
   return apiFetch(`/api/invites/${token}/accept`, { method: 'POST' });
 }
 
@@ -684,7 +714,10 @@ export function apiSetProjectRepo(
   projectId: string,
   source: Omit<RepoSourceData, 'generatedAt' | 'generatedBy'> | null,
 ): Promise<{ repoSource: RepoSourceData | null }> {
-  return apiFetch(`/api/projects/${projectId}/repo`, { method: 'PUT', body: JSON.stringify(source) });
+  return apiFetch(`/api/projects/${projectId}/repo`, {
+    method: 'PUT',
+    body: JSON.stringify(source),
+  });
 }
 
 export interface RepoSnapshotData {
@@ -703,4 +736,60 @@ export function apiGetRepoSnapshot(
 ): Promise<{ snapshot: RepoSnapshotData }> {
   const q = new URLSearchParams({ connectionId, ...(ref ? { ref } : {}) });
   return apiFetch(`/api/github/repos/${owner}/${repo}/snapshot?${q}`);
+}
+
+// ── Coding agents (MCP): access tokens and proposed map updates ──
+
+/** Where coding agents connect (Streamable HTTP MCP endpoint). */
+export const MCP_URL = `${API_BASE}/api/mcp`;
+
+export interface AccessTokenSummary {
+  id: string;
+  name: string;
+  prefix: string;
+  lastUsedAt: string | null;
+  createdAt: string;
+}
+
+export function apiListTokens(): Promise<{ tokens: AccessTokenSummary[] }> {
+  return apiFetch('/api/tokens');
+}
+
+export function apiCreateToken(
+  name: string,
+): Promise<{ token: string; summary: AccessTokenSummary }> {
+  return apiFetch('/api/tokens', { method: 'POST', body: JSON.stringify({ name }) });
+}
+
+export function apiRevokeToken(id: string): Promise<void> {
+  return apiFetch(`/api/tokens/${id}`, { method: 'DELETE' });
+}
+
+export interface ProposalData {
+  id: string;
+  projectId: string;
+  diagramId: string;
+  source: 'agent' | 'pull_request';
+  sourceLabel: string;
+  sourceUrl: string | null;
+  authorName: string | null;
+  description: string;
+  changes: import('@mavisdraw/types').ProposedChange[];
+  connections: import('@mavisdraw/types').ProposedConnection[];
+  status: 'pending' | 'applied' | 'dismissed';
+  createdAt: string;
+}
+
+export function apiListProposals(projectId: string): Promise<{ proposals: ProposalData[] }> {
+  return apiFetch(`/api/projects/${projectId}/proposals`);
+}
+
+export function apiResolveProposal(
+  id: string,
+  status: 'applied' | 'dismissed' | 'pending',
+): Promise<{ ok: true }> {
+  return apiFetch(`/api/proposals/${id}/resolve`, {
+    method: 'POST',
+    body: JSON.stringify({ status }),
+  });
 }

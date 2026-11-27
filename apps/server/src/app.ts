@@ -17,6 +17,9 @@ import { agentRoutes } from './routes/agent.js';
 import { commentRoutes } from './routes/comments.js';
 import { tourRoutes } from './routes/tours.js';
 import { workspaceRoutes } from './routes/workspaces.js';
+import { mcpRoutes } from './routes/mcp.js';
+import { tokenRoutes } from './routes/tokens.js';
+import { proposalRoutes } from './routes/proposals.js';
 import {
   createHocuspocusServer,
   persistOpenDocuments,
@@ -159,6 +162,9 @@ export async function buildApp() {
   await app.register(commentRoutes);
   await app.register(tourRoutes);
   await app.register(workspaceRoutes);
+  await app.register(tokenRoutes);
+  await app.register(proposalRoutes);
+  await app.register(mcpRoutes);
 
   return app;
 }

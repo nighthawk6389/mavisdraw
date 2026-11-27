@@ -1,11 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
-import { eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { projects, projectPermissions, workspaceMembers } from '../db/schema.js';
-import { checkProjectAccess, combineAccess, createDiagram } from '../services/diagramService.js';
+import { projects } from '../db/schema.js';
+import { checkProjectAccess, createDiagram } from '../services/diagramService.js';
 import { getWorkspaceRole } from '../services/workspaceService.js';
+import { listAccessibleProjects } from '../services/projectService.js';
 import { requireAuth } from '../middleware/auth.js';
 
 const createProjectSchema = z.object({
@@ -102,52 +103,14 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
 
   // List the user's projects: owned, shared with them, and in their workspaces
   app.get('/api/projects', { preHandler: [requireAuth] }, async (request, reply) => {
-    const userId = request.user!.userId;
-
-    const owned = await db.query.projects.findMany({ where: eq(projects.ownerId, userId) });
-    const shares = await db.query.projectPermissions.findMany({
-      where: eq(projectPermissions.userId, userId),
-      with: { project: true },
-    });
-    const memberships = await db.query.workspaceMembers.findMany({
-      where: eq(workspaceMembers.userId, userId),
-    });
-    const workspaceProjects = memberships.length
-      ? await db.query.projects.findMany({
-          where: inArray(
-            projects.workspaceId,
-            memberships.map((m) => m.workspaceId),
-          ),
-        })
-      : [];
-
-    const byId = new Map<string, typeof projects.$inferSelect>();
-    for (const p of [
-      ...owned,
-      ...shares.map((s) => s.project!).filter(Boolean),
-      ...workspaceProjects,
-    ]) {
-      byId.set(p.id, p);
-    }
-    const shareRole = new Map(shares.map((s) => [s.projectId, s.role]));
-    const workspaceRole = new Map(memberships.map((m) => [m.workspaceId, m.role]));
-
-    const allProjects = Array.from(byId.values())
-      .map((p) => ({
+    const list = await listAccessibleProjects(request.user!.userId);
+    return reply.code(200).send({
+      projects: list.map((p) => ({
         ...p,
-        role: combineAccess({
-          isOwner: p.ownerId === userId,
-          projectRole: shareRole.get(p.id),
-          workspaceRole: p.workspaceId ? workspaceRole.get(p.workspaceId) : undefined,
-          isPublic: false,
-        }),
         createdAt: p.createdAt.toISOString(),
         updatedAt: p.updatedAt.toISOString(),
-      }))
-      .filter((p) => p.role !== null)
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-
-    return reply.code(200).send({ projects: allProjects });
+      })),
+    });
   });
 
   // Get single project

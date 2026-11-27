@@ -15,6 +15,13 @@
       "when": 1795729624206,
       "tag": "0001_teams_comments_workspaces",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795739794874,
+      "tag": "0002_agent_tokens_proposals",
+      "breakpoints": true
     }
   ]
 }

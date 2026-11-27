@@ -1,42 +1,10 @@
 import React, { useState } from 'react';
-import type { DiagramProposal, ProposedChange } from '@mavisdraw/types';
+import type { DiagramProposal } from '@mavisdraw/types';
+import ProposalChangeList from './ProposalChangeList';
 import { useAgentStore } from '../../stores/agentStore';
 import { useElementsStore } from '../../stores/elementsStore';
 import { toast } from '../../stores/toastStore';
 import { applyProposal } from './applyProposal';
-
-function changeIcon(change: ProposedChange): string {
-  switch (change.action) {
-    case 'add':
-      return '+';
-    case 'modify':
-      return '~';
-    case 'delete':
-      return '-';
-  }
-}
-
-function changeLabel(change: ProposedChange): string {
-  switch (change.action) {
-    case 'add':
-      return `Add "${change.label}" (${change.elementType})`;
-    case 'modify':
-      return `Modify "${change.label ?? change.elementId}"`;
-    case 'delete':
-      return `Delete "${change.elementId}"`;
-  }
-}
-
-function changeColor(change: ProposedChange): string {
-  switch (change.action) {
-    case 'add':
-      return 'text-green-700';
-    case 'modify':
-      return 'text-yellow-700';
-    case 'delete':
-      return 'text-red-700';
-  }
-}
 
 export default function ProposalCard({ proposal }: { proposal: DiagramProposal }) {
   const updateProposalStatus = useAgentStore((s) => s.updateProposalStatus);
@@ -59,7 +27,10 @@ export default function ProposalCard({ proposal }: { proposal: DiagramProposal }
         run: () => useElementsStore.getState().undo(),
       });
     } catch (err) {
-      toast(`Couldn't apply proposal: ${err instanceof Error ? err.message : String(err)}`, 'error');
+      toast(
+        `Couldn't apply proposal: ${err instanceof Error ? err.message : String(err)}`,
+        'error',
+      );
     } finally {
       setApplying(false);
     }
@@ -75,23 +46,11 @@ export default function ProposalCard({ proposal }: { proposal: DiagramProposal }
     <div className="border border-gray-200 rounded-lg p-3 bg-gray-50 text-sm">
       <p className="font-medium text-gray-800 mb-2">{proposal.description}</p>
 
-      <ul className="space-y-1 mb-3">
-        {proposal.changes.map((change, i) => (
-          <li key={i} className={`flex items-center gap-1 ${changeColor(change)}`}>
-            <span className="font-mono text-xs w-4 text-center">{changeIcon(change)}</span>
-            <span>{changeLabel(change)}</span>
-          </li>
-        ))}
-        {proposal.connections.map((conn, i) => (
-          <li key={`conn-${i}`} className="flex items-center gap-1 text-blue-700">
-            <span className="font-mono text-xs w-4 text-center">&rarr;</span>
-            <span>
-              &quot;{conn.fromLabel}&quot; &rarr; &quot;{conn.toLabel}&quot;
-              {conn.label && <span className="text-gray-500"> ({conn.label})</span>}
-            </span>
-          </li>
-        ))}
-      </ul>
+      <ProposalChangeList
+        changes={proposal.changes}
+        connections={proposal.connections}
+        className="mb-3"
+      />
 
       {isResolved ? (
         <span

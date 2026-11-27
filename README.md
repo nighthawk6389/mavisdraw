@@ -201,6 +201,14 @@ main folders inside, and the datastores and services it uses (from `package.json
 Later, **Check against the code** lists what changed since — new or removed packages, new
 dependencies, new services — each with a one-click fix, then **Mark map as up to date**.
 
+### Coding agents (MCP)
+
+**Connect a coding agent** (dashboard, or ⌘K) gives Claude Code, Cursor and other MCP clients
+read access to your maps: they look up which component owns the file they're changing
+(`find_component`), read the architecture, and **propose** updates when a change alters it. Proposals
+show up live under **Proposals** in the editor for someone to apply or dismiss. See
+[docs/mcp.md](docs/mcp.md).
+
 ### Diagram as code
 
 Paste a Mermaid flowchart (from a README, PR or design doc) straight onto the canvas, or use

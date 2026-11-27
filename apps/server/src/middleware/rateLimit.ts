@@ -24,12 +24,20 @@ function cleanupExpired(): void {
   }
 }
 
-export function createRateLimiter(maxRequests: number = MAX_REQUESTS, windowMs: number = WINDOW_MS) {
+/**
+ * `scope` gives a limiter its own counters, so (for example) a coding
+ * agent's MCP calls never count against sign-in attempts from the same IP.
+ */
+export function createRateLimiter(
+  maxRequests: number = MAX_REQUESTS,
+  windowMs: number = WINDOW_MS,
+  scope = '',
+) {
   // Periodically clean up expired entries
   setInterval(cleanupExpired, windowMs * 2);
 
   return async function rateLimit(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-    const clientId = getClientId(request);
+    const clientId = scope ? `${scope}:${getClientId(request)}` : getClientId(request);
     const now = Date.now();
 
     const entry = store.get(clientId);
@@ -51,3 +59,5 @@ export function createRateLimiter(maxRequests: number = MAX_REQUESTS, windowMs: 
 
 export const generalRateLimit = createRateLimiter(MAX_REQUESTS, WINDOW_MS);
 export const authRateLimit = createRateLimiter(AUTH_MAX_REQUESTS, WINDOW_MS);
+/** Coding agents over MCP: a few calls per task, in bursts. */
+export const mcpRateLimit = createRateLimiter(120, WINDOW_MS, 'mcp');

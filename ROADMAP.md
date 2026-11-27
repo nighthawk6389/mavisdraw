@@ -14,6 +14,7 @@ _Research snapshot: 2026-11-26 · Based on a full read of the codebase at `edcb5
 | 3. Teams                          | ✅ Core done (Y.js owns live elements with per-property merge, URLs + share links + deep links, viewer role enforced end-to-end, shared server-side version history with live restore, REST reads see live state, graceful shutdown). Comments, visual diff, orgs, presentation mode remain — see `BACKLOG.md` |
 | Follow-ups (after Phase 3)        | ✅ Independent collaboration review fixed (sync integrity, security), undo-safe vs teammates, comments & @mentions, version compare, offline journal, presentation mode, workspaces/invites/folders, repo → map + drift. Remaining items in `BACKLOG.md`                                                       |
 | Production hardening              | ✅ Security P0s (startup secret checks, signed OAuth state, GitHub host allowlist, explicit `TRUST_PROXY`, no prod seed), versioned migrations run pre-deploy, request ids + safe 5xx + `/api/ready` + optional Sentry, transactional email (Resend/Postmark). Deploy env vars in PR #20                       |
+| Map ⇄ agents & distribution       | 🚧 MCP server for coding agents (read the map, find the component that owns a file, propose updates reviewed in the editor — `docs/mcp.md`). Embeds and PR-time drift next                                                                                                                                     |
 
 ## 1. TL;DR
 

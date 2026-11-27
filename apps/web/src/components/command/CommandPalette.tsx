@@ -5,6 +5,7 @@ import { useDiagramStore } from '../../stores/diagramStore';
 import { useSelectionStore } from '../../stores/selectionStore';
 import { useRepoStore } from '../../repo/repoStore';
 import { useUIStore } from '../../stores/uiStore';
+import { useProposalsStore } from '../../stores/proposalsStore';
 import { usePermissionStore } from '../../stores/permissionStore';
 import { loadDiagramElements } from '../../services/diagramSync';
 import { getCanvasController } from '../canvas/canvasController';
@@ -95,8 +96,20 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
 
   const commands = useMemo<Omit<Result, 'score'>[]>(
     () => [
-      { id: 'cmd-fit', kind: 'command', title: 'Zoom to fit', hint: shortcut('Shift+1'), run: actions.zoomToFit },
-      { id: 'cmd-tidy', kind: 'command', title: 'Tidy up layout', hint: shortcut('Shift+Alt+T'), run: actions.tidyUp },
+      {
+        id: 'cmd-fit',
+        kind: 'command',
+        title: 'Zoom to fit',
+        hint: shortcut('Shift+1'),
+        run: actions.zoomToFit,
+      },
+      {
+        id: 'cmd-tidy',
+        kind: 'command',
+        title: 'Tidy up layout',
+        hint: shortcut('Shift+Alt+T'),
+        run: actions.tidyUp,
+      },
       {
         id: 'cmd-mermaid',
         kind: 'command',
@@ -110,6 +123,20 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
         title: 'Map a repository…',
         subtitle: 'Generate the architecture from code, or check the map against it',
         run: () => useRepoStore.getState().setDialogOpen(true),
+      },
+      {
+        id: 'cmd-agent',
+        kind: 'command',
+        title: 'Connect a coding agent…',
+        subtitle: 'Let Claude Code, Cursor and others read the map and propose updates (MCP)',
+        run: () => useUIStore.getState().setShowAgentAccess(true),
+      },
+      {
+        id: 'cmd-proposals',
+        kind: 'command',
+        title: 'Proposed map updates',
+        subtitle: 'Review what coding agents proposed',
+        run: () => useProposalsStore.getState().setPanelOpen(true),
       },
       {
         id: 'cmd-export',
@@ -127,7 +154,12 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
           ui.setRenderMode(ui.renderMode === 'sketchy' ? 'clean' : 'sketchy');
         },
       },
-      { id: 'cmd-grid', kind: 'command', title: 'Toggle grid', run: () => useUIStore.getState().toggleGrid() },
+      {
+        id: 'cmd-grid',
+        kind: 'command',
+        title: 'Toggle grid',
+        run: () => useUIStore.getState().toggleGrid(),
+      },
       {
         id: 'cmd-history',
         kind: 'command',
@@ -184,7 +216,8 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
 
     const editable = usePermissionStore.getState().canEdit;
     for (const c of commands) {
-      if (!editable && (c.id === 'cmd-tidy' || c.id === 'cmd-mermaid' || c.id === 'cmd-repo')) continue;
+      if (!editable && (c.id === 'cmd-tidy' || c.id === 'cmd-mermaid' || c.id === 'cmd-repo'))
+        continue;
       const s = score(c.title, q);
       if (s > 0) out.push({ ...c, score: q ? s - 0.25 : 0 });
     }
@@ -193,7 +226,9 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
   }, [query, elements, diagrams, commands]);
 
   useEffect(() => {
-    listRef.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: 'nearest' });
+    listRef.current
+      ?.querySelector(`[data-index="${active}"]`)
+      ?.scrollIntoView({ block: 'nearest' });
   }, [active]);
 
   const choose = (result: Result | undefined) => {
@@ -249,7 +284,12 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
           }}
           onKeyDown={onKeyDown}
         />
-        <ul id="command-results" role="listbox" ref={listRef} className="max-h-[50vh] overflow-y-auto py-1">
+        <ul
+          id="command-results"
+          role="listbox"
+          ref={listRef}
+          className="max-h-[50vh] overflow-y-auto py-1"
+        >
           {results.length === 0 && (
             <li className="px-4 py-6 text-center text-sm text-gray-400">No matches</li>
           )}
@@ -274,7 +314,9 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-gray-900">{r.title}</span>
-                {r.subtitle && <span className="block truncate text-xs text-gray-500">{r.subtitle}</span>}
+                {r.subtitle && (
+                  <span className="block truncate text-xs text-gray-500">{r.subtitle}</span>
+                )}
               </span>
               {r.hint && <span className="text-xs text-gray-400">{r.hint}</span>}
             </li>
