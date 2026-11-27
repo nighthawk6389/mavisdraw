@@ -1,5 +1,17 @@
 import { test, expect } from '@playwright/test';
-import { API_URL, dragOnCanvas, getActiveElements, twoPeople, type TestUser } from './helpers';
+import {
+  API_URL,
+  apiCreateProject,
+  apiGetDiagram,
+  dragOnCanvas,
+  getActiveElements,
+  isConnected,
+  openProject,
+  registerUser,
+  shareLink,
+  twoPeople,
+  type TestUser,
+} from './helpers';
 import type { APIRequestContext } from '@playwright/test';
 
 async function permissionOf(
@@ -73,6 +85,41 @@ test.describe('Access changes apply to open tabs', () => {
 
     await ctxA.close();
     await ctxB.close();
+  });
+
+  test('following your own share link never makes your open tabs read-only', async ({
+    browser,
+  }) => {
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+    const owner = await registerUser(ctx, 'Owner');
+    const name = `Own link ${Date.now().toString(36)}`;
+    const project = await apiCreateProject(ctx.request, owner, name);
+    const token = await shareLink(ctx, owner, project.id, 'viewer');
+    await openProject(page, name);
+    await isConnected(page);
+
+    // The owner opens the viewer link they made (say, to check what guests see)
+    const res = await ctx.request.post(`${API_URL}/api/share/${token}`, {
+      headers: { Authorization: `Bearer ${owner.accessToken}` },
+    });
+    expect(await res.json()).toMatchObject({ role: 'owner' });
+
+    // The tab they already had open still edits, and the edit is saved
+    await page.evaluate(() =>
+      (
+        window as unknown as { __MAVISDRAW__: { seedRectangles: (n: number) => void } }
+      ).__MAVISDRAW__.seedRectangles(1),
+    );
+    await expect
+      .poll(
+        async () =>
+          (await apiGetDiagram(ctx.request, owner, project.rootDiagramId)).diagram?.elements.length,
+        { timeout: 15_000 },
+      )
+      .toBe(1);
+    await expect(page.getByTestId('view-only-badge')).toHaveCount(0);
+    await ctx.close();
   });
 
   test('a share link can never grant admin', async ({ browser }) => {

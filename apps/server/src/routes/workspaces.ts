@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { projectPermissions, projects } from '../db/schema.js';
 import { checkProjectAccess } from '../services/diagramService.js';
@@ -236,9 +236,15 @@ export async function workspaceRoutes(app: FastifyInstance): Promise<void> {
     const now = new Date();
     await db.update(projects).set({ ownerId: target, updatedAt: now }).where(eq(projects.id, id));
     // The new owner doesn't need a share; the old owner stays on as admin
+    // (replacing any share they had, so they keep exactly one role)
     await db
       .delete(projectPermissions)
-      .where(and(eq(projectPermissions.projectId, id), eq(projectPermissions.userId, target)));
+      .where(
+        and(
+          eq(projectPermissions.projectId, id),
+          inArray(projectPermissions.userId, [target, me]),
+        ),
+      );
     await db.insert(projectPermissions).values({
       id: nanoid(),
       projectId: id,
