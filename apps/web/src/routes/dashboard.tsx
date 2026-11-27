@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuthStore } from '../stores/authStore';
-import { projectPath } from '../routing';
+import { navigate, projectPath } from '../routing';
 import {
   apiListProjects,
   apiCreateProject,
@@ -14,6 +14,8 @@ import {
 import WorkspaceMembersDialog from '../components/dashboard/WorkspaceMembersDialog';
 import { useUIStore } from '../stores/uiStore';
 import NotificationBell from '../components/comments/NotificationBell';
+import TemplateCards, { BLANK } from '../components/templates/TemplateCards';
+import { SAMPLE_TEMPLATE_ID, findTemplate } from '../templates/templates';
 
 interface DashboardProps {
   onOpenProject: (projectId: string) => void;
@@ -48,6 +50,7 @@ export default function Dashboard({ onOpenProject }: DashboardProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
+  const [newTemplate, setNewTemplate] = useState(BLANK);
   const [searchQuery, setSearchQuery] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -124,12 +127,34 @@ export default function Dashboard({ onOpenProject }: DashboardProps) {
         newProjectName.trim(),
         space.kind === 'workspace' ? space.id : null,
       );
-      setProjects((prev) => [{ ...response.project, role: 'owner' }, ...prev]);
       setNewProjectName('');
       setShowCreateDialog(false);
+      if (newTemplate !== BLANK) {
+        // Open it and lay the template out (see templates/startup.ts)
+        navigate(`${projectPath(response.project.id)}?template=${newTemplate}`);
+        return;
+      }
+      setProjects((prev) => [{ ...response.project, role: 'owner' }, ...prev]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create project');
     } finally {
+      setIsCreating(false);
+    }
+  };
+
+  /** First run: make a project and open it straight into what was picked. */
+  const startProject = async (name: string, query: string) => {
+    if (isCreating) return;
+    setIsCreating(true);
+    setError(null);
+    try {
+      const { project } = await apiCreateProject(
+        name,
+        space.kind === 'workspace' ? space.id : null,
+      );
+      navigate(`${projectPath(project.id)}${query}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create project');
       setIsCreating(false);
     }
   };
@@ -323,12 +348,27 @@ export default function Dashboard({ onOpenProject }: DashboardProps) {
                   onClick={() => {
                     setShowCreateDialog(false);
                     setNewProjectName('');
+                    setNewTemplate(BLANK);
                   }}
                   className="px-4 py-2 text-sm text-gray-600 transition-colors hover:text-gray-800"
                 >
                   Cancel
                 </button>
               </form>
+              <div className="mt-4">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">
+                  Start from
+                </p>
+                <TemplateCards
+                  value={newTemplate}
+                  onChange={(id) => {
+                    setNewTemplate(id);
+                    // A sensible default name, until the person types their own
+                    const template = findTemplate(id);
+                    if (template && !newProjectName.trim()) setNewProjectName(template.name);
+                  }}
+                />
+              </div>
             </div>
           )}
 
@@ -336,6 +376,15 @@ export default function Dashboard({ onOpenProject }: DashboardProps) {
             <div className="flex items-center justify-center py-12 text-gray-500">
               Loading projects...
             </div>
+          ) : projects.length === 0 && !searchQuery && space.kind !== 'shared' ? (
+            <Welcome
+              busy={isCreating}
+              onMapRepo={() => void startProject('My architecture', '?start=repo')}
+              onSample={() =>
+                void startProject('Sample: Online shop', `?template=${SAMPLE_TEMPLATE_ID}`)
+              }
+              onTemplate={() => setShowCreateDialog(true)}
+            />
           ) : visible.length === 0 ? (
             <div className="py-12 text-center">
               <p className="mb-4 text-gray-500">
@@ -493,5 +542,51 @@ export default function Dashboard({ onOpenProject }: DashboardProps) {
         </div>
       )}
     </div>
+  );
+}
+
+/** What a new person sees: the fastest ways to a useful map. */
+function Welcome({
+  busy,
+  onMapRepo,
+  onSample,
+  onTemplate,
+}: {
+  busy: boolean;
+  onMapRepo: () => void;
+  onSample: () => void;
+  onTemplate: () => void;
+}) {
+  const card =
+    'flex flex-col rounded-xl border border-gray-200 bg-white p-5 text-left shadow-sm transition hover:border-blue-300 hover:shadow-md disabled:opacity-50';
+  return (
+    <section aria-label="Get started" className="py-6" data-testid="welcome">
+      <h2 className="text-2xl font-bold text-gray-900">Map your system in minutes</h2>
+      <p className="mt-1 mb-6 max-w-2xl text-gray-600">
+        MavisDraw maps are nested: every system opens into its own diagram, linked to the code it
+        stands for. Pick a way in.
+      </p>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <button type="button" className={card} disabled={busy} onClick={onMapRepo}>
+          <span className="text-base font-semibold text-gray-900">Map a repository</span>
+          <span className="mt-1 text-sm text-gray-600">
+            Point it at a GitHub repo or a folder: apps and packages become nested systems, with the
+            databases and services they use.
+          </span>
+        </button>
+        <button type="button" className={card} disabled={busy} onClick={onSample}>
+          <span className="text-base font-semibold text-gray-900">Explore a sample</span>
+          <span className="mt-1 text-sm text-gray-600">
+            An online shop in the C4 style, three levels deep. Double-click a system to look inside.
+          </span>
+        </button>
+        <button type="button" className={card} disabled={busy} onClick={onTemplate}>
+          <span className="text-base font-semibold text-gray-900">Start from a template</span>
+          <span className="mt-1 text-sm text-gray-600">
+            Microservices, AWS, event-driven, data pipelines… or a blank canvas.
+          </span>
+        </button>
+      </div>
+    </section>
   );
 }

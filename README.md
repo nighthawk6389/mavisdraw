@@ -192,6 +192,13 @@ See `.github/workflows/ci.yml` for the full configuration.
 | Double-click a connector | Add or edit its label ("REST", "publishes"...) |
 | `Shift+Alt+T` | Tidy up: auto-layout the diagram (or the selection) along its connections |
 
+### Getting started
+
+New accounts land on **Map your system in minutes**: map a repository, explore a sample (an online
+shop, three levels deep), or start from a template. **New Project** offers the same templates —
+C4, microservices, AWS web app, event-driven, data pipeline, SaaS platform — each a nested map you
+can drill into. On an empty map, the bar at the bottom (or ⌘K → *Insert a template…*) adds one.
+
 ### Map ⇄ code
 
 **Code** (or ⌘K → *Map a repository…*) turns a repository — a GitHub repo, or a folder on your

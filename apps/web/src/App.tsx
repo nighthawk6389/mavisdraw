@@ -12,6 +12,7 @@ const CommandPalette = lazy(() => import('./components/command/CommandPalette'))
 const MermaidDialog = lazy(() => import('./components/command/MermaidDialog'));
 const ProposalsPanel = lazy(() => import('./components/agent/ProposalsPanel'));
 const AgentAccessDialog = lazy(() => import('./components/agent/AgentAccessDialog'));
+const TemplateDialog = lazy(() => import('./components/templates/TemplateDialog'));
 import Toolbar from './components/toolbar/Toolbar';
 import StylePanel from './components/toolbar/StylePanel';
 import LayerPanel from './components/toolbar/LayerPanel';
@@ -55,6 +56,8 @@ import {
 import { navigate, projectPath, reflectPath, useRoute } from './routing';
 import { useCommentsStore } from './stores/commentsStore';
 import { useProposalsStore } from './stores/proposalsStore';
+import EmptyCanvasHint from './components/templates/EmptyCanvasHint';
+import { captureStartupAction, runStartupAction, takeStartupAction } from './templates/startup';
 import {
   applyJournal,
   readJournal,
@@ -153,6 +156,13 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
   const repoDialogOpen = useRepoStore((s) => s.dialogOpen);
   const repoDrift = useRepoStore((s) => (s.drift ? s.drift.length - s.applied.size : 0));
   const canShare = role === 'owner' || role === 'admin';
+
+  // A project just created from a template (or to map a repository): do it now
+  useEffect(() => {
+    if (!projectId) return;
+    const action = takeStartupAction(projectId);
+    if (action) void runStartupAction(action);
+  }, [projectId]);
 
   // The address bar always points at what's on screen (shareable deep link).
   // Drilling in or out adds a history entry, so the browser's Back button
@@ -351,6 +361,7 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
         {/* Canvas area with optional portal properties panel */}
         <div className="flex flex-1 relative">
           <Canvas interactionManagerRef={interactionManagerRef} />
+          {!inPresentation && <EmptyCanvasHint />}
           <PresenterBanner />
           {inPresentation && (
             <Suspense fallback={null}>
@@ -420,7 +431,19 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
       <ImportHandler />
       <GitHubConnectDialog />
       <AgentAccessHost />
+      <TemplateDialogHost />
     </div>
+  );
+}
+
+/** ⌘K → Insert a template…, or "Use a template" on an empty map. */
+function TemplateDialogHost() {
+  const open = useUIStore((s) => s.showTemplateDialog);
+  if (!open) return null;
+  return (
+    <Suspense fallback={null}>
+      <TemplateDialog />
+    </Suspense>
   );
 }
 
@@ -544,6 +567,9 @@ async function loadProject(projectId: string, diagramId: string | null): Promise
   } else {
     startJournal(projectId);
   }
+
+  // ?template=… / ?start=repo (a project just created from the dashboard)
+  captureStartupAction(projectId);
 
   // Comments for every level; ?thread=… (from a notification or a copied
   // link) opens that thread once the canvas is up

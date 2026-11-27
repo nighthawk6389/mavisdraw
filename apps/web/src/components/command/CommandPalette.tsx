@@ -125,6 +125,13 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
         run: () => useRepoStore.getState().setDialogOpen(true),
       },
       {
+        id: 'cmd-template',
+        kind: 'command',
+        title: 'Insert a template…',
+        subtitle: 'C4, microservices, AWS, event-driven, data pipeline, SaaS — as nested maps',
+        run: () => useUIStore.getState().setShowTemplateDialog(true),
+      },
+      {
         id: 'cmd-agent',
         kind: 'command',
         title: 'Connect a coding agent…',

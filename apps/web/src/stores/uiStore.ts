@@ -20,6 +20,8 @@ interface UIState {
   showMermaidDialog: boolean;
   /** "Connect a coding agent": MCP access tokens and setup. */
   showAgentAccess: boolean;
+  /** Insert a template into the diagram on screen. */
+  showTemplateDialog: boolean;
 
   // Diagram render mode
   renderMode: RenderMode;
@@ -40,6 +42,7 @@ interface UIState {
   setShowCommandPalette: (show: boolean) => void;
   setShowMermaidDialog: (show: boolean) => void;
   setShowAgentAccess: (show: boolean) => void;
+  setShowTemplateDialog: (show: boolean) => void;
   setRenderMode: (mode: RenderMode) => void;
   toggleGrid: () => void;
   toggleSnapToGrid: () => void;
@@ -57,6 +60,7 @@ export const useUIStore = create<UIState>((set) => ({
   showCommandPalette: false,
   showMermaidDialog: false,
   showAgentAccess: false,
+  showTemplateDialog: false,
   renderMode: 'clean',
   showGrid: true,
   snapToGrid: false,
@@ -93,6 +97,7 @@ export const useUIStore = create<UIState>((set) => ({
   setShowCommandPalette: (show: boolean) => set({ showCommandPalette: show }),
   setShowMermaidDialog: (show: boolean) => set({ showMermaidDialog: show }),
   setShowAgentAccess: (show: boolean) => set({ showAgentAccess: show }),
+  setShowTemplateDialog: (show: boolean) => set({ showTemplateDialog: show }),
 
   setRenderMode: (mode: RenderMode) => {
     set({ renderMode: mode });
