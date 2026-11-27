@@ -53,7 +53,14 @@ interface CanvasProps {
 const DRILL_DOWN_DURATION = 300; // ms
 
 /** Shapes that take a text label inside them. */
-const LABELLED_SHAPES = new Set<string>(['rectangle', 'ellipse', 'diamond', 'triangle']);
+const LABELLED_SHAPES = new Set<string>([
+  'rectangle',
+  'ellipse',
+  'diamond',
+  'triangle',
+  'cylinder',
+  'queue',
+]);
 
 export default function Canvas({ interactionManagerRef }: CanvasProps) {
   const staticCanvasRef = useRef<HTMLCanvasElement>(null);

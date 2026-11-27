@@ -2,6 +2,8 @@ import React, { useCallback, useMemo } from 'react';
 import { useElementsStore, type AlignmentType, type DistributeDirection } from '../../stores/elementsStore';
 import { useSelectionStore } from '../../stores/selectionStore';
 import { useUIStore } from '../../stores/uiStore';
+import { ICONS } from '@mavisdraw/export/library';
+import { LibraryIcon } from '../library/LibraryIcon';
 import type {
   MavisElement,
   FillStyle,
@@ -75,6 +77,14 @@ const ARROWHEAD_OPTIONS: { value: Arrowhead; label: string; icon: string }[] = [
  * `header`: shown above the style controls (the component the selected shape
  * shows), so one column describes the selection.
  */
+/** Shapes that can show an icon. */
+const ICON_SHAPES = new Set(['rectangle', 'ellipse', 'diamond', 'triangle', 'cylinder', 'queue', 'portal']);
+
+/** The icons, by label, for the picker. */
+const ICON_OPTIONS = Object.entries(ICONS)
+  .map(([id, def]) => [id, def.label] as const)
+  .sort((a, b) => a[1].localeCompare(b[1]));
+
 /** Fields that change while shapes move or resize: nothing in the panel shows them. */
 const GEOMETRY = new Set(['x', 'y', 'width', 'height', 'points', 'angle', 'version', 'updatedAt']);
 
@@ -193,6 +203,7 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
   );
 
   const hasTextSelected = textTargets.length > 0;
+  const hasShapeSelected = selectedElements.some((el) => ICON_SHAPES.has(el.type));
   const hasLinearSelected = selectedElements.some(
     (el) => el.type === 'arrow' || el.type === 'line',
   );
@@ -208,6 +219,7 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
   const strokeStyle = getCommonValue('strokeStyle') ?? 'solid';
   const opacity = getCommonValue('opacity') ?? 100;
   const roughness = getCommonValue('roughness') ?? 1;
+  const icon = getCommonValue('icon') ?? '';
 
   return (
     <aside data-testid="style-panel" className="w-56 bg-white border-l border-gray-200 overflow-y-auto p-3 flex flex-col gap-3 z-10">
@@ -326,6 +338,28 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
           className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer"
         />
       </Section>
+
+      {/* Icon (shapes only): a datastore's, a service's, a cloud product's */}
+      {hasShapeSelected && (
+        <Section label="Icon">
+          <div className="flex items-center gap-2">
+            {icon && <LibraryIcon id={icon} size={18} color={strokeColor} />}
+            <select
+              data-testid="icon-select"
+              value={icon}
+              onChange={(e) => applyToAll({ icon: e.target.value } as Partial<MavisElement>)}
+              className="min-w-0 flex-1 rounded border border-gray-300 px-1 py-0.5 text-xs"
+            >
+              <option value="">None</option>
+              {ICON_OPTIONS.map(([id, label]) => (
+                <option key={id} value={id}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </Section>
+      )}
 
       {hasLinearSelected && (
         <>

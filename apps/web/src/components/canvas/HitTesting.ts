@@ -730,7 +730,16 @@ const BINDING_THRESHOLD = 20;
 /**
  * Shape types that can be arrow binding targets.
  */
-const BINDABLE_TYPES = new Set(['rectangle', 'ellipse', 'diamond', 'triangle', 'portal', 'image']);
+const BINDABLE_TYPES = new Set([
+  'rectangle',
+  'ellipse',
+  'diamond',
+  'triangle',
+  'cylinder',
+  'queue',
+  'portal',
+  'image',
+]);
 
 /**
  * Find the nearest shape within threshold that an arrow endpoint can bind to.

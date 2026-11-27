@@ -5,6 +5,7 @@ import Canvas from './components/canvas/Canvas';
 const ExportDialog = lazy(() => import('./components/export/ExportDialog'));
 const ComponentPanel = lazy(() => import('./components/model/ComponentPanel'));
 const AgentPanel = lazy(() => import('./components/agent/AgentPanel'));
+const LibraryPanel = lazy(() => import('./components/library/LibraryPanel'));
 const VersionHistoryPanel = lazy(() => import('./components/version/VersionHistoryPanel'));
 const TourPanel = lazy(() => import('./components/present/TourPanel'));
 const RepoMapDialog = lazy(() => import('./components/repo/RepoMapDialog'));
@@ -153,6 +154,7 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
   const rootDiagramId = useDiagramStore((s) => s.diagramPath[0]);
   const canEditProject = usePermissionStore((s) => s.canEdit);
   const showStylePanel = useUIStore((s) => s.showStylePanel);
+  const showLibrary = useUIStore((s) => s.showLibrary);
   const role = usePermissionStore((s) => s.role);
   const showVersionHistory = useUIStore((s) => s.showVersionHistory);
   // Presenting (or following someone who is): the map, and nothing else
@@ -380,6 +382,15 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
             <Suspense fallback={null}>
               <PresentationOverlay />
             </Suspense>
+          )}
+
+          {/* Shape library: architecture shapes and cloud services */}
+          {showLibrary && canEditProject && !inPresentation && (
+            <div className="absolute left-2 top-2 z-30">
+              <Suspense fallback={null}>
+                <LibraryPanel />
+              </Suspense>
+            </div>
           )}
 
           {/* Portal properties panel overlay */}

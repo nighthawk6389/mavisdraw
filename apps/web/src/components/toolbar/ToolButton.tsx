@@ -1,7 +1,7 @@
 import React from 'react';
 
 interface ToolButtonProps {
-  icon: string;
+  icon: React.ReactNode;
   label: string;
   isActive: boolean;
   onClick: () => void;

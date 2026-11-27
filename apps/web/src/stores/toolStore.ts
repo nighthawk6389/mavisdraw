@@ -5,6 +5,8 @@ export type Tool =
   | 'rectangle'
   | 'ellipse'
   | 'diamond'
+  | 'cylinder'
+  | 'queue'
   | 'line'
   | 'arrow'
   | 'freedraw'

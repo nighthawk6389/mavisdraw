@@ -12,7 +12,16 @@ import type { LinearElement, MavisElement, Point, TextElement } from '@mavisdraw
 /** Padding between a container's edge and its bound label. */
 export const BOUND_TEXT_PADDING = 10;
 
-const CONTAINER_TYPES = new Set(['rectangle', 'ellipse', 'diamond', 'triangle', 'portal', 'image']);
+const CONTAINER_TYPES = new Set([
+  'rectangle',
+  'ellipse',
+  'diamond',
+  'triangle',
+  'cylinder',
+  'queue',
+  'portal',
+  'image',
+]);
 
 export function isLinear(el: MavisElement): el is LinearElement {
   return el.type === 'line' || el.type === 'arrow' || el.type === 'freedraw';

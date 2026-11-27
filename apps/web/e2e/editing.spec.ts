@@ -263,7 +263,7 @@ test.describe('Phase 1 editing', () => {
   test('exports a PNG that the browser downloads', async ({ page }) => {
     await drawRect(page, 200, 200, 320, 280);
     await page.getByRole('button', { name: 'Export' }).click();
-    await page.locator('select').first().selectOption('png');
+    await page.getByTestId('export-format').selectOption('png');
     const downloadPromise = page.waitForEvent('download');
     await page
       .getByRole('button', { name: /^Export$/ })

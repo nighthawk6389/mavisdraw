@@ -102,6 +102,10 @@ export interface MermaidImportResult {
 export interface MermaidImportOptions {
   /** Extra fields for the portal of a subgraph (e.g. a link to its code). */
   portalExtras?: (subgraphId: string) => Partial<PortalElement> | undefined;
+  /** The shape and icon for a node (e.g. a repo map's datastores). */
+  nodeExtras?: (
+    nodeId: string,
+  ) => { type?: 'rectangle' | 'cylinder' | 'queue'; icon?: string } | undefined;
 }
 
 export async function importMermaidGraph(
@@ -220,11 +224,20 @@ export async function importMermaidGraph(
         continue;
       }
 
+      const extras = options.nodeExtras?.(entity.key);
       const type =
-        entity.shape === 'circle' ? 'ellipse' : entity.shape === 'diamond' ? 'diamond' : 'rectangle';
+        extras?.type ??
+        (entity.shape === 'circle'
+          ? 'ellipse'
+          : entity.shape === 'diamond'
+            ? 'diamond'
+            : entity.shape === 'cylinder'
+              ? 'cylinder'
+              : 'rectangle');
       const shape = store.createElement(type, diagramId, x, y, entity.width, entity.height);
+      if (extras?.icon) shape.icon = extras.icon;
       if (type === 'rectangle') {
-        const rounded = entity.shape === 'round' || entity.shape === 'stadium' || entity.shape === 'cylinder';
+        const rounded = entity.shape === 'round' || entity.shape === 'stadium';
         (shape as RectangleElement).roundness = rounded ? 16 : 0;
       }
       const label = makeLabel(diagramId, shape, entity.label, LABEL_FONT);

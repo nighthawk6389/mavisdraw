@@ -5,6 +5,8 @@ interface UIState {
   // Panels
   showStylePanel: boolean;
   showLayerPanel: boolean;
+  /** The shape and icon library (architecture shapes, cloud services). */
+  showLibrary: boolean;
   showDiagramTree: boolean;
 
   // Dialogs
@@ -36,6 +38,7 @@ interface UIState {
   // Actions
   toggleStylePanel: () => void;
   toggleLayerPanel: () => void;
+  setShowLibrary: (open: boolean) => void;
   toggleDiagramTree: () => void;
   toggleExportDialog: () => void;
   toggleVersionHistory: () => void;
@@ -55,6 +58,7 @@ interface UIState {
 export const useUIStore = create<UIState>((set) => ({
   showStylePanel: true,
   showLayerPanel: false,
+  showLibrary: false,
   showDiagramTree: true,
   showExportDialog: false,
   showVersionHistory: false,
@@ -77,6 +81,8 @@ export const useUIStore = create<UIState>((set) => ({
   toggleLayerPanel: () => {
     set((state) => ({ showLayerPanel: !state.showLayerPanel }));
   },
+
+  setShowLibrary: (open) => set({ showLibrary: open }),
 
   toggleDiagramTree: () => {
     set((state) => ({ showDiagramTree: !state.showDiagramTree }));

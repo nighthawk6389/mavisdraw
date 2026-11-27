@@ -3,7 +3,8 @@ import type { RepoComponent, RepoModel, RepoResource } from './analyze';
 
 /** Subgraph id used for a component (stable, so drift can find it again). */
 export const componentKey = (id: string) => `c_${id.replace(/[^A-Za-z0-9]/g, '_') || 'root'}`;
-const resourceKey = (id: string) => `r_${id.replace(/[^A-Za-z0-9]/g, '_')}`;
+/** Node id used for a resource (a datastore, queue or service the code uses). */
+export const resourceKey = (id: string) => `r_${id.replace(/[^A-Za-z0-9]/g, '_')}`;
 
 /** More than this many libraries are grouped behind one "Shared packages" level. */
 const GROUP_LIBRARIES_ABOVE = 3;

@@ -17,6 +17,9 @@ export function mapShapeToMiro(
       return 'rhombus';
     case 'triangle':
       return 'triangle';
+    case 'cylinder':
+    case 'queue':
+      return 'can';
     default:
       return null;
   }

@@ -214,6 +214,15 @@ shop, three levels deep), or start from a template. **New Project** offers the s
 C4, microservices, AWS web app, event-driven, data pipeline, SaaS platform — each a nested map you
 can drill into. On an empty map, the bar at the bottom (or ⌘K → *Insert a template…*) adds one.
 
+### Architecture shapes and icons
+
+**Datastore** (B) and **Queue** (U) are tools of their own, and any shape can carry an icon (style
+panel → *Icon*). The **shape library** (▦ in the toolbar) has generic building blocks and the common
+services of AWS, Google Cloud, Azure and Kubernetes: search ("postgres", "s3", "pod") and click to
+add one with its icon and label. Maps generated from a repository, and updates proposed by coding
+agents and PR checks, draw Postgres as a database, Kafka as a stream and Stripe with a card, from the
+same catalog. Icons are from [Lucide](https://lucide.dev) (ISC); there are no vendor logos.
+
 ### Map ⇄ code
 
 **Code** (or ⌘K → *Map a repository…*) turns a repository — a GitHub repo, or a folder on your

@@ -8,6 +8,7 @@ import type {
   TextElement,
 } from '@mavisdraw/types';
 import { computeElementsBounds } from './utils/bounds.js';
+import { cylinderPaths, iconById, iconPlacement, queuePaths } from './library.js';
 
 /**
  * A diagram as an SVG string, without a DOM: used by the server for README
@@ -210,6 +211,23 @@ function shape(el: MavisElement, ctx: Ctx): string {
       if (ctx.sketchy) return roughPaths(ctx, (g, o) => g.polygon(pts, o), el);
       return `<polygon points="${pts.map((p) => p.join(',')).join(' ')}" ${fillAttr} ${strokeAttrs(el, ctx)} />`;
     }
+    case 'cylinder':
+    case 'queue': {
+      const { body, rim } = el.type === 'cylinder' ? cylinderPaths(w, h) : queuePaths(w, h);
+      if (ctx.sketchy) {
+        return (
+          roughPaths(ctx, (g, o) => g.path(body, o), el) +
+          roughPaths(ctx, (g, o) => g.path(rim, { ...o, fill: undefined }), {
+            ...el,
+            fillStyle: 'none',
+          })
+        );
+      }
+      return (
+        `<path d="${body}" ${fillAttr} ${strokeAttrs(el, ctx)} />` +
+        `<path d="${rim}" fill="none" ${strokeAttrs(el, ctx)} />`
+      );
+    }
     case 'line':
     case 'arrow':
       return linear(el as LinearElement, ctx);
@@ -230,6 +248,20 @@ function shape(el: MavisElement, ctx: Ctx): string {
     default:
       return '';
   }
+}
+
+/** The shape's icon, if it has one we know, in its stroke colour. */
+function icon(el: MavisElement, ctx: Ctx): string {
+  const def = iconById(el.icon);
+  const at = def && iconPlacement({ type: el.type, width: num(el.width), height: num(el.height) });
+  if (!def || !at) return '';
+  const scale = num(at.size / 24);
+  return (
+    `<g transform="translate(${num(at.x)} ${num(at.y)}) scale(${scale})" fill="none" stroke="${strokeOf(el, ctx)}" ` +
+    `stroke-width="2" stroke-linecap="round" stroke-linejoin="round">` +
+    def.paths.map((d) => `<path d="${escapeXml(d)}" />`).join('') +
+    '</g>'
+  );
 }
 
 function linear(el: LinearElement, ctx: Ctx): string {
@@ -473,7 +505,7 @@ export function renderSvgMarkup(
           ? `<g${opacity < 100 ? ` opacity="${num(opacity / 100)}"` : ''}>${label}</g>`
           : '';
       }
-      const inner = shape(el, ctx);
+      const inner = shape(el, ctx) + icon(el, ctx);
       if (!inner) return '';
       const opacity = num(el.opacity);
       const attrs = [`transform="${transform(el)}"`];

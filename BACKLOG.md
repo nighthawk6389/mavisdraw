@@ -101,13 +101,13 @@ Still open:
 - **The app can be framed by any site** (no `X-Frame-Options`/`frame-ancestors`): add them for everything except `/embed.html` (Render static headers apply per path, so the embed page needs its own rule).
 - ~~MCP server~~ — done: `POST /api/mcp` (Streamable HTTP, stateless) with personal access tokens; tools `list_projects`, `read_architecture`, `find_component` (by name or file path), `propose_update` (reviewed and applied in the editor's Proposals panel). See `docs/mcp.md`. Still missing: OAuth for MCP clients instead of pasted tokens, read-only / per-project token scopes, rate limits per token rather than per IP, and proposals that target several diagrams at once.
 - **Model + views** (one component shown at several levels) — not started; still the key data-model decision before the hierarchy grows.
-- **Cylinder/queue shapes** — Mermaid `[(db)]` maps to a rounded rectangle for now.
+- ~~**Cylinder/queue shapes**~~: done. `cylinder` (datastore) and `queue` element types; Mermaid `[(db)]` imports as a cylinder; draw.io, Excalidraw (as rounded boxes) and Miro (`can`) export them.
 - **LLM-markdown paste** — the `packages/llm` format can be exported but pasting it doesn't import with auto-layout yet (Mermaid does).
 
 ### Roadmap Phase 1 items not done yet
 
 - ~~Rotation handle~~ — done (handle above the selection, Shift for 15°, rotated frames/resize/bindings/anchors). **Eraser, minimap, dark mode** — still missing from the editor.
-- **Architecture shape/icon libraries** (AWS/GCP/K8s stencils) — not started.
+- ~~**Architecture shape/icon libraries**~~: done. An icon on any shape (63 Lucide icons, `@mavisdraw/export/library`), and a library of generic blocks and AWS/GCP/Azure/Kubernetes services (`CATALOG`) in the toolbar. Repo maps and proposals pick shape and icon from the catalog by name. Still missing: vendor-styled icons (no logos for trademark reasons), dragging from the library onto the canvas, and user-defined library items.
 - **Accessibility pass** — the new context menu and zoom controls have ARIA roles/labels and keyboard support; the toolbar and side panels still don't.
 - **Images stored inline as base64** — now downscaled to 1600px on insert, but should move to object storage (S3/R2) with references in the element.
 - **God objects** — `InteractionManager.ts` / `CanvasRenderer.ts` / `elementsStore.ts` still need splitting (per-tool handlers, one bounds/text-measure module).

@@ -86,6 +86,8 @@ function elementToMxCell(
     case 'ellipse':
     case 'diamond':
     case 'triangle':
+    case 'cylinder':
+    case 'queue':
       return shapeToMxCell(el, boundTextMap);
     case 'text':
       return textToMxCell(el as TextElement);
@@ -115,6 +117,16 @@ function shapeToMxCell(
       break;
     case 'triangle':
       styles.set('_shape', 'triangle');
+      break;
+    case 'cylinder':
+      styles.set('shape', 'cylinder3');
+      styles.set('boundedLbl', '1');
+      break;
+    case 'queue':
+      // draw.io's cylinder, turned on its side (its top to the right)
+      styles.set('shape', 'cylinder3');
+      styles.set('direction', 'south');
+      styles.set('boundedLbl', '1');
       break;
     case 'rectangle': {
       const rect = el as RectangleElement;

@@ -7,5 +7,5 @@ export type {
   ComponentKind,
   ResourceKind,
 } from './analyze.js';
-export { repoToGraph, diffModels, describeDrift, componentKey, SHARED_GROUP } from './map.js';
+export { repoToGraph, diffModels, describeDrift, componentKey, resourceKey, SHARED_GROUP } from './map.js';
 export type { RepoGraph, DriftChange } from './map.js';

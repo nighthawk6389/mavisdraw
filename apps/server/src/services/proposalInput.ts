@@ -1,4 +1,5 @@
 import type { ComponentInfo } from '@mavisdraw/llm';
+import { catalogFor } from '@mavisdraw/export/library';
 import type {
   ModelComponent,
   ProjectModel,
@@ -12,7 +13,7 @@ import type {
  * (names, not ids), turned into the proposal format the editor applies
  * (the same one the in-app AI assistant produces).
  */
-export type ComponentKind = 'component' | 'datastore' | 'system';
+export type ComponentKind = 'component' | 'datastore' | 'queue' | 'system';
 
 export interface ProposalRequest {
   description: string;
@@ -29,12 +30,27 @@ export interface BuiltProposal {
   connections: ProposedConnection[];
 }
 
-/** How each kind is drawn: datastores as cylinders-ish ellipses, systems as drillable portals. */
+/** How each kind is drawn: datastores as cylinders, queues on their side, systems as drillable portals. */
 const ELEMENT_TYPE: Record<ComponentKind, string> = {
   component: 'rectangle',
-  datastore: 'ellipse',
+  datastore: 'cylinder',
+  queue: 'queue',
   system: 'portal',
 };
+
+/**
+ * The shape and icon for something new, by what it's called: "Postgres" is
+ * a database, "Stripe" takes payments (the shape library's catalog), else
+ * by its kind.
+ */
+function lookOf(name: string, kind: ComponentKind): { elementType: string; icon?: string } {
+  if (kind === 'system') return { elementType: 'portal' };
+  const entry = catalogFor(name);
+  if (entry) return { elementType: entry.shape, icon: entry.icon };
+  if (kind === 'datastore') return { elementType: ELEMENT_TYPE.datastore, icon: 'database' };
+  if (kind === 'queue') return { elementType: ELEMENT_TYPE.queue, icon: 'list-ordered' };
+  return { elementType: ELEMENT_TYPE.component };
+}
 
 export const PROPOSAL_LIMITS = {
   add: 30,
@@ -129,22 +145,31 @@ export function buildProposal(
     if (added.has(key(label))) continue;
     added.set(key(label), label);
     if (other) added.set(key(name), label);
-    const change: ProposedChangeAdd = {
-      action: 'add',
-      elementType: other
-        ? other.detailDiagramId
-          ? 'portal'
-          : ELEMENT_TYPE[other.kind === 'datastore' ? 'datastore' : 'component']
-        : ELEMENT_TYPE[a.kind ?? 'component'],
-      label,
-    };
+    const look = other
+      ? other.detailDiagramId
+        ? { elementType: 'portal' }
+        : lookOf(
+            label,
+            other.kind === 'datastore'
+              ? 'datastore'
+              : other.kind === 'queue'
+                ? 'queue'
+                : 'component',
+          )
+      : lookOf(name, a.kind ?? 'component');
+    const change: ProposedChangeAdd = { action: 'add', elementType: look.elementType, label };
     if (other) {
       // The same component, shown here too
       change.componentId = other.id;
       if (other.appearances[0]) change.drawnOn = other.appearances[0].path.join(' › ');
       if (other.detailDiagramId) change.detailDiagramId = other.detailDiagramId;
     }
-    if (a.codePath) change.properties = { codePath: a.codePath };
+    if (a.codePath || look.icon) {
+      change.properties = {
+        ...(a.codePath ? { codePath: a.codePath } : {}),
+        ...(look.icon ? { icon: look.icon } : {}),
+      };
+    }
     changes.push(change);
   }
 

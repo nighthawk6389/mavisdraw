@@ -48,21 +48,22 @@ export function deserializeScene(markdown: string): MavisDrawScene {
       continue;
     }
 
-    // Element line: - [type] "label" ...
+    // Element line: - [type] "label" (icon: name) ...
     const elementMatch = trimmed.match(
-      /^-\s+\[(\w+)\]\s+"([^"]+)"(?:\s+→\s+(.+))?$/,
+      /^-\s+\[(\w+)\]\s+"([^"]+)"(?:\s+\(icon:\s*([\w-]+)\))?(?:\s+→\s+(.+))?$/,
     );
     if (elementMatch) {
       const type = elementMatch[1];
       const label = elementMatch[2];
-      const rest = elementMatch[3] ?? '';
+      const icon = elementMatch[3];
+      const rest = elementMatch[4] ?? '';
 
       if (type === 'portal') {
         const drillMatch = rest.match(/drills into "([^"]+)"/);
         ctx.addPortal(label, drillMatch?.[1] ?? null);
       } else {
         const connectedTo = parseConnectedTo(rest);
-        ctx.addShape(type, label, connectedTo);
+        ctx.addShape(type, label, connectedTo, icon);
       }
       continue;
     }
@@ -116,7 +117,11 @@ interface ParsedShape {
   label: string;
   connectedTo: string[];
   diagramId: string;
+  icon?: string;
 }
+
+/** Shapes kept as written; anything else becomes a (rounded) rectangle. */
+const KEPT_SHAPES = new Set(['ellipse', 'diamond', 'cylinder', 'queue']);
 
 interface ParsedPortal {
   id: string;
@@ -173,13 +178,14 @@ class ParseContext {
     this.currentDiagramId = id;
   }
 
-  addShape(type: string, label: string, connectedTo: string[]): void {
+  addShape(type: string, label: string, connectedTo: string[], icon?: string): void {
     this.shapes.push({
       id: genId(),
       type,
       label,
       connectedTo,
       diagramId: this.currentDiagramId,
+      ...(icon ? { icon } : {}),
     });
     this.lastPortalId = null;
   }
@@ -293,17 +299,19 @@ class ParseContext {
 
       labelToId.set(s.label, s.id);
 
-      const el: RectangleElement = {
+      const kept = KEPT_SHAPES.has(s.type);
+      const el = {
         ...baseProps,
         id: s.id,
-        type: 'rectangle',
+        type: kept ? s.type : 'rectangle',
         diagramId: s.diagramId,
         x,
         y,
         width: 180,
-        height: 80,
-        roundness: 8,
-      };
+        height: s.type === 'cylinder' ? 110 : 80,
+        ...(kept ? {} : { roundness: 8 }),
+        ...(s.icon ? { icon: s.icon } : {}),
+      } as RectangleElement;
       elements.push(el);
 
       // Create bound text

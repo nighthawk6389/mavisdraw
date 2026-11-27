@@ -89,6 +89,15 @@ function convertToExcalidraw(el: MavisElement): ExcalidrawElement | null {
         roundness: null,
       } as ExcalidrawElement;
 
+    // Excalidraw has no cylinders: a rounded box keeps the shape and its label
+    case 'cylinder':
+    case 'queue':
+      return {
+        ...base,
+        type: 'rectangle',
+        roundness: { type: 3 },
+      } as ExcalidrawElement;
+
     case 'diamond':
       return {
         ...base,

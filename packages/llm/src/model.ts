@@ -49,7 +49,8 @@ export function componentKeyOf(el: MavisElement, byId: Map<string, MavisElement>
 
 function defaultKind(el: MavisElement): ModelComponentKind {
   if (el.type === 'portal') return 'system';
-  if (el.type === 'ellipse') return 'datastore';
+  if (el.type === 'ellipse' || el.type === 'cylinder') return 'datastore';
+  if (el.type === 'queue') return 'queue';
   return 'service';
 }
 

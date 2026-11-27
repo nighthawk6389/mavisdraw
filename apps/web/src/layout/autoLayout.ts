@@ -66,7 +66,16 @@ export async function computeLayout(
   return result;
 }
 
-const NODE_TYPES = new Set(['rectangle', 'ellipse', 'diamond', 'triangle', 'portal', 'image']);
+const NODE_TYPES = new Set([
+  'rectangle',
+  'ellipse',
+  'diamond',
+  'triangle',
+  'cylinder',
+  'queue',
+  'portal',
+  'image',
+]);
 
 /** Guess the flow direction of an existing diagram from its connectors. */
 function inferDirection(nodes: Map<string, MavisElement>, arrows: LinearElement[]): LayoutDirection {

@@ -8,7 +8,12 @@ import {
 } from '@mavisdraw/compat/repo';
 import type { MavisDrawScene, ProjectModel } from '@mavisdraw/types';
 import { componentForPath, indexComponents, type ComponentInfo } from '@mavisdraw/llm';
-import { buildProposal, type BuiltProposal, type ProposalRequest } from './proposalInput.js';
+import {
+  buildProposal,
+  type BuiltProposal,
+  type ComponentKind,
+  type ProposalRequest,
+} from './proposalInput.js';
 
 /**
  * What a pull request does to the architecture, and what that means for a
@@ -176,7 +181,7 @@ export function impactOnProject(input: {
     remove: [],
   };
   const adding = new Set<string>();
-  const add = (name: string, kind: 'component' | 'datastore' | 'system', codePath?: string) => {
+  const add = (name: string, kind: ComponentKind, codePath?: string) => {
     if (adding.has(key(name))) return;
     adding.add(key(name));
     request.add.push(codePath !== undefined ? { name, kind, codePath } : { name, kind });
@@ -218,8 +223,16 @@ export function impactOnProject(input: {
         const resource = byLabel.get(key(d.resource.name));
         const onMap = !!from && !!resource && connected(from, resource);
         if (!onMap && onLevel(from)) {
-          if (!resource)
-            add(d.resource.name, d.resource.kind === 'external' ? 'component' : 'datastore');
+          if (!resource) {
+            add(
+              d.resource.name,
+              d.resource.kind === 'external'
+                ? 'component'
+                : d.resource.kind === 'queue'
+                  ? 'queue'
+                  : 'datastore',
+            );
+          }
           if (!resource || onLevel(resource))
             connect(from!.label, resource?.label ?? d.resource.name);
           else if (recordable(resource)) connect(from!.label, componentOf.get(resource.elementId)!);

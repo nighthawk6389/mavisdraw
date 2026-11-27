@@ -483,10 +483,10 @@ export function buildMcpServer(caller: McpCaller, deps: McpDeps): McpServer {
             z.object({
               name: z.string().min(1).max(PROPOSAL_LIMITS.name),
               kind: z
-                .enum(['component', 'datastore', 'system'])
+                .enum(['component', 'datastore', 'queue', 'system'])
                 .optional()
                 .describe(
-                  'component (default): a service or module; datastore: a database, queue or bucket; system: something with its own nested diagram',
+                  'component (default): a service or module; datastore: a database, cache or bucket; queue: a message queue or event stream; system: something with its own nested diagram. Well-known technologies (Postgres, Redis, Kafka, Stripe, S3…) get their own shape and icon from the name.',
                 ),
             }),
           )

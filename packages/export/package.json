@@ -17,6 +17,14 @@
       },
       "types": "./src/svgMarkup.ts",
       "default": "./src/svgMarkup.ts"
+    },
+    "./library": {
+      "node": {
+        "types": "./dist/library.d.ts",
+        "default": "./dist/library.js"
+      },
+      "types": "./src/library.ts",
+      "default": "./src/library.ts"
     }
   },
   "scripts": {

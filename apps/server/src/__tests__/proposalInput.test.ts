@@ -19,7 +19,15 @@ describe('buildProposal', () => {
       ok: true,
       proposal: {
         description: 'Add a cache',
-        changes: [{ action: 'add', elementType: 'ellipse', label: 'Redis' }],
+        // A cache, by its name: drawn as a datastore with the cache icon
+        changes: [
+          {
+            action: 'add',
+            elementType: 'cylinder',
+            label: 'Redis',
+            properties: { icon: 'memory-stick' },
+          },
+        ],
         connections: [{ fromLabel: 'API', toLabel: 'Redis', label: 'reads' }],
       },
     });
@@ -141,5 +149,36 @@ describe('buildProposal with the architecture model', () => {
     );
     expect(result.ok).toBe(false);
     expect(!result.ok && result.error).toContain('anywhere in the map');
+  });
+});
+
+describe('how new components are drawn', () => {
+  it('by name when the library knows it, else by kind', () => {
+    const result = buildProposal(
+      {
+        description: 'Storage and messaging',
+        add: [
+          { name: 'Ledger store', kind: 'datastore' },
+          { name: 'Kafka', kind: 'datastore' },
+          { name: 'Jobs', kind: 'queue' },
+          { name: 'Billing', kind: 'system' },
+        ],
+      },
+      root,
+    );
+    expect(result.ok).toBe(true);
+    const changes = result.ok ? result.proposal.changes : [];
+    expect(
+      changes.map((c) => [
+        c.action === 'add' && c.label,
+        c.action === 'add' && c.elementType,
+        c.action === 'add' && c.properties?.icon,
+      ]),
+    ).toEqual([
+      ['Ledger store', 'cylinder', 'database'],
+      ['Kafka', 'queue', 'radio'],
+      ['Jobs', 'queue', 'list-ordered'],
+      ['Billing', 'portal', undefined],
+    ]);
   });
 });

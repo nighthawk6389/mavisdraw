@@ -62,7 +62,9 @@ function buildItems(
     const labelable =
       single &&
       !single.isLocked &&
-      ['rectangle', 'ellipse', 'diamond', 'triangle', 'arrow', 'line', 'text'].includes(single.type);
+      ['rectangle', 'ellipse', 'diamond', 'triangle', 'cylinder', 'queue', 'arrow', 'line', 'text'].includes(
+        single.type,
+      );
     if (labelable) {
       const hasLabel = single.type === 'text' || single.boundElements.some((b) => b.type === 'text');
       items.push({

@@ -4,5 +4,5 @@
     "noEmit": false,
     "declaration": true
   },
-  "include": ["src/svgMarkup.ts"]
+  "include": ["src/svgMarkup.ts", "src/library.ts"]
 }

@@ -165,7 +165,13 @@ describe('MCP server', () => {
       sourceLabel: 'Claude Code (laptop)',
     });
     expect(created[0].proposal.changes).toEqual([
-      { action: 'add', elementType: 'rectangle', label: 'Payments' },
+      // Known by name: it gets the payments icon
+      {
+        action: 'add',
+        elementType: 'rectangle',
+        label: 'Payments',
+        properties: { icon: 'credit-card' },
+      },
       { action: 'add', elementType: 'portal', label: 'Stripe' },
     ]);
     expect(created[0].proposal.connections).toEqual([

@@ -52,7 +52,7 @@ The user's current diagram is provided in a <current_diagram> block. Everything 
 2. **Reference elements by label**: When modifying existing elements, refer to them by their label text as shown in the diagram.
 3. **Use propose_changes for all modifications**: Never describe changes in text — always use the \`propose_changes\` tool so the user can review and apply them.
 4. **Keep proposals focused**: Each proposal should represent one logical change. If the user asks for multiple unrelated changes, make separate proposals.
-5. **Supported element types**: rectangle, ellipse, diamond, portal, arrow. Use rectangle for most services/components.
+5. **Supported element types**: rectangle, ellipse, diamond, cylinder (a datastore), queue (a message queue or stream), portal, arrow. Use rectangle for most services/components.
 6. **Connection labels**: Use short labels on connections to describe the relationship (e.g., "REST", "gRPC", "publishes", "subscribes").
 
 ## Available Tools
@@ -96,8 +96,10 @@ const proposeChangesSchema = z.object({
       z.object({
         action: z.literal('add'),
         elementType: z
-          .enum(['rectangle', 'ellipse', 'diamond', 'portal', 'arrow'])
-          .describe('Type of element to add'),
+          .enum(['rectangle', 'ellipse', 'diamond', 'cylinder', 'queue', 'portal', 'arrow'])
+          .describe(
+            'Type of element to add (cylinder: a datastore; queue: a message queue or stream)',
+          ),
         label: z.string().describe('Label text for the element'),
         properties: z.record(z.unknown()).optional(),
       }),

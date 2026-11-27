@@ -54,7 +54,7 @@ test.describe('Export Dialog', () => {
 
   test('shows format selector with all options', async ({ page }) => {
     await page.keyboard.press('Control+Shift+E');
-    const select = page.locator('select');
+    const select = page.getByTestId('export-format');
     await expect(select).toBeVisible();
 
     // Check that key format options exist
@@ -73,7 +73,7 @@ test.describe('Export Dialog', () => {
     await expect(page.locator('h2:has-text("Export")')).toBeVisible();
 
     // Select mavisdraw format (should be default)
-    const select = page.locator('select');
+    const select = page.getByTestId('export-format');
     await select.selectOption('mavisdraw');
 
     // Trigger download
@@ -98,7 +98,7 @@ test.describe('Export Dialog', () => {
     await drawRectangle(page);
 
     await page.keyboard.press('Control+Shift+E');
-    const select = page.locator('select');
+    const select = page.getByTestId('export-format');
     await select.selectOption('svg');
 
     const downloadPromise = page.waitForEvent('download');

@@ -4,6 +4,7 @@ import {
   isManifest,
   isRelevantPath,
   repoToGraph,
+  resourceKey,
   SHARED_GROUP,
   type DriftChange,
   type RepoComponent,
@@ -12,6 +13,7 @@ import {
   type RepoSnapshot,
 } from '@mavisdraw/compat';
 import type { MavisElement, PortalElement, TextElement } from '@mavisdraw/types';
+import { catalogFor, type LibraryShape } from '@mavisdraw/export/library';
 import { apiGetRepoSnapshot, apiSetProjectRepo, type RepoSourceData } from '../services/api';
 import { useElementsStore } from '../stores/elementsStore';
 import { useDiagramStore } from '../stores/diagramStore';
@@ -81,10 +83,16 @@ export async function generateMapFromRepo(
   const model = analyzeRepo(snapshot);
   const { graph, components } = repoToGraph(model);
   const at = freeSpotOnActiveDiagram();
+  const resourceByNode = new Map(model.resources.map((r) => [resourceKey(r.id), r]));
   const result = await importMermaidGraph(graph, at, {
     portalExtras: (sgId) => {
       const c = components.get(sgId);
       return c ? linkFields(c, source) : undefined;
+    },
+    // Datastores look like datastores, queues like queues, Stripe has a card
+    nodeExtras: (nodeId) => {
+      const r = resourceByNode.get(nodeId);
+      return r ? resourceLook(r) : undefined;
     },
   });
   await saveBaseline(source, model);
@@ -321,23 +329,41 @@ export async function applyDrift(change: DriftChange): Promise<string | null> {
 const edgeLabel = (r: RepoResource) =>
   r.kind === 'datastore' ? 'reads/writes' : r.kind === 'queue' ? 'publishes' : 'calls';
 
+const RESOURCE_SHAPES = new Set(['rectangle', 'cylinder', 'queue']);
+
 function resourceNode(diagramId: string, r: RepoResource): MavisElement | undefined {
   return live().find(
-    (e) => e.diagramId === diagramId && e.type === 'rectangle' && labelOf(e) === r.name,
+    (e) => e.diagramId === diagramId && RESOURCE_SHAPES.has(e.type) && labelOf(e) === r.name,
   );
+}
+
+/** The shape and icon a resource is drawn with (the library's entry for it, or its kind's). */
+export function resourceLook(r: Pick<RepoResource, 'name' | 'kind'>): {
+  type: LibraryShape;
+  icon?: string;
+} {
+  const entry = catalogFor(r.name);
+  if (entry) return { type: entry.shape, icon: entry.icon };
+  if (r.kind === 'datastore') return { type: 'cylinder', icon: 'database' };
+  if (r.kind === 'queue') return { type: 'queue', icon: 'list-ordered' };
+  return { type: 'rectangle' };
 }
 
 function addResourceNode(near: MavisElement, r: RepoResource): MavisElement {
   const store = useElementsStore.getState();
+  const look = resourceLook(r);
   const shape = store.createElement(
-    'rectangle',
+    look.type,
     near.diagramId,
     near.x,
     near.y + near.height + 160,
     180,
-    70,
+    look.type === 'cylinder' ? 110 : 70,
   );
-  (shape as { roundness?: number }).roundness = r.kind === 'external' ? 35 : 16;
+  if (look.icon) shape.icon = look.icon;
+  if (shape.type === 'rectangle') {
+    (shape as { roundness?: number }).roundness = r.kind === 'external' ? 35 : 16;
+  }
   const text = makeLabel(near.diagramId, shape, r.name, 20);
   shape.boundElements = [{ id: text.id, type: 'text' }];
   commit([shape, text]);

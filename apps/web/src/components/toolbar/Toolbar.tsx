@@ -3,10 +3,11 @@ import ToolButton from './ToolButton';
 import { useToolStore, type Tool } from '../../stores/toolStore';
 import { usePermissionStore } from '../../stores/permissionStore';
 import { useUIStore } from '../../stores/uiStore';
+import { LibraryIcon } from '../library/LibraryIcon';
 
 interface ToolConfig {
   tool: Tool;
-  icon: string;
+  icon: React.ReactNode;
   label: string;
   shortcut: string;
 }
@@ -17,6 +18,8 @@ const TOOLS: ToolConfig[] = [
   { tool: 'rectangle', icon: '\u25A1', label: 'Rectangle', shortcut: 'R' },
   { tool: 'ellipse', icon: '\u25CB', label: 'Ellipse', shortcut: 'E' },
   { tool: 'diamond', icon: '\u25C7', label: 'Diamond', shortcut: 'D' },
+  { tool: 'cylinder', icon: <LibraryIcon id="database" size={18} />, label: 'Datastore', shortcut: 'B' },
+  { tool: 'queue', icon: '\u2B2D', label: 'Queue', shortcut: 'U' },
   { tool: 'line', icon: '\u2571', label: 'Line', shortcut: 'L' },
   { tool: 'arrow', icon: '\u2192', label: 'Arrow', shortcut: 'A' },
   { tool: 'freedraw', icon: '\u270E', label: 'Freedraw', shortcut: 'P' },
@@ -46,6 +49,8 @@ export default function Toolbar() {
   const toggleLayerPanel = useUIStore((s) => s.toggleLayerPanel);
   const showDiagramTree = useUIStore((s) => s.showDiagramTree);
   const toggleDiagramTree = useUIStore((s) => s.toggleDiagramTree);
+  const showLibrary = useUIStore((s) => s.showLibrary);
+  const setShowLibrary = useUIStore((s) => s.setShowLibrary);
 
   return (
     <aside data-testid="toolbar" className="w-12 bg-white border-r border-gray-200 flex flex-col items-center py-2 gap-1 z-10">
@@ -63,6 +68,26 @@ export default function Toolbar() {
           }}
         />
       ))}
+
+      {/* Shape library: datastores, queues, cloud services, Kubernetes */}
+      {canEdit && (
+        <button
+          data-testid="library-button"
+          className={`w-10 h-10 flex items-center justify-center rounded-lg text-base
+            transition-colors duration-150 group relative
+            ${showLibrary ? 'text-blue-700 bg-blue-50' : 'text-gray-600 hover:bg-gray-100'}
+          `}
+          onClick={() => setShowLibrary(!showLibrary)}
+          aria-pressed={showLibrary}
+          title="Shape library"
+        >
+          {'\u25A6'}
+          <span className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-xs rounded
+            opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50">
+            Shape library: databases, queues, cloud services
+          </span>
+        </button>
+      )}
 
       {/* Divider */}
       <div className="w-8 h-px bg-gray-200 my-1" />

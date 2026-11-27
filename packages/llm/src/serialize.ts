@@ -90,6 +90,7 @@ function serializeDiagram(
       const label = getElementLabel(el, elementMap);
       const connectedTo = getConnections(el.id, connections, elementMap);
       let line = `- [${el.type}] "${label}"`;
+      if (el.icon && /^[\w-]+$/.test(el.icon)) line += ` (icon: ${el.icon})`;
       if (connectedTo.length > 0) {
         line += ` → connected to ${connectedTo.map((c) => `"${c}"`).join(', ')}`;
       }

@@ -280,6 +280,10 @@ function convertCell(
     case 'triangle':
       return { ...base, type: 'triangle' } as TriangleElement;
 
+    case 'cylinder':
+    case 'queue':
+      return { ...base, type: elementType } as MavisElement;
+
     case 'text':
       return {
         ...base,

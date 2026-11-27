@@ -3,6 +3,8 @@ export type ElementType =
   | 'ellipse'
   | 'diamond'
   | 'triangle'
+  | 'cylinder'
+  | 'queue'
   | 'line'
   | 'arrow'
   | 'freedraw'
@@ -74,6 +76,12 @@ export interface BaseElement {
    */
   componentId?: string;
 
+  /**
+   * An icon drawn inside the shape, by id (see @mavisdraw/export/library).
+   * Unknown ids draw nothing.
+   */
+  icon?: string;
+
   // Binding
   boundElements: { id: string; type: string }[];
 
@@ -97,6 +105,16 @@ export interface DiamondElement extends BaseElement {
 
 export interface TriangleElement extends BaseElement {
   type: 'triangle';
+}
+
+/** A datastore: a cylinder standing up. */
+export interface CylinderElement extends BaseElement {
+  type: 'cylinder';
+}
+
+/** A message queue or stream: a cylinder on its side. */
+export interface QueueElement extends BaseElement {
+  type: 'queue';
 }
 
 export interface LinearElement extends BaseElement {
@@ -152,6 +170,8 @@ export type MavisElement =
   | EllipseElement
   | DiamondElement
   | TriangleElement
+  | CylinderElement
+  | QueueElement
   | LinearElement
   | TextElement
   | ImageElement

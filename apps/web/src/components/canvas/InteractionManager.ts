@@ -166,6 +166,8 @@ const SHAPE_TOOLS = new Set<Tool>([
   'rectangle',
   'ellipse',
   'diamond',
+  'cylinder',
+  'queue',
   'line',
   'arrow',
   'freedraw',
@@ -174,7 +176,7 @@ const SHAPE_TOOLS = new Set<Tool>([
 ]);
 
 /** Tools that draw a box: a click places one at its default size. */
-const BOX_TOOLS = new Set<Tool>(['rectangle', 'ellipse', 'diamond', 'portal']);
+const BOX_TOOLS = new Set<Tool>(['rectangle', 'ellipse', 'diamond', 'cylinder', 'queue', 'portal']);
 
 /** Direction each handle pulls in, degrees clockwise from "right" (y points down). */
 const HANDLE_DIRECTION_DEG: Record<ResizeHandle, number> = {
@@ -1491,7 +1493,7 @@ export class InteractionManager {
     }
 
     // For shapes without groups (or already entered groups), create bound text
-    const shapeTypes = new Set(['rectangle', 'ellipse', 'diamond', 'triangle']);
+    const shapeTypes = new Set(['rectangle', 'ellipse', 'diamond', 'triangle', 'cylinder', 'queue']);
     if (shapeTypes.has(element.type)) {
       // Check if shape already has bound text
       const hasBoundText = element.boundElements.some((b) => b.type === 'text');

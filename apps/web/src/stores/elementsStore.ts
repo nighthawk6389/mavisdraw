@@ -8,6 +8,8 @@ import type {
   EllipseElement,
   DiamondElement,
   TriangleElement,
+  CylinderElement,
+  QueueElement,
   LinearElement,
   TextElement,
   ImageElement,
@@ -675,6 +677,12 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
 
       case 'triangle':
         return { ...base, type: 'triangle' } as TriangleElement;
+
+      case 'cylinder':
+        return { ...base, type: 'cylinder' } as CylinderElement;
+
+      case 'queue':
+        return { ...base, type: 'queue' } as QueueElement;
 
       case 'line':
         return {

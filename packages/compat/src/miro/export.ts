@@ -59,6 +59,8 @@ function convertElement(el: MavisElement): MiroItem | null {
     case 'ellipse':
     case 'diamond':
     case 'triangle':
+    case 'cylinder':
+    case 'queue':
       return convertShape(el);
     case 'text':
       return convertText(el as TextElement);

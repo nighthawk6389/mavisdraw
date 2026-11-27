@@ -55,6 +55,14 @@ test('a repository becomes a nested map, and the map is kept in line with the co
     '⧉ storefront',
     '⧉ ui',
   ]);
+  // Datastores look like datastores, and each has its icon
+  const shapeOf = (label: string) => {
+    const text = top.find((e) => e.type === 'text' && e.text === label)!;
+    return top.find((e) => e.id === text.containerId)!;
+  };
+  expect(shapeOf('PostgreSQL')).toMatchObject({ type: 'cylinder', icon: 'database' });
+  expect(shapeOf('Redis')).toMatchObject({ type: 'cylinder', icon: 'memory-stick' });
+  expect(shapeOf('Stripe')).toMatchObject({ type: 'rectangle', icon: 'credit-card' });
   const api = top.find((e) => e.type === 'portal' && e.label === 'api')!;
   expect(api.codePath).toBe('apps/api');
   const arrowLabels = top

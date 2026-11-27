@@ -57,6 +57,11 @@ export function inferElementType(style: Map<string, string>, isEdge: boolean): E
   if (shape === 'rhombus' || style.get('shape') === 'rhombus') {
     return 'diamond';
   }
+  // Datastores: draw.io's cylinders (on their side: a queue)
+  if (/^cylinder\d*$|^datastore$/.test(style.get('shape') ?? '') || /^cylinder\d*$/.test(shape)) {
+    const direction = style.get('direction');
+    return direction === 'south' || direction === 'north' ? 'queue' : 'cylinder';
+  }
   if (
     shape === 'triangle' ||
     style.get('shape') === 'triangle' ||

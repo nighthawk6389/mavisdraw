@@ -199,7 +199,12 @@ describe('what it means for the map', () => {
           label: 'billing',
           properties: { codePath: 'packages/billing' },
         },
-        { action: 'add', elementType: 'rectangle', label: 'Anthropic API' },
+        {
+          action: 'add',
+          elementType: 'rectangle',
+          label: 'Anthropic API',
+          properties: { icon: 'brain-circuit' },
+        },
         { action: 'delete', elementId: 'client' },
       ]),
     );

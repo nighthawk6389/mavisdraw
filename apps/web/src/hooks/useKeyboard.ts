@@ -17,6 +17,8 @@ const KEY_TO_TOOL: Record<string, Tool> = {
   r: 'rectangle',
   e: 'ellipse',
   d: 'diamond',
+  b: 'cylinder',
+  u: 'queue',
   l: 'line',
   a: 'arrow',
   p: 'freedraw',

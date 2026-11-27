@@ -16,6 +16,7 @@ import { getCanvasController } from '../canvas/canvasController';
 import { measureText } from '../../utils/fonts';
 import { useModelStore } from '../../stores/modelStore';
 import { apiSaveRelationship, ApiError } from '../../services/api';
+import { iconById } from '@mavisdraw/export/library';
 
 /**
  * A relationship to a shape this proposal just added: the server only knows
@@ -43,7 +44,14 @@ const MODIFIABLE = new Set([
   'opacity',
 ]);
 
-const ADDABLE = new Set<ElementType>(['rectangle', 'ellipse', 'diamond', 'portal']);
+const ADDABLE = new Set<ElementType>([
+  'rectangle',
+  'ellipse',
+  'diamond',
+  'cylinder',
+  'queue',
+  'portal',
+]);
 
 export interface ApplyResult {
   added: number;
@@ -126,6 +134,8 @@ async function applyTo(proposal: DiagramProposal, newDiagrams: Diagram[]): Promi
 
     // A component the map already has elsewhere: shown here too, not a new one
     if (change.componentId) shape.componentId = change.componentId;
+    // Its icon (a datastore's, a payments provider's…), if it's one we have
+    if (iconById(change.properties?.icon)) shape.icon = change.properties!.icon as string;
 
     if (type === 'portal') {
       const portal = shape as PortalElement;

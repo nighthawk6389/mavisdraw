@@ -19,6 +19,7 @@ export {
   diffModels,
   describeDrift,
   componentKey,
+  resourceKey,
   SHARED_GROUP,
 } from './repo';
 export type { RepoSnapshot, RepoModel, RepoComponent, RepoResource, RepoGraph, DriftChange } from './repo';

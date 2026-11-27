@@ -25,6 +25,7 @@ import type { SnapGuide } from './gestures/snapping';
 import { cssFont } from '../../utils/fonts';
 import type { Drawable } from 'roughjs/bin/core';
 import { changedSince, liveSpan, type LivePlan } from './staticLayerPlan';
+import { cylinderPaths, iconById, iconPlacement, queuePaths } from '@mavisdraw/export/library';
 import type { Viewport } from '@mavisdraw/types';
 import { getCubicControlPoints, calculateElbowRoute, getConnectionSide } from '@mavisdraw/math';
 
@@ -701,6 +702,10 @@ export class CanvasRenderer {
       case 'triangle':
         this.renderTriangle(ctx, element, renderMode);
         break;
+      case 'cylinder':
+      case 'queue':
+        this.renderCurvedEnds(ctx, element, renderMode);
+        break;
       case 'line':
       case 'arrow':
       case 'freedraw':
@@ -729,7 +734,42 @@ export class CanvasRenderer {
         break;
     }
 
+    if (element.icon) this.renderIcon(ctx, element);
+
     this.cacheElement = null;
+    ctx.restore();
+  }
+
+  /** Icons as Path2D, made once per icon. */
+  private iconPaths = new Map<string, Path2D[]>();
+
+  /** The shape's icon (top left, or top centre for round shapes), in its stroke colour. */
+  private renderIcon(ctx: CanvasRenderingContext2D, element: MavisElement): void {
+    if (
+      element.type === 'text' ||
+      element.type === 'arrow' ||
+      element.type === 'line' ||
+      element.type === 'freedraw'
+    ) {
+      return;
+    }
+    const def = iconById(element.icon);
+    const at = def && iconPlacement(element);
+    if (!def || !at) return;
+    let paths = this.iconPaths.get(element.icon!);
+    if (!paths) {
+      paths = def.paths.map((d) => new Path2D(d));
+      this.iconPaths.set(element.icon!, paths);
+    }
+    ctx.save();
+    ctx.translate(at.x, at.y);
+    ctx.scale(at.size / 24, at.size / 24);
+    ctx.strokeStyle = element.strokeColor;
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.setLineDash([]);
+    for (const path of paths) ctx.stroke(path);
     ctx.restore();
   }
 
@@ -882,6 +922,41 @@ export class CanvasRenderer {
       if (strokeWidth > 0) {
         ctx.stroke();
       }
+    }
+  }
+
+  /** Datastores (cylinder) and queues (a cylinder on its side): outline, then the visible rim. */
+  private renderCurvedEnds(
+    ctx: CanvasRenderingContext2D,
+    element: MavisElement,
+    renderMode: RenderMode,
+  ): void {
+    const { width, height, strokeColor, backgroundColor, fillStyle, strokeWidth, strokeStyle } =
+      element;
+    const { body, rim } =
+      element.type === 'cylinder' ? cylinderPaths(width, height) : queuePaths(width, height);
+
+    if (renderMode === 'sketchy') {
+      this.drawRoughShape(ctx, () =>
+        this.roughCanvas.generator.path(body, this.buildRoughOptions(element)),
+      );
+      this.drawRoughShape(ctx, () => {
+        const options = this.buildRoughOptions(element);
+        delete options.fill;
+        delete options.fillStyle;
+        return this.roughCanvas.generator.path(rim, options);
+      });
+      return;
+    }
+    this.applyCleanStroke(ctx, strokeColor, strokeWidth, strokeStyle);
+    const outline = new Path2D(body);
+    if (backgroundColor !== 'transparent' && fillStyle !== 'none') {
+      ctx.fillStyle = backgroundColor;
+      ctx.fill(outline);
+    }
+    if (strokeWidth > 0) {
+      ctx.stroke(outline);
+      ctx.stroke(new Path2D(rim));
     }
   }
 

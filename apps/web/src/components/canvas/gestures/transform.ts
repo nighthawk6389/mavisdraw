@@ -176,6 +176,10 @@ export function defaultShapeSize(type: string): { width: number; height: number 
       return { width: 140, height: 90 };
     case 'diamond':
       return { width: 140, height: 100 };
+    case 'cylinder':
+      return { width: 130, height: 110 };
+    case 'queue':
+      return { width: 200, height: 70 };
     case 'portal':
       return { width: 200, height: 140 };
     default:

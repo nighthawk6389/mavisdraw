@@ -21,7 +21,8 @@ export interface MiroShapeItem {
       | 'triangle'
       | 'rhombus'
       | 'star'
-      | 'hexagon';
+      | 'hexagon'
+      | 'can';
     content: string;
   };
   style: {
