@@ -5,7 +5,11 @@ import { checkProjectAccess, getDiagramIds } from '../services/diagramService.js
 import { getProposal, listPendingProposals, resolveProposal } from '../services/proposalService.js';
 import { signalDocument } from '../ws/hocuspocus.js';
 
-const resolveSchema = z.object({ status: z.enum(['applied', 'dismissed', 'pending']) });
+// Settled proposals stay settled: there's no reopening one someone applied
+const resolveSchema = z.object({
+  status: z.enum(['applied', 'dismissed']),
+  key: z.string().min(8).max(64).optional(),
+});
 
 /**
  * Proposed map updates (from coding agents): everyone on the project sees
@@ -41,7 +45,7 @@ export async function proposalRoutes(app: FastifyInstance): Promise<void> {
         .code(403)
         .send({ error: 'Only people who can edit the map can apply proposals' });
     }
-    if (!(await resolveProposal(id, request.user!.userId, parsed.data.status))) {
+    if (!(await resolveProposal(id, request.user!.userId, parsed.data.status, parsed.data.key))) {
       return reply.code(409).send({ error: 'Someone already handled this proposal' });
     }
     signal(proposal.projectId);

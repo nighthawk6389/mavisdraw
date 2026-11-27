@@ -50,6 +50,13 @@
       "when": 1795789467441,
       "tag": "0006_sso_identities",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795798142409,
+      "tag": "0007_proposal_resolution_key",
+      "breakpoints": true
     }
   ]
 }

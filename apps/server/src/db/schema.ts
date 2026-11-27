@@ -497,6 +497,8 @@ export const diagramProposals = pgTable(
     status: varchar('status', { length: 20 }).notNull().default('pending'),
     resolvedBy: text('resolved_by').references(() => users.id, { onDelete: 'set null' }),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    /** Sent by the editor that resolved it: the same request again is answered as done. */
+    resolutionKey: varchar('resolution_key', { length: 64 }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index('diagram_proposals_project_status_idx').on(table.projectId, table.status)],

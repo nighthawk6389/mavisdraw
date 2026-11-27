@@ -69,8 +69,22 @@ function labelOf(el: MavisElement, elements: Map<string, MavisElement>): string 
  * New shapes are laid out as a cluster beside the existing content (next to
  * the shapes they connect to), labels are resolved only within this diagram,
  * and portals the model adds get a real nested diagram to drill into.
+ *
+ * All or nothing: if it fails part-way, nothing of it is left behind (a
+ * proposal half applied would be applied again in full by the next try).
  */
 export async function applyProposal(proposal: DiagramProposal): Promise<ApplyResult> {
+  const newDiagrams: Diagram[] = [];
+  try {
+    return await applyTo(proposal, newDiagrams);
+  } catch (err) {
+    // Nested diagrams made for its portals: not on the server yet, and unused
+    for (const d of newDiagrams) useDiagramStore.getState().deleteDiagram(d.id);
+    throw err;
+  }
+}
+
+async function applyTo(proposal: DiagramProposal, newDiagrams: Diagram[]): Promise<ApplyResult> {
   const store = useElementsStore.getState();
   const diagramId = useDiagramStore.getState().activeDiagramId;
   const elements = store.elements;
@@ -100,7 +114,6 @@ export async function applyProposal(proposal: DiagramProposal): Promise<ApplyRes
   const created: MavisElement[] = [];
   const newByLabel = new Map<string, MavisElement>();
   const newShapes: MavisElement[] = [];
-  const newDiagrams: Diagram[] = [];
 
   for (const change of proposal.changes) {
     if (change.action !== 'add') continue;
@@ -235,6 +248,9 @@ export async function applyProposal(proposal: DiagramProposal): Promise<ApplyRes
     connected: 0,
     recorded: 0,
   };
+  // Synchronous from here to the end of the batch: nothing else changes the
+  // canvas meanwhile, so a failure can put it back exactly as it was
+  const { elements: before, history, historyIndex } = useElementsStore.getState();
   store.beginHistoryBatch();
   try {
     useElementsStore.setState((prev) => {
@@ -296,6 +312,9 @@ export async function applyProposal(proposal: DiagramProposal): Promise<ApplyRes
         result.deleted++;
       }
     }
+  } catch (err) {
+    useElementsStore.setState({ elements: before, history, historyIndex });
+    throw err;
   } finally {
     store.endHistoryBatch();
   }

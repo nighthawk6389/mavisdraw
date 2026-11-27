@@ -1,0 +1,1 @@
+ALTER TABLE "diagram_proposals" ADD COLUMN "resolution_key" varchar(64);

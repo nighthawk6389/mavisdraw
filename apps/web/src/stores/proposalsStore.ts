@@ -1,6 +1,7 @@
 import { create } from 'zustand';
+import { nanoid } from 'nanoid';
 import { ApiError, apiListProposals, apiResolveProposal, type ProposalData } from '../services/api';
-import { goToDiagram } from '../services/diagramSync';
+import { goToDiagram, loadDiagramElements } from '../services/diagramSync';
 import { useElementsStore } from './elementsStore';
 import { toast } from './toastStore';
 
@@ -8,7 +9,35 @@ import { toast } from './toastStore';
  * Map updates proposed by coding agents (over MCP), waiting for a person.
  * The server only stores them: applying happens here, in the editor, as one
  * undoable step on the proposal's diagram.
+ *
+ * Applied first, then marked applied on the server: a failed apply leaves
+ * the proposal waiting (nothing to undo there), and if someone else marked
+ * it applied a moment earlier, this editor's copy is undone.
  */
+
+/** Retries after a lost answer (network, or the server restarting). */
+const MARK_RETRIES_MS = [400, 1500];
+
+/**
+ * Tell the server this proposal is applied. 'taken': someone else got there
+ * first. 'unconfirmed': the server couldn't be reached to say so.
+ */
+async function markApplied(id: string): Promise<'done' | 'taken' | 'unconfirmed'> {
+  // The same key on every try: a retry after a lost answer is "done", not "taken"
+  const key = nanoid();
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await apiResolveProposal(id, 'applied', key);
+      return 'done';
+    } catch (err) {
+      if (err instanceof ApiError && err.statusCode === 409) return 'taken';
+      // Refused (lost edit access, gone): not worth asking again
+      if (err instanceof ApiError && err.statusCode < 500) throw err;
+      if (attempt >= MARK_RETRIES_MS.length) return 'unconfirmed';
+      await new Promise((r) => setTimeout(r, MARK_RETRIES_MS[attempt]));
+    }
+  }
+}
 interface ProposalsState {
   projectId: string | null;
   proposals: ProposalData[];
@@ -72,46 +101,66 @@ export const useProposalsStore = create<ProposalsState>((set, get) => ({
     if (!proposal || get().busyId) return;
     set({ busyId: id });
     try {
-      // Claim it first, so two reviewers can't both apply it
-      try {
-        await apiResolveProposal(id, 'applied');
-      } catch (err) {
-        if (err instanceof ApiError && err.statusCode === 409) {
-          toast('Someone already handled this proposal', 'info');
-          set({ proposals: without(get().proposals, id) });
-          return;
+      if (!(await goToDiagram(proposal.diagramId))) {
+        throw new Error('the diagram it changes no longer exists');
+      }
+      // Only onto what's really there: on a level that didn't load, the
+      // shapes it already has would be missed and added again
+      await loadDiagramElements(proposal.diagramId).catch(() => {
+        throw new Error('its diagram didn’t load. Try again in a moment');
+      });
+      // Loaded on first use: most sessions never apply a proposal
+      const { applyProposal } = await import('../components/agent/applyProposal');
+      // All or nothing: if it fails, the map is as it was and the proposal still waits
+      const result = await applyProposal({
+        proposalId: proposal.id,
+        description: proposal.description,
+        changes: proposal.changes,
+        connections: proposal.connections,
+        status: 'pending',
+      });
+      const appliedStep = useElementsStore.getState().historyIndex;
+      const takeBack = () => {
+        if (useElementsStore.getState().historyIndex === appliedStep) {
+          useElementsStore.getState().undo();
+          return true;
         }
+        return false;
+      };
+
+      let marked: Awaited<ReturnType<typeof markApplied>>;
+      try {
+        marked = await markApplied(id);
+      } catch (err) {
+        takeBack();
         throw err;
       }
-      try {
-        if (!(await goToDiagram(proposal.diagramId))) {
-          throw new Error('the diagram it changes no longer exists');
-        }
-        // Loaded on first use: most sessions never apply a proposal
-        const { applyProposal } = await import('../components/agent/applyProposal');
-        const result = await applyProposal({
-          proposalId: proposal.id,
-          description: proposal.description,
-          changes: proposal.changes,
-          connections: proposal.connections,
-          status: 'pending',
-        });
-        set({ proposals: without(get().proposals, id) });
-        const parts = [
-          result.added && `${result.added} added`,
-          result.connected && `${result.connected} connected`,
-          result.recorded && `${result.recorded} recorded (drawn on other diagrams)`,
-          result.modified && `${result.modified} changed`,
-          result.deleted && `${result.deleted} removed`,
-        ].filter(Boolean);
-        toast(`Applied: ${parts.join(', ') || 'no changes'}`, 'success', {
-          label: 'Undo',
-          run: () => useElementsStore.getState().undo(),
-        });
-      } catch (err) {
-        // Put it back in the queue for another try
-        await apiResolveProposal(id, 'pending').catch(() => undefined);
-        throw err;
+      set({ proposals: without(get().proposals, id) });
+      if (marked === 'taken') {
+        toast(
+          takeBack()
+            ? 'Someone else applied this proposal a moment earlier, so yours was undone'
+            : 'Someone else applied this proposal a moment earlier: undo yours (Ctrl+Z) to avoid doubles',
+          'info',
+        );
+        return;
+      }
+      const parts = [
+        result.added && `${result.added} added`,
+        result.connected && `${result.connected} connected`,
+        result.recorded && `${result.recorded} recorded (drawn on other diagrams)`,
+        result.modified && `${result.modified} changed`,
+        result.deleted && `${result.deleted} removed`,
+      ].filter(Boolean);
+      toast(`Applied: ${parts.join(', ') || 'no changes'}`, 'success', {
+        label: 'Undo',
+        run: () => useElementsStore.getState().undo(),
+      });
+      if (marked === 'unconfirmed') {
+        toast(
+          'Applied, but the server couldn’t be told: others may still see it as waiting',
+          'info',
+        );
       }
     } catch (err) {
       toast(

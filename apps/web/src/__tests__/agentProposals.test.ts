@@ -3,8 +3,9 @@ import { mcpSetup, timeAgo } from '../components/agent/mcpSetup';
 import { useProposalsStore } from '../stores/proposalsStore';
 import { useToastStore } from '../stores/toastStore';
 import { ApiError, apiListProposals, apiResolveProposal, type ProposalData } from '../services/api';
-import { goToDiagram } from '../services/diagramSync';
+import { goToDiagram, loadDiagramElements } from '../services/diagramSync';
 import { applyProposal } from '../components/agent/applyProposal';
+import { useElementsStore } from '../stores/elementsStore';
 
 vi.mock('../services/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../services/api')>()),
@@ -14,6 +15,7 @@ vi.mock('../services/api', async (importOriginal) => ({
 vi.mock('../services/diagramSync', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../services/diagramSync')>()),
   goToDiagram: vi.fn(async () => true),
+  loadDiagramElements: vi.fn(async () => undefined),
 }));
 vi.mock('../components/agent/applyProposal', () => ({
   applyProposal: vi.fn(async () => ({ added: 1, modified: 0, deleted: 0, connected: 1 })),
@@ -42,6 +44,7 @@ beforeEach(() => {
   vi.mocked(apiListProposals).mockReset();
   vi.mocked(apiResolveProposal).mockReset().mockResolvedValue({ ok: true });
   vi.mocked(goToDiagram).mockClear();
+  vi.mocked(loadDiagramElements).mockClear();
   vi.mocked(applyProposal).mockClear();
   useToastStore.setState({ toasts: [] });
   store().reset();
@@ -81,38 +84,66 @@ describe('proposals', () => {
     expect(store().proposals.map((p) => p.id)).toEqual(['a', 'b']);
   });
 
-  it('applies on the proposal’s diagram after claiming it', async () => {
+  it('applies on the proposal’s diagram, then marks it applied', async () => {
     useProposalsStore.setState({ projectId: 'p1', proposals: [proposal('a')] });
     await store().apply('a');
-    expect(apiResolveProposal).toHaveBeenCalledWith('a', 'applied');
     expect(goToDiagram).toHaveBeenCalledWith('d-api');
+    expect(loadDiagramElements).toHaveBeenCalledWith('d-api');
     expect(applyProposal).toHaveBeenCalledWith(
       expect.objectContaining({
         proposalId: 'a',
         changes: [{ action: 'add', elementType: 'rectangle', label: 'Payments' }],
       }),
     );
+    expect(apiResolveProposal).toHaveBeenCalledWith('a', 'applied', expect.any(String));
+    expect(vi.mocked(applyProposal).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(apiResolveProposal).mock.invocationCallOrder[0],
+    );
     expect(store().proposals).toEqual([]);
     expect(toasts()[0]).toBe('Applied: 1 added, 1 connected');
   });
 
-  it('does nothing when someone else already handled it', async () => {
+  it('undoes its copy when someone else applied it a moment earlier', async () => {
     useProposalsStore.setState({ projectId: 'p1', proposals: [proposal('a')] });
+    const undo = vi.spyOn(useElementsStore.getState(), 'undo').mockImplementation(() => {});
     vi.mocked(apiResolveProposal).mockRejectedValueOnce(new ApiError('taken', 409));
     await store().apply('a');
-    expect(applyProposal).not.toHaveBeenCalled();
+    expect(undo).toHaveBeenCalledTimes(1);
     expect(store().proposals).toEqual([]);
-    expect(toasts()).toContain('Someone already handled this proposal');
+    expect(toasts()).toContain(
+      'Someone else applied this proposal a moment earlier, so yours was undone',
+    );
+    undo.mockRestore();
   });
 
-  it('puts it back in the queue when applying fails', async () => {
+  it('asks again with the same key when the answer is lost', async () => {
+    useProposalsStore.setState({ projectId: 'p1', proposals: [proposal('a')] });
+    vi.mocked(apiResolveProposal).mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    await store().apply('a');
+    const calls = vi.mocked(apiResolveProposal).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toEqual(calls[0]);
+    expect(toasts()[0]).toBe('Applied: 1 added, 1 connected');
+  });
+
+  it('leaves it waiting, with nothing marked, when applying fails', async () => {
     useProposalsStore.setState({ projectId: 'p1', proposals: [proposal('a')] });
     vi.mocked(goToDiagram).mockResolvedValueOnce(false);
     await store().apply('a');
-    expect(apiResolveProposal).toHaveBeenLastCalledWith('a', 'pending');
+    expect(apiResolveProposal).not.toHaveBeenCalled();
     expect(store().proposals.map((p) => p.id)).toEqual(['a']);
     expect(toasts()[0]).toContain('the diagram it changes no longer exists');
     expect(store().busyId).toBeNull();
+  });
+
+  it('never applies onto a diagram that did not load', async () => {
+    useProposalsStore.setState({ projectId: 'p1', proposals: [proposal('a')] });
+    vi.mocked(loadDiagramElements).mockRejectedValueOnce(new Error('502'));
+    await store().apply('a');
+    expect(applyProposal).not.toHaveBeenCalled();
+    expect(apiResolveProposal).not.toHaveBeenCalled();
+    expect(store().proposals.map((p) => p.id)).toEqual(['a']);
+    expect(toasts()[0]).toContain('didn’t load');
   });
 
   it('dismisses without touching the map', async () => {

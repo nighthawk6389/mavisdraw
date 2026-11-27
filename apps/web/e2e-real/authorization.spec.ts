@@ -677,6 +677,46 @@ test.describe('Authorization (API)', () => {
     expect((await resolve(team.wsMember)).status()).toBe(200);
     // Someone else got there first
     expect((await resolve(team.editor)).status()).toBe(409);
+    // A settled proposal can't be reopened (and applied a second time)
+    expect(
+      (
+        await as(request, team.editor).post(`/api/proposals/${proposals[0].id}/resolve`, {
+          status: 'pending',
+        })
+      ).status(),
+    ).toBe(400);
+
+    // Marked applied with a key: the same request again (its answer was lost)
+    // is done; anyone else, or another attempt, finds it taken
+    const rpc2 = await request.post(`${API_URL}/api/mcp`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json, text/event-stream' },
+      data: {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: {
+          name: 'propose_update',
+          arguments: {
+            project: team.project.id,
+            description: 'Add a queue',
+            add: [{ name: 'Queue', kind: 'component' }],
+          },
+        },
+      },
+    });
+    expect(rpc2.status(), await rpc2.text()).toBe(200);
+    const second = (
+      await expectJson<{ proposals: Array<{ id: string }> }>(
+        as(request, team.editor).get(`/api/projects/${team.project.id}/proposals`),
+        200,
+      )
+    ).proposals[0];
+    const mark = (who: Person, key: string) =>
+      as(request, who).post(`/api/proposals/${second.id}/resolve`, { status: 'applied', key });
+    expect((await mark(team.editor, 'attempt-one-key')).status()).toBe(200);
+    expect((await mark(team.editor, 'attempt-one-key')).status()).toBe(200);
+    expect((await mark(team.editor, 'attempt-two-key')).status()).toBe(409);
+    expect((await mark(team.wsMember, 'attempt-one-key')).status()).toBe(409);
 
     // Nobody but its owner can revoke the token
     const { tokens } = await expectJson<{ tokens: Array<{ id: string }> }>(

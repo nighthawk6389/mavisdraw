@@ -103,24 +103,27 @@ export async function getProposal(id: string) {
 }
 
 /**
- * Settle a proposal. Applying or dismissing only works on a pending one
- * (two reviewers can't both apply it); 'pending' reopens one whose apply
- * failed in the editor. Returns false when it was already settled.
+ * Settle a pending proposal: applied (the editor has already applied it) or
+ * dismissed. Only once: two reviewers can't both apply it. `key` comes from
+ * the editor's request: if its answer was lost and it asks again, the same
+ * key is answered as done instead of "someone else did". Returns false when
+ * it was already settled otherwise.
  */
 export async function resolveProposal(
   id: string,
   userId: string,
-  status: ProposalStatus,
+  status: Exclude<ProposalStatus, 'pending'>,
+  key?: string,
 ): Promise<boolean> {
-  const from: ProposalStatus = status === 'pending' ? 'applied' : 'pending';
   const updated = await db
     .update(diagramProposals)
-    .set(
-      status === 'pending'
-        ? { status, resolvedBy: null, resolvedAt: null }
-        : { status, resolvedBy: userId, resolvedAt: new Date() },
-    )
-    .where(and(eq(diagramProposals.id, id), eq(diagramProposals.status, from)))
+    .set({ status, resolvedBy: userId, resolvedAt: new Date(), resolutionKey: key ?? null })
+    .where(and(eq(diagramProposals.id, id), eq(diagramProposals.status, 'pending')))
     .returning({ id: diagramProposals.id });
-  return updated.length > 0;
+  if (updated.length > 0) return true;
+  if (!key) return false;
+  const settled = await getProposal(id);
+  return (
+    settled?.status === status && settled.resolvedBy === userId && settled.resolutionKey === key
+  );
 }

@@ -863,13 +863,18 @@ export function apiListProposals(projectId: string): Promise<{ proposals: Propos
   return apiFetch(`/api/projects/${projectId}/proposals`);
 }
 
+/**
+ * Mark a proposal applied (once the editor has applied it) or dismissed.
+ * `key`: the same for a retry, so a lost answer asked again isn't a conflict.
+ */
 export function apiResolveProposal(
   id: string,
-  status: 'applied' | 'dismissed' | 'pending',
+  status: 'applied' | 'dismissed',
+  key?: string,
 ): Promise<{ ok: true }> {
   return apiFetch(`/api/proposals/${id}/resolve`, {
     method: 'POST',
-    body: JSON.stringify({ status }),
+    body: JSON.stringify({ status, ...(key ? { key } : {}) }),
   });
 }
 

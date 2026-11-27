@@ -305,6 +305,35 @@ describe('applying AI proposals', () => {
     expect(all().filter((e) => e.type === 'arrow')).toHaveLength(1);
   });
 
+  it('a failure part-way leaves nothing behind (so a retry can’t double it)', async () => {
+    const api = store().createElement('rectangle', ROOT, 0, 0, 140, 70);
+    store().addElement(api);
+    store().createBoundText(api.id, 'API');
+    const before = { elements: store().elements, historyIndex: store().historyIndex };
+    const diagramsBefore = useDiagramStore.getState().diagrams.size;
+    // The last change fails, after the shapes, a portal and a connection went in
+    const failing = vi.spyOn(store(), 'deleteElements').mockImplementation(() => {
+      throw new Error('disk on fire');
+    });
+    await expect(
+      applyProposal({
+        proposalId: 'p5',
+        description: 'Half of this would be bad',
+        status: 'pending',
+        changes: [
+          { action: 'add', elementType: 'rectangle', label: 'Cache' },
+          { action: 'add', elementType: 'portal', label: 'Billing' },
+          { action: 'delete', elementId: api.id },
+        ],
+        connections: [{ fromLabel: 'API', toLabel: 'Cache' }],
+      }),
+    ).rejects.toThrow('disk on fire');
+    failing.mockRestore();
+    expect(store().elements).toBe(before.elements);
+    expect(store().historyIndex).toBe(before.historyIndex);
+    expect(useDiagramStore.getState().diagrams.size).toBe(diagramsBefore);
+  });
+
   it('applies as one undo step and ignores unsafe property changes', async () => {
     const api = store().createElement('rectangle', ROOT, 0, 0, 140, 70);
     store().addElement(api);
