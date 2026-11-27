@@ -26,6 +26,7 @@ import { usePermissionStore } from '../../stores/permissionStore';
 import { useViewportStore } from '../../stores/viewportStore';
 import { sortByStacking, withoutHistory } from '../../stores/elementsStore';
 import { WheelInterpreter } from './wheel';
+import { edgeProximity, edgeScrollStep } from './gestures/edgeScroll';
 import { registerCanvasController } from './canvasController';
 import { elementWorldBounds } from './CanvasRenderer';
 import { ViewportManager } from './ViewportManager';
@@ -71,7 +72,13 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
   // ─── Store subscriptions ──────────────────────────────────
 
-  const elements = useElementsStore((s) => s.elements);
+  // No subscription to the whole elements Map: the render loop reads the
+  // store directly and a store subscription invalidates the static layer, so
+  // a drag doesn't re-render this component on every pointer move. Only the
+  // element being text-edited is watched (its editor overlay follows it).
+  const editingElement = useElementsStore((s) =>
+    textEditState ? s.elements.get(textEditState.elementId) : undefined,
+  );
   const addElement = useElementsStore((s) => s.addElement);
   const updateElement = useElementsStore((s) => s.updateElement);
   const deleteElements = useElementsStore((s) => s.deleteElements);
@@ -118,9 +125,6 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
   const createDiagram = useDiagramStore((s) => s.createDiagram);
 
   // ─── Refs for render loop (avoid stale closures) ──────────
-
-  const elementsRef = useRef(elements);
-  elementsRef.current = elements;
 
   const activeDiagramIdRef = useRef(activeDiagramId);
   activeDiagramIdRef.current = activeDiagramId;
@@ -183,7 +187,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
   const computeElementList = useCallback((excludeLockedLayers: boolean): MavisElement[] => {
     const cacheRef = excludeLockedLayers ? interactListRef : renderListRef;
     const layers = useLayerStore.getState().layers;
-    const key = [elementsRef.current, activeDiagramIdRef.current, layers];
+    const key = [useElementsStore.getState().elements, activeDiagramIdRef.current, layers];
     const cached = cacheRef.current;
     if (cached.key.length === key.length && key.every((k, i) => k === cached.key[i])) {
       return cached.result;
@@ -193,7 +197,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     const locked = new Set(layers.filter((l) => l.isLocked).map((l) => l.id));
     const diagramId = activeDiagramIdRef.current;
     const els: MavisElement[] = [];
-    for (const el of elementsRef.current.values()) {
+    for (const el of useElementsStore.getState().elements.values()) {
       if (el.isDeleted || el.diagramId !== diagramId) continue;
       // Elements on layers this client doesn't know about stay visible
       if (known.has(el.layerId) && hidden.has(el.layerId)) continue;
@@ -211,6 +215,12 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
   // editor actually having focus. Without this, fast typing loses the first
   // letters, and they trigger tool shortcuts instead ("A" → arrow tool).
   const typeaheadRef = useRef<{ text: string; since: number } | null>(null);
+  /**
+   * The press now in progress opened the text editor (a double-click's
+   * second press). Its mousedown must not move focus to the page, or keys
+   * typed before the editor is re-focused a frame later are lost.
+   */
+  const editorOpenedByPressRef = useRef(false);
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       // The editor is open but briefly lost focus: the click that opened it
@@ -261,6 +271,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     (element: MavisElement, isNew: boolean) => {
       textEditStartTimeRef.current = Date.now();
       typeaheadRef.current = { text: '', since: Date.now() };
+      editorOpenedByPressRef.current = true;
 
       // Connectors: edit the existing label or start a new one at the midpoint
       if (element.type === 'arrow' || element.type === 'line') {
@@ -371,7 +382,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
       if (!renderer) return;
 
       const visibleElements: MavisElement[] = [];
-      for (const el of elementsRef.current.values()) {
+      for (const el of useElementsStore.getState().elements.values()) {
         if (el.diagramId === diagramId && !el.isDeleted) {
           visibleElements.push(el);
         }
@@ -423,7 +434,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
       // Update the portal element in parent diagram with new thumbnail if found
       // Find portals in parent that link to current diagram
-      for (const el of elementsRef.current.values()) {
+      for (const el of useElementsStore.getState().elements.values()) {
         if (
           el.type === 'portal' &&
           (el as PortalElement).targetDiagramId === currentDiagramId &&
@@ -562,7 +573,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     saveViewport(previous, viewport.getViewport());
     const thumbnail = generateThumbnailForDiagram(previous);
     if (thumbnail) {
-      for (const el of elementsRef.current.values()) {
+      for (const el of useElementsStore.getState().elements.values()) {
         if (el.type === 'portal' && (el as PortalElement).targetDiagramId === previous && !el.isDeleted) {
           withoutHistory(() =>
             useElementsStore.getState().updateElementSilent(el.id, {
@@ -595,7 +606,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     const left = useDiagramStore.getState().diagrams.get(previous);
     const portal =
       left?.parentDiagramId === activeDiagramId
-        ? (Array.from(elementsRef.current.values()).find(
+        ? (Array.from(useElementsStore.getState().elements.values()).find(
             (el) =>
               el.type === 'portal' &&
               !el.isDeleted &&
@@ -869,6 +880,31 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         updateElementSilent: (id, updates) => {
           useElementsStore.getState().updateElementSilent(id, updates);
         },
+        updateElementsSilent: (updates) => {
+          useElementsStore.getState().updateElementsSilent(updates);
+        },
+        duplicateElements: (ids) =>
+          useElementsStore.getState().duplicateElements(ids, { x: 0, y: 0 }),
+        discardElements: (ids) => useElementsStore.getState().discardElements(ids),
+        getGridSnap: () => {
+          const ui = useUIStore.getState();
+          return ui.snapToGrid ? ui.gridSize : null;
+        },
+        isObjectSnapEnabled: () => useUIStore.getState().snapToObjects,
+        getVisibleBounds: () => {
+          const container = containerRef.current;
+          if (!container) return null;
+          const { width: w, height: h } = container.getBoundingClientRect();
+          const vp = renderer.getViewport();
+          const topLeft = vp.screenToCanvas(0, 0);
+          const bottomRight = vp.screenToCanvas(w, h);
+          return {
+            x: topLeft.x,
+            y: topLeft.y,
+            width: bottomRight.x - topLeft.x,
+            height: bottomRight.y - topLeft.y,
+          };
+        },
         deleteSelectedElements: () => {
           const ids = Array.from(useSelectionStore.getState().selectedIds);
           if (ids.length > 0) {
@@ -939,7 +975,15 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
   useEffect(() => {
     rendererRef.current?.invalidateStatic();
-  }, [elements, renderMode, showGrid, gridSize, layers]);
+  }, [renderMode, showGrid, gridSize, layers]);
+
+  useEffect(
+    () =>
+      useElementsStore.subscribe((state, prev) => {
+        if (state.elements !== prev.elements) rendererRef.current?.invalidateStatic();
+      }),
+    [],
+  );
 
   // ─── ResizeObserver ───────────────────────────────────────
 
@@ -998,6 +1042,62 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }, []);
 
+  // ─── Auto-pan at the canvas edge ───────────────────────────
+  // While a drag, resize, marquee or draw is in progress, holding the pointer
+  // near (or past) the edge scrolls the view and the gesture follows it.
+  const edgeScrollRef = useRef<{ raf: number | null; inBandSince: number | null; last: number }>({
+    raf: null,
+    inBandSince: null,
+    last: 0,
+  });
+
+  const stopEdgeScroll = useCallback(() => {
+    const state = edgeScrollRef.current;
+    if (state.raf !== null) cancelAnimationFrame(state.raf);
+    state.raf = null;
+    state.inBandSince = null;
+  }, []);
+
+  const startEdgeScroll = useCallback(() => {
+    const state = edgeScrollRef.current;
+    if (state.raf !== null) return;
+    state.last = performance.now();
+    state.inBandSince = null;
+    const tick = (now: number) => {
+      const mgr = interactionRef.current;
+      const renderer = rendererRef.current;
+      const container = containerRef.current;
+      if (!mgr || !renderer || !container) {
+        state.raf = null;
+        return;
+      }
+      const elapsed = now - state.last;
+      state.last = now;
+      if (mgr.wantsEdgeScroll()) {
+        const pointer = mgr.getLastScreenPoint();
+        const rect = container.getBoundingClientRect();
+        const size = { width: rect.width, height: rect.height };
+        const near = edgeProximity(pointer, size);
+        if (near.x !== 0 || near.y !== 0) {
+          state.inBandSince ??= now;
+          const step = edgeScrollStep(pointer, size, now - state.inBandSince, elapsed);
+          if (step.x !== 0 || step.y !== 0) {
+            renderer.getViewport().pan(-step.x, -step.y);
+            // Same screen point, new canvas point: the dragged shape follows
+            mgr.onPointerMove(pointer.x, pointer.y);
+            renderer.invalidateStatic();
+          }
+        } else {
+          state.inBandSince = null;
+        }
+      } else {
+        state.inBandSince = null;
+      }
+      state.raf = requestAnimationFrame(tick);
+    };
+    state.raf = requestAnimationFrame(tick);
+  }, []);
+
   const applyCursor = useCallback(() => {
     const canvas = interactiveCanvasRef.current;
     const mgr = interactionRef.current;
@@ -1010,6 +1110,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLCanvasElement>) => {
+      editorOpenedByPressRef.current = false;
       if (textEditState) finalizeTextEdit();
       setContextMenu(null);
 
@@ -1050,9 +1151,17 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
       }
 
       useElementsStore.getState().beginHistoryBatch();
-      mgr.onPointerDown(pos.x, pos.y, { button: e.button, shiftKey: e.shiftKey });
+      mgr.onPointerDown(pos.x, pos.y, {
+        button: e.button,
+        shiftKey: e.shiftKey,
+        altKey: e.altKey,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        pointerType: e.pointerType,
+      });
+      startEdgeScroll();
     },
-    [getCanvasOffset, textEditState, finalizeTextEdit],
+    [getCanvasOffset, textEditState, finalizeTextEdit, startEdgeScroll],
   );
 
   const handlePointerMove = useCallback(
@@ -1080,7 +1189,16 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         return;
       }
 
-      mgr.onPointerMove(pos.x, pos.y, { shiftKey: e.shiftKey });
+      const mods = { shiftKey: e.shiftKey, altKey: e.altKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey };
+      if (mgr.getMode() === 'drawing-freedraw') {
+        // Ink wants every sample the browser coalesced into this frame (tldraw does the same)
+        const samples = e.nativeEvent.getCoalescedEvents?.() ?? [];
+        for (const sample of samples.length > 1 ? samples.slice(0, -1) : []) {
+          const p = getCanvasOffset(sample);
+          mgr.onPointerMove(p.x, p.y, mods);
+        }
+      }
+      mgr.onPointerMove(pos.x, pos.y, mods);
       applyCursor();
 
       const canvasPos = renderer.getViewport().screenToCanvas(pos.x, pos.y);
@@ -1095,6 +1213,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
       const mgr = interactionRef.current;
       if (!mgr) return;
       const wasTracked = activePointersRef.current.delete(e.pointerId);
+      if (activePointersRef.current.size === 0) stopEdgeScroll();
 
       if (pinchRef.current) {
         if (activePointersRef.current.size < 2) pinchRef.current = null;
@@ -1121,8 +1240,34 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         setContextMenu({ x: pos.x, y: pos.y, canvasPoint, onElement: !!hit });
       }
     },
-    [getCanvasOffset, applyCursor],
+    [getCanvasOffset, applyCursor, stopEdgeScroll],
   );
+
+  // Holding or releasing Shift / Alt / Ctrl mid-gesture takes effect at once,
+  // without waiting for the pointer to move (axis lock, from-centre, no-snap)
+  useEffect(() => {
+    const onModifierKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Shift' && e.key !== 'Alt' && e.key !== 'Control' && e.key !== 'Meta') return;
+      const mgr = interactionRef.current;
+      if (!mgr || !mgr.isGestureActive()) return;
+      // Alt on its own would focus the browser menu bar on Windows/Linux
+      if (e.key === 'Alt') e.preventDefault();
+      mgr.onModifiersChange({
+        shiftKey: e.shiftKey,
+        altKey: e.altKey,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+      });
+    };
+    window.addEventListener('keydown', onModifierKey);
+    window.addEventListener('keyup', onModifierKey);
+    return () => {
+      window.removeEventListener('keydown', onModifierKey);
+      window.removeEventListener('keyup', onModifierKey);
+    };
+  }, []);
+
+  useEffect(() => stopEdgeScroll, [stopEdgeScroll]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     // Our own menu opens on right-button release (so right-drag can pan)
@@ -1207,7 +1352,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
   const getTextEditorStyle = (): React.CSSProperties | null => {
     if (!textEditState) return null;
 
-    const el = useElementsStore.getState().getElementById(textEditState.elementId);
+    const el = editingElement;
     if (!el || el.type !== 'text') return null;
 
     const textEl = el as TextElement;
@@ -1263,6 +1408,11 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         className="absolute inset-0"
         style={{ touchAction: 'none' }}
         onPointerDown={handlePointerDown}
+        onMouseDown={(e) => {
+          // Keep focus in the editor this press just opened (see editorOpenedByPressRef)
+          if (editorOpenedByPressRef.current) e.preventDefault();
+          editorOpenedByPressRef.current = false;
+        }}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}

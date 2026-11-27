@@ -423,34 +423,166 @@ function resolveLabelToContainer(
 }
 
 /**
- * Find all elements within a selection rectangle (canvas coordinates).
+ * Elements picked by a selection rectangle (canvas coordinates).
+ *
+ * - `intersect` (default, like tldraw and Figma): anything the rectangle
+ *   touches. Connectors count only if the rectangle crosses the line itself,
+ *   not just its bounding box, so a long diagonal arrow isn't grabbed by
+ *   accident.
+ * - `contain` (Ctrl/Cmd held, Excalidraw's default): only elements entirely
+ *   inside the rectangle.
  */
 export function hitTestSelectionBox(
   selectionBounds: Bounds,
   elements: MavisElement[],
+  mode: 'intersect' | 'contain' = 'intersect',
 ): MavisElement[] {
   return elements.filter((element) => {
     if (element.isDeleted) return false;
     // Labels come along with their shape, never on their own
     if (element.type === 'text' && element.containerId) return false;
-    return boundsOverlap(selectionBounds, getVisualBounds(element));
+    const visual = getVisualBounds(element);
+    if (mode === 'contain') return boundsContain(selectionBounds, visual);
+    if (!boundsOverlap(selectionBounds, visual)) return false;
+    if (
+      (element.type === 'line' || element.type === 'arrow' || element.type === 'freedraw') &&
+      element.points.length > 1
+    ) {
+      return polylineTouchesRect(element.x, element.y, element.points, selectionBounds);
+    }
+    return true;
   });
 }
 
-/** Bounds of what's actually drawn: linear elements are measured by their points. */
-function getVisualBounds(element: MavisElement): Bounds {
-  if (
-    (element.type === 'line' || element.type === 'arrow' || element.type === 'freedraw') &&
-    element.points.length > 0
-  ) {
+function boundsContain(outer: Bounds, inner: Bounds): boolean {
+  return (
+    inner.x >= outer.x &&
+    inner.y >= outer.y &&
+    inner.x + inner.width <= outer.x + outer.width &&
+    inner.y + inner.height <= outer.y + outer.height
+  );
+}
+
+function pointInBounds(x: number, y: number, b: Bounds): boolean {
+  return x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height;
+}
+
+/** Proper crossing of segments AB and CD. */
+function segmentsCross(a: Point, b: Point, c: Point, d: Point): boolean {
+  const d1 = (d.x - c.x) * (a.y - c.y) - (d.y - c.y) * (a.x - c.x);
+  const d2 = (d.x - c.x) * (b.y - c.y) - (d.y - c.y) * (b.x - c.x);
+  const d3 = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  const d4 = (b.x - a.x) * (d.y - a.y) - (b.y - a.y) * (d.x - a.x);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+/** True if any point of a polyline lies inside the rectangle or a segment crosses it. */
+function polylineTouchesRect(
+  originX: number,
+  originY: number,
+  points: [number, number][],
+  rect: Bounds,
+): boolean {
+  const right = rect.x + rect.width;
+  const bottom = rect.y + rect.height;
+  const corners: Point[] = [
+    { x: rect.x, y: rect.y },
+    { x: right, y: rect.y },
+    { x: right, y: bottom },
+    { x: rect.x, y: bottom },
+  ];
+  let prev: Point | null = null;
+  for (const [px, py] of points) {
+    const p = { x: originX + px, y: originY + py };
+    if (pointInBounds(p.x, p.y, rect)) return true;
+    if (prev) {
+      for (let i = 0; i < 4; i++) {
+        if (segmentsCross(prev, p, corners[i], corners[(i + 1) % 4])) return true;
+      }
+    }
+    prev = p;
+  }
+  return false;
+}
+
+/** Union of the visual bounds of `elements` (null when empty). */
+export function unionVisualBounds(elements: MavisElement[]): Bounds | null {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const el of elements) {
+    const b = getVisualBounds(el);
+    minX = Math.min(minX, b.x);
+    minY = Math.min(minY, b.y);
+    maxX = Math.max(maxX, b.x + b.width);
+    maxY = Math.max(maxY, b.y + b.height);
+  }
+  if (!Number.isFinite(minX) || !Number.isFinite(minY)) return null;
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+/**
+ * The box drawn around a selection, with its resize handles. Connectors have
+ * their own endpoint handles, so when shapes are selected too the frame wraps
+ * the shapes only. The renderer and the handle hit-test both use this, so a
+ * handle is clickable exactly where it's drawn. Null when only connectors
+ * are selected.
+ */
+export function selectionFrameBounds(selected: MavisElement[]): Bounds | null {
+  const live = selected.filter((e) => !e.isDeleted);
+  const shapes = live.filter((e) => e.type !== 'arrow' && e.type !== 'line');
+  if (shapes.length === 0) return null;
+  return unionVisualBounds(shapes.length === live.length ? live : shapes);
+}
+
+/** A selection frame, turned with the shape when a single rotated shape is selected. */
+export interface SelectionFrame {
+  /** Unrotated box; drawn rotated by `angle` around its centre. */
+  bounds: Bounds;
+  angle: number;
+}
+
+/**
+ * Frame for the selection: a single rotated shape gets a frame turned with
+ * it (Excalidraw, tldraw, Figma); anything else an axis-aligned box.
+ */
+export function selectionFrame(selected: MavisElement[]): SelectionFrame | null {
+  const live = selected.filter((e) => !e.isDeleted);
+  if (live.length === 1 && live[0].angle && !isPointBased(live[0])) {
+    return { bounds: getElementBounds(live[0]), angle: live[0].angle };
+  }
+  const bounds = selectionFrameBounds(live);
+  return bounds ? { bounds, angle: 0 } : null;
+}
+
+function isPointBased(element: MavisElement): boolean {
+  return element.type === 'line' || element.type === 'arrow' || element.type === 'freedraw';
+}
+
+/**
+ * Bounds of what's actually drawn: linear elements are measured by their
+ * points, rotated shapes by their turned corners.
+ */
+export function getVisualBounds(element: MavisElement): Bounds {
+  if (isPointBased(element) && (element as LinearElement).points.length > 0) {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const [px, py] of element.points) {
+    for (const [px, py] of (element as LinearElement).points) {
       minX = Math.min(minX, element.x + px);
       minY = Math.min(minY, element.y + py);
       maxX = Math.max(maxX, element.x + px);
       maxY = Math.max(maxY, element.y + py);
     }
     return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+  }
+  if (element.angle) {
+    const cx = element.x + element.width / 2;
+    const cy = element.y + element.height / 2;
+    const cos = Math.abs(Math.cos(element.angle));
+    const sin = Math.abs(Math.sin(element.angle));
+    const halfW = (element.width * cos + element.height * sin) / 2;
+    const halfH = (element.width * sin + element.height * cos) / 2;
+    return { x: cx - halfW, y: cy - halfH, width: halfW * 2, height: halfH * 2 };
   }
   return getElementBounds(element);
 }
@@ -486,6 +618,12 @@ export function getResizeHandles(bounds: Bounds): { handle: ResizeHandle; x: num
 export const SELECTION_PADDING_PX = 4;
 /** Half the clickable size of a resize handle, in screen pixels (generous on purpose). */
 const HANDLE_HIT_HALF_PX = 7;
+/** Fingers and pens get bigger handles to hit (tldraw does the same for coarse pointers). */
+const COARSE_HANDLE_HIT_HALF_PX = 12;
+/** Distance of the rotation handle above the selection outline, in screen pixels. */
+export const ROTATION_HANDLE_OFFSET_PX = 22;
+/** Drawn radius of the rotation handle, in screen pixels. */
+export const ROTATION_HANDLE_RADIUS_PX = 5;
 
 /**
  * Test if a point hits a resize handle. Returns the handle if hit, null otherwise.
@@ -496,9 +634,10 @@ export function hitTestResizeHandle(
   canvasPoint: Point,
   selectionBounds: Bounds,
   zoom = 1,
+  halfPx = HANDLE_HIT_HALF_PX,
 ): ResizeHandle | null {
   const pad = SELECTION_PADDING_PX / zoom;
-  const half = HANDLE_HIT_HALF_PX / zoom;
+  const half = halfPx / zoom;
   const x = selectionBounds.x - pad;
   const y = selectionBounds.y - pad;
   const w = selectionBounds.width + pad * 2;
@@ -519,6 +658,69 @@ export function hitTestResizeHandle(
     }
   }
   return null;
+}
+
+/** Centre of the rotation handle (canvas coordinates), turned with the frame. */
+export function rotationHandleCenter(frame: SelectionFrame, zoom = 1): Point {
+  const b = frame.bounds;
+  const cx = b.x + b.width / 2;
+  const cy = b.y + b.height / 2;
+  const local = { x: cx, y: b.y - (SELECTION_PADDING_PX + ROTATION_HANDLE_OFFSET_PX) / zoom };
+  if (!frame.angle) return local;
+  const cos = Math.cos(frame.angle);
+  const sin = Math.sin(frame.angle);
+  const dx = local.x - cx;
+  const dy = local.y - cy;
+  return { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos };
+}
+
+/**
+ * Which transform handle of a selection frame is under the point: the
+ * rotation handle above the frame, or one of the eight resize handles.
+ * Works on rotated frames; `coarse` (touch, pen) enlarges the targets.
+ */
+export function hitTestTransformHandle(
+  canvasPoint: Point,
+  frame: SelectionFrame,
+  zoom = 1,
+  coarse = false,
+): { kind: 'rotate' } | { kind: 'resize'; handle: ResizeHandle } | null {
+  const halfPx = coarse ? COARSE_HANDLE_HIT_HALF_PX : HANDLE_HIT_HALF_PX;
+  const rotation = rotationHandleCenter(frame, zoom);
+  if (Math.hypot(canvasPoint.x - rotation.x, canvasPoint.y - rotation.y) <= halfPx / zoom) {
+    return { kind: 'rotate' };
+  }
+  let local = canvasPoint;
+  if (frame.angle) {
+    const b = frame.bounds;
+    const cx = b.x + b.width / 2;
+    const cy = b.y + b.height / 2;
+    const cos = Math.cos(-frame.angle);
+    const sin = Math.sin(-frame.angle);
+    const dx = canvasPoint.x - cx;
+    const dy = canvasPoint.y - cy;
+    local = { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos };
+  }
+  const handle = hitTestResizeHandle(local, frame.bounds, zoom, halfPx);
+  return handle ? { kind: 'resize', handle } : null;
+}
+
+/** True if the point is inside the (possibly rotated) selection outline. */
+export function frameContainsPoint(frame: SelectionFrame, point: Point, zoom = 1): boolean {
+  const b = frame.bounds;
+  const pad = SELECTION_PADDING_PX / zoom;
+  let p = point;
+  if (frame.angle) {
+    const cx = b.x + b.width / 2;
+    const cy = b.y + b.height / 2;
+    const cos = Math.cos(-frame.angle);
+    const sin = Math.sin(-frame.angle);
+    p = {
+      x: cx + (point.x - cx) * cos - (point.y - cy) * sin,
+      y: cy + (point.x - cx) * sin + (point.y - cy) * cos,
+    };
+  }
+  return p.x >= b.x - pad && p.x <= b.x + b.width + pad && p.y >= b.y - pad && p.y <= b.y + b.height + pad;
 }
 
 // ─── Binding support ─────────────────────────────────────
@@ -796,12 +998,21 @@ export function getAnchorPoints(element: MavisElement): { position: AnchorPositi
   const cx = element.x + element.width / 2;
   const cy = element.y + element.height / 2;
 
-  return [
+  const anchors: { position: AnchorPosition; x: number; y: number }[] = [
     { position: 'top', x: cx, y: element.y },
     { position: 'right', x: element.x + element.width, y: cy },
     { position: 'bottom', x: cx, y: element.y + element.height },
     { position: 'left', x: element.x, y: cy },
   ];
+  if (!element.angle) return anchors;
+  // Rotated shapes: the anchors sit on the turned edges
+  const cos = Math.cos(element.angle);
+  const sin = Math.sin(element.angle);
+  return anchors.map((a) => ({
+    position: a.position,
+    x: cx + (a.x - cx) * cos - (a.y - cy) * sin,
+    y: cy + (a.x - cx) * sin + (a.y - cy) * cos,
+  }));
 }
 
 /**

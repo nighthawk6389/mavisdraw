@@ -26,9 +26,11 @@ interface UIState {
   // Diagram render mode
   renderMode: RenderMode;
 
-  // Grid
+  // Grid & snapping
   showGrid: boolean;
   snapToGrid: boolean;
+  /** Smart guides: align to and space evenly with other shapes (hold Ctrl/Cmd to skip once). */
+  snapToObjects: boolean;
   gridSize: number;
 
   // Actions
@@ -46,6 +48,7 @@ interface UIState {
   setRenderMode: (mode: RenderMode) => void;
   toggleGrid: () => void;
   toggleSnapToGrid: () => void;
+  toggleSnapToObjects: () => void;
   setGridSize: (size: number) => void;
 }
 
@@ -64,6 +67,7 @@ export const useUIStore = create<UIState>((set) => ({
   renderMode: 'clean',
   showGrid: true,
   snapToGrid: false,
+  snapToObjects: true,
   gridSize: 20,
 
   toggleStylePanel: () => {
@@ -109,6 +113,10 @@ export const useUIStore = create<UIState>((set) => ({
 
   toggleSnapToGrid: () => {
     set((state) => ({ snapToGrid: !state.snapToGrid }));
+  },
+
+  toggleSnapToObjects: () => {
+    set((state) => ({ snapToObjects: !state.snapToObjects }));
   },
 
   setGridSize: (size: number) => {

@@ -14,21 +14,21 @@ import type {
 import { ViewportManager } from './ViewportManager';
 import { GridRenderer } from './GridRenderer';
 import { renderPortalSketchy, renderPortalClean } from '../elements/PortalRenderer';
-import { SELECTION_PADDING_PX } from './HitTesting';
+import {
+  ROTATION_HANDLE_RADIUS_PX,
+  SELECTION_PADDING_PX,
+  getAnchorPoints,
+  rotationHandleCenter,
+  selectionFrame,
+} from './HitTesting';
+import type { SnapGuide } from './gestures/snapping';
 import { cssFont } from '../../utils/fonts';
 import type { Drawable } from 'roughjs/bin/core';
 import type { Viewport } from '@mavisdraw/types';
 import { getCubicControlPoints, calculateElbowRoute, getConnectionSide } from '@mavisdraw/math';
 
-/**
- * Smart guide line data for rendering alignment guides.
- */
-export interface SmartGuide {
-  type: 'horizontal' | 'vertical';
-  position: number; // x for vertical, y for horizontal
-  start: number; // start of the line extent
-  end: number; // end of the line extent
-}
+/** Alignment / equal-spacing guides shown while moving, drawing or resizing. */
+export type SmartGuide = SnapGuide;
 
 /**
  * Describes the current interactive/UI state needed for rendering.
@@ -346,21 +346,27 @@ export class CanvasRenderer {
       const selectedElements = elements.filter((e) =>
         state.selectedIds.has(e.id),
       );
-      const nonLinearSelected = selectedElements.filter(
-        (e) => e.type !== 'arrow' && e.type !== 'line',
-      );
-      if (nonLinearSelected.length > 0) {
-        const bounds = this.getElementsBounds(
-          selectedElements.length === nonLinearSelected.length
-            ? selectedElements
-            : nonLinearSelected,
-        );
+      // Same frame the InteractionManager hit-tests its handles against
+      const frame = selectionFrame(selectedElements);
+      if (frame) {
+        const bounds = frame.bounds;
+        ctx.save();
+        if (frame.angle) {
+          // A single rotated shape: the frame and its handles turn with it
+          const cx = bounds.x + bounds.width / 2;
+          const cy = bounds.y + bounds.height / 2;
+          ctx.translate(cx, cy);
+          ctx.rotate(frame.angle);
+          ctx.translate(-cx, -cy);
+        }
         this.renderSelectionBox(ctx, bounds);
         if (selectedElements.some((e) => e.isLocked)) {
           this.renderLockBadge(ctx, bounds);
         } else {
           this.renderResizeHandles(ctx, bounds);
+          this.renderRotationHandle(ctx, bounds);
         }
+        ctx.restore();
       }
     }
 
@@ -1309,28 +1315,83 @@ export class CanvasRenderer {
   // Smart Guides rendering
   // ---------------------------------------------------------------------------
 
+  /**
+   * Alignment guides: a thin line through every aligned shape with a small
+   * cross on each aligned point (Excalidraw). Equal spacing: the matching
+   * gaps with end ticks and their distance (Figma, Miro).
+   */
   private renderSmartGuides(
     ctx: CanvasRenderingContext2D,
     guides: SmartGuide[],
   ): void {
     const zoom = this.viewport.getViewport().zoom;
+    const px = 1 / zoom;
+    const cross = 3 * px;
+    const tick = 4 * px;
 
     ctx.save();
     ctx.strokeStyle = CanvasRenderer.SMART_GUIDE_COLOR;
-    ctx.lineWidth = 1 / zoom;
-    ctx.setLineDash([4 / zoom, 4 / zoom]);
-    ctx.globalAlpha = 0.8;
+    ctx.fillStyle = CanvasRenderer.SMART_GUIDE_COLOR;
+    ctx.lineWidth = px;
+    ctx.setLineDash([]);
 
     for (const guide of guides) {
       ctx.beginPath();
-      if (guide.type === 'vertical') {
-        ctx.moveTo(guide.position, guide.start);
-        ctx.lineTo(guide.position, guide.end);
-      } else {
-        ctx.moveTo(guide.start, guide.position);
-        ctx.lineTo(guide.end, guide.position);
+      if (guide.kind === 'align') {
+        if (guide.axis === 'x') {
+          ctx.moveTo(guide.position, guide.start);
+          ctx.lineTo(guide.position, guide.end);
+        } else {
+          ctx.moveTo(guide.start, guide.position);
+          ctx.lineTo(guide.end, guide.position);
+        }
+        for (const m of guide.marks) {
+          ctx.moveTo(m.x - cross, m.y - cross);
+          ctx.lineTo(m.x + cross, m.y + cross);
+          ctx.moveTo(m.x + cross, m.y - cross);
+          ctx.lineTo(m.x - cross, m.y + cross);
+        }
+        ctx.stroke();
+        continue;
+      }
+
+      for (const seg of guide.segments) {
+        if (guide.axis === 'x') {
+          ctx.moveTo(seg.from, seg.at);
+          ctx.lineTo(seg.to, seg.at);
+          ctx.moveTo(seg.from, seg.at - tick);
+          ctx.lineTo(seg.from, seg.at + tick);
+          ctx.moveTo(seg.to, seg.at - tick);
+          ctx.lineTo(seg.to, seg.at + tick);
+        } else {
+          ctx.moveTo(seg.at, seg.from);
+          ctx.lineTo(seg.at, seg.to);
+          ctx.moveTo(seg.at - tick, seg.from);
+          ctx.lineTo(seg.at + tick, seg.from);
+          ctx.moveTo(seg.at - tick, seg.to);
+          ctx.lineTo(seg.at + tick, seg.to);
+        }
       }
       ctx.stroke();
+
+      // Distance pill on each gap
+      const label = `${Math.round(guide.length)}`;
+      ctx.font = `${11 * px}px "Segoe UI", system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const w = ctx.measureText(label).width + 8 * px;
+      const h = 14 * px;
+      for (const seg of guide.segments) {
+        const mid = (seg.from + seg.to) / 2;
+        const cx = guide.axis === 'x' ? mid : seg.at;
+        const cy = guide.axis === 'x' ? seg.at : mid;
+        ctx.fillStyle = CanvasRenderer.SMART_GUIDE_COLOR;
+        ctx.beginPath();
+        ctx.roundRect(cx - w / 2, cy - h / 2, w, h, 3 * px);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(label, cx, cy + 0.5 * px);
+      }
     }
 
     ctx.restore();
@@ -1503,6 +1564,32 @@ export class CanvasRenderer {
     ctx.restore();
   }
 
+  /**
+   * Rotation handle: a small circle above the frame's top edge, joined to it
+   * by a short stem (Excalidraw, Figma). Hit-tested by `hitTestTransformHandle`.
+   */
+  renderRotationHandle(ctx: CanvasRenderingContext2D, bounds: Bounds): void {
+    const zoom = this.viewport.getViewport().zoom;
+    const centre = rotationHandleCenter({ bounds, angle: 0 }, zoom);
+    const radius = ROTATION_HANDLE_RADIUS_PX / zoom;
+    const top = bounds.y - SELECTION_PADDING_PX / zoom;
+
+    ctx.save();
+    ctx.strokeStyle = CanvasRenderer.SELECTION_COLOR;
+    ctx.fillStyle = CanvasRenderer.HANDLE_FILL;
+    ctx.lineWidth = 1.5 / zoom;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(centre.x, top);
+    ctx.lineTo(centre.x, centre.y + radius);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(centre.x, centre.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
   /** Small padlock at the selection's top-right corner for locked elements. */
   private renderLockBadge(ctx: CanvasRenderingContext2D, bounds: Bounds): void {
     const zoom = this.viewport.getViewport().zoom;
@@ -1542,6 +1629,14 @@ export class CanvasRenderer {
     const bounds = this.getElementsBounds([element]);
 
     ctx.save();
+    if (element.angle && !('points' in element)) {
+      // Outline a rotated shape along its own edges
+      const cx = bounds.x + bounds.width / 2;
+      const cy = bounds.y + bounds.height / 2;
+      ctx.translate(cx, cy);
+      ctx.rotate(element.angle);
+      ctx.translate(-cx, -cy);
+    }
     ctx.strokeStyle = CanvasRenderer.HOVER_COLOR;
     ctx.lineWidth = 1.5 / zoom;
     ctx.setLineDash([]);
@@ -1643,15 +1738,8 @@ export class CanvasRenderer {
     hoveredAnchor: string | null,
   ): void {
     const zoom = this.viewport.getViewport().zoom;
-    const cx = element.x + element.width / 2;
-    const cy = element.y + element.height / 2;
-
-    const anchors = [
-      { position: 'top', x: cx, y: element.y },
-      { position: 'right', x: element.x + element.width, y: cy },
-      { position: 'bottom', x: cx, y: element.y + element.height },
-      { position: 'left', x: element.x, y: cy },
-    ];
+    // Same anchors the hit-test uses (turned with rotated shapes)
+    const anchors = getAnchorPoints(element);
 
     for (const anchor of anchors) {
       const isHovered = hoveredAnchor === anchor.position;

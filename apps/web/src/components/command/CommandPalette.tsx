@@ -168,6 +168,18 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
         run: () => useUIStore.getState().toggleGrid(),
       },
       {
+        id: 'cmd-snap-grid',
+        kind: 'command',
+        title: 'Toggle snap to grid',
+        run: () => useUIStore.getState().toggleSnapToGrid(),
+      },
+      {
+        id: 'cmd-snap-objects',
+        kind: 'command',
+        title: 'Toggle snap to shapes (smart guides)',
+        run: () => useUIStore.getState().toggleSnapToObjects(),
+      },
+      {
         id: 'cmd-history',
         kind: 'command',
         title: 'Version history',
