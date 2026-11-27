@@ -133,7 +133,6 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
   useAutoSnapshot();
 
   const selectedIds = useSelectionStore((s) => s.selectedIds);
-  const elements = useElementsStore((s) => s.elements);
   const activeDiagramId = useDiagramStore((s) => s.activeDiagramId);
   const { user, logout } = useAuthStore();
 
@@ -207,13 +206,17 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
   }, [activeDiagramId]);
 
   // Contextual panels follow the settled selection (see selectionStore)
+  // Subscribes to one boolean, not the elements Map: the whole editor tree
+  // must not re-render on every pointer move of a drag.
   const settledSelectedIds = useSelectionStore((s) => s.settledSelectedIds);
-  const showPortalProperties = useMemo(() => {
-    if (settledSelectedIds.size !== 1 || selectedIds.size !== 1) return false;
+  const settledSingleId = useMemo(() => {
+    if (settledSelectedIds.size !== 1 || selectedIds.size !== 1) return null;
     const id = Array.from(selectedIds)[0];
-    if (!settledSelectedIds.has(id)) return false;
-    return elements.get(id)?.type === 'portal';
-  }, [selectedIds, settledSelectedIds, elements]);
+    return settledSelectedIds.has(id) ? id : null;
+  }, [selectedIds, settledSelectedIds]);
+  const showPortalProperties = useElementsStore((s) =>
+    settledSingleId ? s.elements.get(settledSingleId)?.type === 'portal' : false,
+  );
 
   return (
     <div className="flex flex-col h-full w-full bg-white">

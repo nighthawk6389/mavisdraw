@@ -37,6 +37,51 @@ async function measurePanFrameTime(page: Page, frames = 60): Promise<number> {
   }, frames);
 }
 
+/**
+ * Median cost of one pointer move while dragging (event handling, store
+ * update and any React work it triggers), one move per frame.
+ */
+async function measureDragMoveCost(page: Page, moves = 60): Promise<number> {
+  return page.evaluate(async (n) => {
+    const hooks = (
+      window as unknown as {
+        __MAVISDRAW__: { getViewport: () => { zoom: number; scrollX: number; scrollY: number } };
+      }
+    ).__MAVISDRAW__;
+    const vp = hooks.getViewport();
+    const canvas = document.querySelectorAll('canvas')[1] as HTMLCanvasElement;
+    const rect = canvas.getBoundingClientRect();
+    // Grab the first seeded rectangle (at 0,0, 120×80)
+    const x = rect.left + vp.scrollX + 60 * vp.zoom;
+    const y = rect.top + vp.scrollY + 40 * vp.zoom;
+    const fire = (type: string, cx: number, cy: number) =>
+      canvas.dispatchEvent(
+        new PointerEvent(type, {
+          clientX: cx,
+          clientY: cy,
+          bubbles: true,
+          pointerId: 1,
+          button: 0,
+          buttons: 1,
+          pointerType: 'mouse',
+          isPrimary: true,
+        }),
+      );
+    fire('pointerdown', x, y);
+    const costs: number[] = [];
+    for (let i = 1; i <= n; i++) {
+      const t0 = performance.now();
+      fire('pointermove', x + i * 3, y + i * 2);
+      await new Promise((r) => setTimeout(r, 0)); // include React work the move scheduled
+      costs.push(performance.now() - t0);
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    fire('pointerup', x + n * 3, y + n * 2);
+    costs.sort((a, b) => a - b);
+    return costs[Math.floor(costs.length / 2)];
+  }, moves);
+}
+
 test.describe('Rendering performance', () => {
   test.beforeEach(async ({ page }) => {
     await mockAuthAndOpenEditor(page);
@@ -60,6 +105,20 @@ test.describe('Rendering performance', () => {
     console.log(`median frame time while panning 2,000 visible shapes: ${median.toFixed(1)}ms`);
     // Generous bound for CI machines; locally this is ~1 frame
     expect(median).toBeLessThan(50);
+  });
+
+  test('dragging a shape in a 2,000-element diagram stays cheap per pointer move', async ({
+    page,
+  }) => {
+    const h = hooks(page);
+    await h.seed(2000);
+    await page.keyboard.press('Shift+1');
+    await expect.poll(() => h.drawn()).toBeGreaterThan(1500);
+    const median = await measureDragMoveCost(page);
+    console.log(`median cost per pointer move, dragging among 2,000 shapes: ${median.toFixed(1)}ms`);
+    // One batched store update and no editor-wide re-render per move
+    // (was ~12ms in a dev build, mostly re-rendering the whole editor)
+    expect(median).toBeLessThan(30);
   });
 
   test('sketchy mode reuses cached hand-drawn shapes while panning', async ({ page }) => {

@@ -72,7 +72,13 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
   // ─── Store subscriptions ──────────────────────────────────
 
-  const elements = useElementsStore((s) => s.elements);
+  // No subscription to the whole elements Map: the render loop reads the
+  // store directly and a store subscription invalidates the static layer, so
+  // a drag doesn't re-render this component on every pointer move. Only the
+  // element being text-edited is watched (its editor overlay follows it).
+  const editingElement = useElementsStore((s) =>
+    textEditState ? s.elements.get(textEditState.elementId) : undefined,
+  );
   const addElement = useElementsStore((s) => s.addElement);
   const updateElement = useElementsStore((s) => s.updateElement);
   const deleteElements = useElementsStore((s) => s.deleteElements);
@@ -119,9 +125,6 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
   const createDiagram = useDiagramStore((s) => s.createDiagram);
 
   // ─── Refs for render loop (avoid stale closures) ──────────
-
-  const elementsRef = useRef(elements);
-  elementsRef.current = elements;
 
   const activeDiagramIdRef = useRef(activeDiagramId);
   activeDiagramIdRef.current = activeDiagramId;
@@ -184,7 +187,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
   const computeElementList = useCallback((excludeLockedLayers: boolean): MavisElement[] => {
     const cacheRef = excludeLockedLayers ? interactListRef : renderListRef;
     const layers = useLayerStore.getState().layers;
-    const key = [elementsRef.current, activeDiagramIdRef.current, layers];
+    const key = [useElementsStore.getState().elements, activeDiagramIdRef.current, layers];
     const cached = cacheRef.current;
     if (cached.key.length === key.length && key.every((k, i) => k === cached.key[i])) {
       return cached.result;
@@ -194,7 +197,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     const locked = new Set(layers.filter((l) => l.isLocked).map((l) => l.id));
     const diagramId = activeDiagramIdRef.current;
     const els: MavisElement[] = [];
-    for (const el of elementsRef.current.values()) {
+    for (const el of useElementsStore.getState().elements.values()) {
       if (el.isDeleted || el.diagramId !== diagramId) continue;
       // Elements on layers this client doesn't know about stay visible
       if (known.has(el.layerId) && hidden.has(el.layerId)) continue;
@@ -343,7 +346,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
       if (!renderer) return;
 
       const visibleElements: MavisElement[] = [];
-      for (const el of elementsRef.current.values()) {
+      for (const el of useElementsStore.getState().elements.values()) {
         if (el.diagramId === diagramId && !el.isDeleted) {
           visibleElements.push(el);
         }
@@ -395,7 +398,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
       // Update the portal element in parent diagram with new thumbnail if found
       // Find portals in parent that link to current diagram
-      for (const el of elementsRef.current.values()) {
+      for (const el of useElementsStore.getState().elements.values()) {
         if (
           el.type === 'portal' &&
           (el as PortalElement).targetDiagramId === currentDiagramId &&
@@ -534,7 +537,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     saveViewport(previous, viewport.getViewport());
     const thumbnail = generateThumbnailForDiagram(previous);
     if (thumbnail) {
-      for (const el of elementsRef.current.values()) {
+      for (const el of useElementsStore.getState().elements.values()) {
         if (el.type === 'portal' && (el as PortalElement).targetDiagramId === previous && !el.isDeleted) {
           withoutHistory(() =>
             useElementsStore.getState().updateElementSilent(el.id, {
@@ -567,7 +570,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     const left = useDiagramStore.getState().diagrams.get(previous);
     const portal =
       left?.parentDiagramId === activeDiagramId
-        ? (Array.from(elementsRef.current.values()).find(
+        ? (Array.from(useElementsStore.getState().elements.values()).find(
             (el) =>
               el.type === 'portal' &&
               !el.isDeleted &&
@@ -936,7 +939,15 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
   useEffect(() => {
     rendererRef.current?.invalidateStatic();
-  }, [elements, renderMode, showGrid, gridSize, layers]);
+  }, [renderMode, showGrid, gridSize, layers]);
+
+  useEffect(
+    () =>
+      useElementsStore.subscribe((state, prev) => {
+        if (state.elements !== prev.elements) rendererRef.current?.invalidateStatic();
+      }),
+    [],
+  );
 
   // ─── ResizeObserver ───────────────────────────────────────
 
@@ -1304,7 +1315,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
   const getTextEditorStyle = (): React.CSSProperties | null => {
     if (!textEditState) return null;
 
-    const el = useElementsStore.getState().getElementById(textEditState.elementId);
+    const el = editingElement;
     if (!el || el.type !== 'text') return null;
 
     const textEl = el as TextElement;

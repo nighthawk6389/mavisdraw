@@ -70,6 +70,14 @@ export interface SnapContext {
 
 /** Closest shapes to look at for gaps on each side (keeps building the context cheap). */
 const GAP_NEIGHBOURS = 12;
+/**
+ * Most candidates examined per shape. In a dense grid most shapes further
+ * along the axis aren't in the same row; without a cap, building the context
+ * is quadratic (~25ms for 2,000 visible shapes). The nearest neighbours —
+ * the gaps people actually repeat — are within the cap unless a single
+ * column (row) holds close to a hundred shapes.
+ */
+const GAP_SCAN_LIMIT = 96;
 
 function boxFeatures(b: Bounds): { xs: Feature[]; ys: Feature[] } {
   const right = b.x + b.width;
@@ -101,7 +109,8 @@ function findGaps(boxes: Bounds[], axis: 'x' | 'y'): Gap[] {
   for (let i = 0; i < sorted.length; i++) {
     const a = sorted[i];
     let found = 0;
-    for (let j = i + 1; j < sorted.length && found < GAP_NEIGHBOURS; j++) {
+    const end = Math.min(sorted.length, i + 1 + GAP_SCAN_LIMIT);
+    for (let j = i + 1; j < end && found < GAP_NEIGHBOURS; j++) {
       const b = sorted[j];
       if (hi(a) >= lo(b)) continue; // overlapping along the axis: no gap
       const overlapStart = Math.max(crossLo(a), crossLo(b));

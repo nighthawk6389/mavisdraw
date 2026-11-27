@@ -3,6 +3,7 @@ import { useDiagramStore, buildTreeForParent } from '../../stores/diagramStore';
 import type { DiagramTreeNode } from '../../stores/diagramStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useElementsStore } from '../../stores/elementsStore';
+import type { MavisElement } from '@mavisdraw/types';
 
 interface TreeNodeProps {
   node: DiagramTreeNode;
@@ -177,6 +178,28 @@ function TreeNode({
   );
 }
 
+/** "diagramId:count|…" for live elements — stable while only positions change. */
+export function elementCountsKey(elements: Map<string, MavisElement>): string {
+  const counts: Record<string, number> = {};
+  for (const el of elements.values()) {
+    if (!el.isDeleted) counts[el.diagramId] = (counts[el.diagramId] ?? 0) + 1;
+  }
+  return Object.keys(counts)
+    .sort()
+    .map((id) => `${id}:${counts[id]}`)
+    .join('|');
+}
+
+function parseCountsKey(key: string): Map<string, number> {
+  const counts = new Map<string, number>();
+  if (!key) return counts;
+  for (const part of key.split('|')) {
+    const at = part.lastIndexOf(':');
+    counts.set(part.slice(0, at), Number(part.slice(at + 1)));
+  }
+  return counts;
+}
+
 export default function DiagramTreeSidebar() {
   const showDiagramTree = useUIStore((s) => s.showDiagramTree);
   const toggleDiagramTree = useUIStore((s) => s.toggleDiagramTree);
@@ -186,22 +209,14 @@ export default function DiagramTreeSidebar() {
   const updateDiagram = useDiagramStore((s) => s.updateDiagram);
   const deleteDiagram = useDiagramStore((s) => s.deleteDiagram);
   const createDiagram = useDiagramStore((s) => s.createDiagram);
-  const elements = useElementsStore((s) => s.elements);
+  // Subscribe to the counts only (a string), not the elements Map: moving
+  // shapes must not re-render the tree on every pointer move.
+  const countsKey = useElementsStore((s) => elementCountsKey(s.elements));
+  const counts = useMemo(() => parseCountsKey(countsKey), [countsKey]);
 
   const tree = useMemo(() => buildTreeForParent(diagrams, null), [diagrams]);
 
-  const getElementCount = useCallback(
-    (diagramId: string) => {
-      let count = 0;
-      for (const el of elements.values()) {
-        if (el.diagramId === diagramId && !el.isDeleted) {
-          count++;
-        }
-      }
-      return count;
-    },
-    [elements],
-  );
+  const getElementCount = useCallback((diagramId: string) => counts.get(diagramId) ?? 0, [counts]);
 
   const handleRename = useCallback(
     (diagramId: string, newTitle: string) => {

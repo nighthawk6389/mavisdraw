@@ -155,8 +155,6 @@ function adoptServerVersions(ids: string[], serverElements: MavisElement[]): voi
 export function useAutoSave(activeDiagramId: string | null) {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const elements = useElementsStore((s) => s.elements);
-  const diagrams = useDiagramStore((s) => s.diagrams);
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savingRef = useRef<Promise<void> | null>(null);
@@ -216,15 +214,29 @@ export function useAutoSave(activeDiagramId: string | null) {
     return () => registerSaveFlusher(null);
   }, [saveDirty]);
 
-  // Debounce after any change to elements or diagram metadata
+  // Debounce after any change to elements or diagram metadata. Subscribed
+  // imperatively: re-rendering the editor on every element change (each
+  // pointer move of a drag) just to restart a timer was the main cost of
+  // dragging in a large diagram.
   useEffect(() => {
     if (!isAuthenticated) return;
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => void saveDirty(), DEBOUNCE_MS);
+    const schedule = () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => void saveDirty(), DEBOUNCE_MS);
+    };
+    schedule();
+    const unsubscribeElements = useElementsStore.subscribe((state, prev) => {
+      if (state.elements !== prev.elements) schedule();
+    });
+    const unsubscribeDiagrams = useDiagramStore.subscribe((state, prev) => {
+      if (state.diagrams !== prev.diagrams) schedule();
+    });
     return () => {
+      unsubscribeElements();
+      unsubscribeDiagrams();
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [elements, diagrams, isAuthenticated, saveDirty]);
+  }, [isAuthenticated, saveDirty]);
 
   // Don't lose the last edits when the tab is hidden or closed
   useEffect(() => {
