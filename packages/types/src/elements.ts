@@ -67,6 +67,13 @@ export interface BaseElement {
    */
   zIndex?: number;
 
+  /**
+   * The architecture component this shape shows (see docs/model-layer.md).
+   * Shared by every appearance of the component, on any diagram; unset on
+   * plain drawing (unlabelled shapes, free text, arrows, doodles).
+   */
+  componentId?: string;
+
   // Binding
   boundElements: { id: string; type: string }[];
 
