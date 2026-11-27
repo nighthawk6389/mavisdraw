@@ -25,10 +25,18 @@ export interface Config {
   logLevel: string;
   /** Public URL of the web app (links in emails). */
   appUrl: string;
+  /**
+   * Send the session cookie only over HTTPS. Follows APP_URL (a self-hosted
+   * instance on plain http:// would otherwise lose its session on reload);
+   * COOKIE_SECURE=true|false overrides.
+   */
+  cookieSecure: boolean;
   mail: {
-    provider: 'resend' | 'postmark' | 'log' | 'outbox' | 'none';
+    provider: 'resend' | 'postmark' | 'smtp' | 'log' | 'outbox' | 'none';
     from: string;
     apiKey: string;
+    /** smtp(s)://user:pass@host:port, for MAIL_PROVIDER=smtp. */
+    smtpUrl: string;
   };
   github: {
     redirectUri: string;
@@ -179,8 +187,22 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   }
 
   const provider = (env.MAIL_PROVIDER ?? (isProduction ? 'none' : 'log')).toLowerCase();
-  if (!['resend', 'postmark', 'log', 'outbox', 'none'].includes(provider)) {
-    problems.push('MAIL_PROVIDER must be resend, postmark, log, outbox or none');
+  if (!['resend', 'postmark', 'smtp', 'log', 'outbox', 'none'].includes(provider)) {
+    problems.push('MAIL_PROVIDER must be resend, postmark, smtp, log, outbox or none');
+  }
+  const smtpUrl = env.SMTP_URL ?? '';
+  if (provider === 'smtp') {
+    let valid: boolean;
+    try {
+      valid = ['smtp:', 'smtps:'].includes(new URL(smtpUrl).protocol);
+    } catch {
+      valid = false;
+    }
+    if (!valid) {
+      problems.push(
+        'MAIL_PROVIDER=smtp needs SMTP_URL, e.g. smtp://user:password@smtp.example.com:587',
+      );
+    }
   }
   const mailKey =
     provider === 'resend'
@@ -193,10 +215,11 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       `MAIL_PROVIDER=${provider} needs ${provider === 'resend' ? 'RESEND_API_KEY' : 'POSTMARK_SERVER_TOKEN'}`,
     );
   }
-  if ((provider === 'resend' || provider === 'postmark') && !env.MAIL_FROM) {
+  if ((provider === 'resend' || provider === 'postmark' || provider === 'smtp') && !env.MAIL_FROM) {
     problems.push('MAIL_FROM must be set (e.g. "MavisDraw <notifications@yourdomain.com>")');
   }
 
+  const appUrl = (env.APP_URL ?? env.CORS_ORIGIN ?? 'http://localhost:3000').replace(/\/+$/, '');
   const config: Config = {
     isProduction,
     databaseUrl: required('DATABASE_URL', DEV.databaseUrl),
@@ -205,14 +228,19 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     corsOrigin: required('CORS_ORIGIN', 'http://localhost:3000'),
     trustProxy,
     logLevel: env.LOG_LEVEL ?? 'info',
-    appUrl: (env.APP_URL ?? env.CORS_ORIGIN ?? 'http://localhost:3000').replace(/\/+$/, ''),
+    appUrl,
+    cookieSecure:
+      env.COOKIE_SECURE !== undefined
+        ? env.COOKIE_SECURE.trim().toLowerCase() === 'true'
+        : appUrl.startsWith('https://'),
     mail: {
       provider: provider as Config['mail']['provider'],
       from: env.MAIL_FROM ?? 'MavisDraw <notifications@localhost>',
       apiKey: mailKey ?? '',
+      smtpUrl,
     },
     github: {
-      redirectUri: env.GITHUB_REDIRECT_URI ?? 'http://localhost:3000/oauth/github/callback.html',
+      redirectUri: env.GITHUB_REDIRECT_URI ?? `${appUrl}/oauth/github/callback.html`,
       cloud: {
         url: 'https://github.com',
         clientId: env.GITHUB_CLIENT_ID ?? '',

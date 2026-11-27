@@ -5,6 +5,7 @@ import websocket from '@fastify/websocket';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { config } from './config.js';
+import { isMailEnabled } from './services/mailer.js';
 import { db } from './db/client.js';
 import { acceptRequestId, checkReadiness, errorResponse, reportError } from './observability.js';
 import { readOutbox } from './services/mailer.js';
@@ -124,6 +125,10 @@ export async function buildApp() {
   app.get('/api/health', async () => {
     return { status: 'ok', timestamp: new Date().toISOString() };
   });
+
+  // What this server can do, for the app to say the right thing (e.g. a
+  // self-hosted instance without email can't send confirmation links)
+  app.get('/api/config', async () => ({ mail: isMailEnabled() }));
 
   // Readiness: this instance can serve (the database answers). Used by the
   // load balancer so a deploy never takes traffic it can't handle.

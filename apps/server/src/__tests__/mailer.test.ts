@@ -1,12 +1,23 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { addedEmail, inviteEmail, mentionEmail, readOutbox, sendMail } from '../services/mailer.js';
 
+const smtp = vi.hoisted(() => ({
+  createTransport: vi.fn(),
+  sendMail: vi.fn(async () => ({ messageId: 'm1' })),
+}));
+vi.mock('nodemailer', () => ({
+  default: {
+    createTransport: smtp.createTransport.mockImplementation(() => ({ sendMail: smtp.sendMail })),
+  },
+}));
+
 afterEach(() => vi.unstubAllGlobals());
 
-const mail = (provider: 'resend' | 'postmark' | 'outbox' | 'none' | 'log') => ({
+const mail = (provider: 'resend' | 'postmark' | 'smtp' | 'outbox' | 'none' | 'log') => ({
   provider,
   from: 'MavisDraw <n@example.com>',
   apiKey: 'key-123',
+  smtpUrl: 'smtp://user:pw@mail.example.com:587',
 });
 
 describe('email templates', () => {
@@ -71,6 +82,25 @@ describe('sending', () => {
     expect(url).toBe('https://api.postmarkapp.com/email');
     expect((init.headers as Record<string, string>)['X-Postmark-Server-Token']).toBe('key-123');
     expect(JSON.parse(String(init.body))).toMatchObject({ To: 'x@example.com', TextBody: 'Hello' });
+  });
+
+  it('SMTP: one pooled transport per server, the message as given', async () => {
+    expect(await sendMail(email, mail('smtp'))).toBe(true);
+    expect(await sendMail({ ...email, to: 'y@example.com' }, mail('smtp'))).toBe(true);
+    expect(smtp.createTransport).toHaveBeenCalledTimes(1);
+    expect(smtp.createTransport).toHaveBeenCalledWith('smtp://user:pw@mail.example.com:587');
+    expect(smtp.sendMail).toHaveBeenCalledWith({
+      from: 'MavisDraw <n@example.com>',
+      to: 'x@example.com',
+      subject: 'Hi',
+      text: 'Hello',
+      html: '<p>Hello</p>',
+    });
+    // An unreachable relay is a missed email, not a failed request
+    smtp.sendMail.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(sendMail(email, mail('smtp'))).resolves.toBe(false);
+    errors.mockRestore();
   });
 
   it('a provider failure never throws to the caller', async () => {

@@ -1,4 +1,4 @@
-import { API_BASE } from './apiBase';
+import { API_BASE, absoluteApiBase } from './apiBase';
 
 let accessToken: string | null = null;
 let onUnauthorized: (() => void) | null = null;
@@ -178,6 +178,11 @@ export async function apiLogout(): Promise<void> {
 
 export async function apiGetMe(): Promise<{ user: AuthResponse['user'] }> {
   return apiFetch('/api/auth/me');
+}
+
+/** What this server can do (e.g. whether it sends email). */
+export function apiGetServerConfig(): Promise<{ mail: boolean }> {
+  return apiFetch('/api/config');
 }
 
 /** Confirm an email address from the emailed link (no sign-in needed). */
@@ -757,7 +762,8 @@ export function apiGetRepoSnapshot(
 // ── Coding agents (MCP): access tokens and proposed map updates ──
 
 /** Where coding agents connect (Streamable HTTP MCP endpoint). */
-export const MCP_URL = `${API_BASE}/api/mcp`;
+/** Absolute: it's pasted into coding agents' settings. */
+export const MCP_URL = `${absoluteApiBase()}/api/mcp`;
 
 export interface AccessTokenSummary {
   id: string;

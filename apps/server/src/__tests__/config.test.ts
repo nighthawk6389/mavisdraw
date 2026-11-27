@@ -69,6 +69,37 @@ describe('configuration', () => {
     ).toMatch(/https/);
   });
 
+  it('SMTP needs a server URL and a sender', () => {
+    expect(loadConfig({ MAIL_PROVIDER: 'smtp' }).problems.join()).toMatch(/SMTP_URL/);
+    expect(loadConfig({ MAIL_PROVIDER: 'smtp', SMTP_URL: 'http://x' }).problems.join()).toMatch(
+      /SMTP_URL/,
+    );
+    const ok = loadConfig({
+      MAIL_PROVIDER: 'smtp',
+      SMTP_URL: 'smtps://u:p@smtp.example.com:465',
+      MAIL_FROM: 'MavisDraw <n@example.com>',
+    });
+    expect(ok.problems).toEqual([]);
+    expect(ok.config.mail).toMatchObject({
+      provider: 'smtp',
+      smtpUrl: 'smtps://u:p@smtp.example.com:465',
+    });
+  });
+
+  it('secure cookies follow the app URL (a plain-http self-host keeps its session)', () => {
+    expect(loadConfig({ APP_URL: 'https://draw.acme.com' }).config.cookieSecure).toBe(true);
+    expect(loadConfig({ APP_URL: 'http://10.0.0.5:8080' }).config.cookieSecure).toBe(false);
+    expect(
+      loadConfig({ APP_URL: 'http://10.0.0.5:8080', COOKIE_SECURE: 'true' }).config.cookieSecure,
+    ).toBe(true);
+  });
+
+  it('the GitHub sign-in callback defaults to the app URL', () => {
+    expect(loadConfig({ APP_URL: 'https://draw.acme.com/' }).config.github.redirectUri).toBe(
+      'https://draw.acme.com/oauth/github/callback.html',
+    );
+  });
+
   it('parses TRUST_PROXY', () => {
     expect(parseTrustProxy(undefined)).toBe(false);
     expect(parseTrustProxy('true')).toBe(true);

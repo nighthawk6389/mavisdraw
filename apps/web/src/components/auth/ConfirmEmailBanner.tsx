@@ -1,15 +1,49 @@
-import { useState } from 'react';
-import { apiResendVerification } from '../../services/api';
+import { useEffect, useState } from 'react';
+import { apiGetServerConfig, apiResendVerification } from '../../services/api';
 import { useAuthStore } from '../../stores/authStore';
+
+/** Whether this server sends email (asked once per page load). */
+let mailEnabled: Promise<boolean> | null = null;
+const sendsEmail = () =>
+  (mailEnabled ??= apiGetServerConfig()
+    .then((c) => c.mail)
+    .catch(() => true));
 
 /**
  * Until the account confirms its email, invitations to that address wait —
- * say so, and offer to send the link again.
+ * say so, and offer to send the link again. A server that sends no email
+ * (some self-hosted ones) can't: opening an invite link confirms it instead.
  */
 export default function ConfirmEmailBanner() {
   const user = useAuthStore((s) => s.user);
   const [resent, setResent] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle');
-  if (!user || user.emailVerified !== false) return null;
+  const unconfirmed = !!user && user.emailVerified === false;
+  const [mail, setMail] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!unconfirmed) return;
+    let live = true;
+    void sendsEmail().then((m) => live && setMail(m));
+    return () => {
+      live = false;
+    };
+  }, [unconfirmed]);
+  if (!user || !unconfirmed || mail === null) return null;
+
+  if (!mail) {
+    return (
+      <div
+        className="border-b border-amber-200 bg-amber-50"
+        role="status"
+        data-testid="confirm-email-banner"
+      >
+        <div className="mx-auto max-w-7xl px-4 py-2 text-sm text-amber-900 sm:px-6 lg:px-8">
+          Your email isn’t confirmed, and this server doesn’t send email: when someone shares a
+          project or workspace with <strong>{user.email}</strong>, ask them for the invite link.
+          Opening it confirms your address and adds you.
+        </div>
+      </div>
+    );
+  }
 
   const resend = () => {
     setResent('sending');

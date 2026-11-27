@@ -1,10 +1,12 @@
+import nodemailer from 'nodemailer';
 import { config, type Config } from '../config.js';
 import { reportError } from '../observability.js';
 
 /**
- * Outgoing email. Providers are called over HTTPS (no SDKs): Resend or
- * Postmark in production; `log` prints messages in development; `outbox`
- * keeps them in memory for the end-to-end tests; `none` drops them.
+ * Outgoing email: Resend or Postmark (called over HTTPS, no SDKs), or any
+ * SMTP server (self-hosted instances usually have a relay); `log` prints
+ * messages in development; `outbox` keeps them in memory for the end-to-end
+ * tests; `none` drops them.
  *
  * Sending never fails the request that triggered it: a missed email is
  * logged and reported, and the invite link is still shown in the app.
@@ -28,8 +30,26 @@ export function isMailEnabled(mail: Config['mail'] = config.mail): boolean {
   return mail.provider !== 'none';
 }
 
+/** One SMTP connection pool per server URL. */
+const smtpTransports = new Map<string, ReturnType<typeof nodemailer.createTransport>>();
+
 async function deliver(email: Email, mail: Config['mail']): Promise<void> {
   switch (mail.provider) {
+    case 'smtp': {
+      let transport = smtpTransports.get(mail.smtpUrl);
+      if (!transport) {
+        transport = nodemailer.createTransport(mail.smtpUrl);
+        smtpTransports.set(mail.smtpUrl, transport);
+      }
+      await transport.sendMail({
+        from: mail.from,
+        to: email.to,
+        subject: email.subject,
+        text: email.text,
+        html: email.html,
+      });
+      return;
+    }
     case 'none':
       return;
     case 'outbox':

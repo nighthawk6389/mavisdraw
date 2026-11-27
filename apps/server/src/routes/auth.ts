@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { config } from '../config.js';
 import {
   registerUser,
   loginUser,
@@ -48,7 +49,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
       reply.setCookie('refreshToken', tokens.refreshToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
+        secure: config.cookieSecure,
         sameSite: 'lax',
         path: '/api/auth',
         maxAge: 30 * 24 * 60 * 60, // 30 days
@@ -77,7 +78,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
       reply.setCookie('refreshToken', tokens.refreshToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
+        secure: config.cookieSecure,
         sameSite: 'lax',
         path: '/api/auth',
         maxAge: 30 * 24 * 60 * 60,
@@ -135,7 +136,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
       reply.setCookie('refreshToken', tokens.refreshToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
+        secure: config.cookieSecure,
         sameSite: 'lax',
         path: '/api/auth',
         maxAge: 30 * 24 * 60 * 60,

@@ -43,6 +43,8 @@ const { config } = await import('../config.js');
 const PUBLIC = new Set([
   'GET /api/health',
   'GET /api/ready',
+  // What the server can do (e.g. whether it sends email); nothing private
+  'GET /api/config',
   'POST /api/auth/register',
   'POST /api/auth/login',
   'POST /api/auth/refresh',
