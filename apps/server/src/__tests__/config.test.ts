@@ -26,10 +26,22 @@ describe('configuration', () => {
       COOKIE_SECRET: strong,
       DATABASE_URL: 'postgres://db/x',
       CORS_ORIGIN: 'https://app.example.com',
-      TRUST_PROXY: 'true',
+      TRUST_PROXY: '1',
     });
     expect(problems).toEqual([]);
-    expect(config.trustProxy).toBe(true);
+    expect(config.trustProxy).toBe(1);
+  });
+
+  it('production refuses to trust every proxy hop (clients could pick their own address)', () => {
+    const { problems } = loadConfig({
+      NODE_ENV: 'production',
+      JWT_SECRET: strong,
+      COOKIE_SECRET: strong,
+      DATABASE_URL: 'postgres://db/x',
+      CORS_ORIGIN: 'https://app.example.com',
+      TRUST_PROXY: 'true',
+    });
+    expect(problems.join()).toMatch(/TRUST_PROXY=true/);
   });
 
   it('GitHub in production needs a token encryption key; enterprise needs its own app', () => {

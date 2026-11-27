@@ -10,6 +10,7 @@ import { listAccessibleProjects } from '../services/projectService.js';
 import { getDecryptedToken, GitHubError, repoAccess } from '../services/githubService.js';
 import { config } from '../config.js';
 import { requireAuth } from '../middleware/auth.js';
+import { reapplyProjectAccess } from '../ws/hocuspocus.js';
 
 const createProjectSchema = z.object({
   name: z.string().min(1).max(255),
@@ -186,6 +187,10 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       })
       .where(eq(projects.id, id))
       .returning();
+    // Workspace members or public viewers may have just lost (or gained) access
+    if (updated.workspaceId !== project.workspaceId || updated.isPublic !== project.isPublic) {
+      await reapplyProjectAccess(app.hocuspocus, id);
+    }
 
     return reply.code(200).send({
       project: {

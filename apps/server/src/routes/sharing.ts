@@ -24,27 +24,23 @@ const updatePermissionSchema = z.object({
 
 export async function sharingRoutes(app: FastifyInstance): Promise<void> {
   // Create share link
-  app.post(
-    '/api/projects/:id/share',
-    { preHandler: [requireAuth] },
-    async (request, reply) => {
-      const { id } = request.params as { id: string };
-      const userId = request.user!.userId;
+  app.post('/api/projects/:id/share', { preHandler: [requireAuth] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const userId = request.user!.userId;
 
-      const parsed = createShareSchema.safeParse(request.body);
-      if (!parsed.success) {
-        return reply.code(400).send({ error: 'Validation failed', details: parsed.error.issues });
-      }
+    const parsed = createShareSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'Validation failed', details: parsed.error.issues });
+    }
 
-      const access = await checkProjectAccess(id, userId);
-      if (access !== 'owner' && access !== 'admin') {
-        return reply.code(403).send({ error: 'Only owner or admin can create share links' });
-      }
+    const access = await checkProjectAccess(id, userId);
+    if (access !== 'owner' && access !== 'admin') {
+      return reply.code(403).send({ error: 'Only owner or admin can create share links' });
+    }
 
-      const shareLink = await createShareLink(id, parsed.data.role);
-      return reply.code(201).send({ share: shareLink });
-    },
-  );
+    const shareLink = await createShareLink(id, parsed.data.role);
+    return reply.code(201).send({ share: shareLink });
+  });
 
   // Resolve share token (join via share link)
   app.post('/api/share/:token', { preHandler: [requireAuth] }, async (request, reply) => {
@@ -75,16 +71,20 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const permissions = await getProjectPermissions(id);
-      // Share links are bearer credentials: only people who can manage
-      // sharing get to see them (an editor link in a viewer's hands is an
-      // escalation)
+      // Share links are bearer credentials, and email addresses are personal
+      // (anyone signed in can view a public project): only people who manage
+      // sharing see them. Everyone else sees who has access, by name.
       const canManage = access === 'owner' || access === 'admin';
       return reply.code(200).send({
         permissions: canManage
           ? permissions
           : permissions
               .filter((p) => p.userId !== null)
-              .map((p) => ({ ...p, shareToken: null })),
+              .map((p) => ({
+                ...p,
+                shareToken: null,
+                email: p.userId === userId ? p.email : null,
+              })),
       });
     },
   );
@@ -117,12 +117,19 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
 
       // A share link is a bearer credential: it can grant view or edit, never admin
       if (!permissions.userId && parsed.data.role === 'admin') {
-        return reply.code(400).send({ error: 'Share links can only grant viewer or editor access' });
+        return reply
+          .code(400)
+          .send({ error: 'Share links can only grant viewer or editor access' });
       }
 
       const updated = await updatePermission(permissionId, parsed.data.role);
       if (permissions.userId) {
-        applyAccessChange(app.hocuspocus, permissions.projectId, permissions.userId, parsed.data.role);
+        applyAccessChange(
+          app.hocuspocus,
+          permissions.projectId,
+          permissions.userId,
+          parsed.data.role,
+        );
       }
       return reply.code(200).send({
         permission: {

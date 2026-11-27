@@ -158,6 +158,30 @@ describe('MCP server', () => {
     expect(created).toHaveLength(0);
   });
 
+  it('passes on why a proposal was refused (a full review queue)', async () => {
+    const full = Object.assign(new Error('This project already has 100 proposals waiting.'), {
+      userFacing: true,
+    });
+    const server = buildMcpServer(
+      { userId: 'u1', tokenName: 'agent' },
+      {
+        ...deps(),
+        createProposal: async () => {
+          throw full;
+        },
+      },
+    );
+    const client = new Client({ name: 'test-agent', version: '1.0.0' });
+    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverSide), client.connect(clientSide)]);
+    const result = (await client.callTool({
+      name: 'propose_update',
+      arguments: { project: 'Shop', description: 'x', add: [{ name: 'Cache' }] },
+    })) as { content: Array<{ text: string }>; isError?: boolean };
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('100 proposals waiting');
+  });
+
   it('explains unknown names with what exists', async () => {
     const { text, isError } = await call('propose_update', {
       project: 'Shop',

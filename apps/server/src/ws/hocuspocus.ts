@@ -62,6 +62,28 @@ export function applyAccessChange(
 }
 
 /**
+ * Something changed who can reach the whole project (it moved between
+ * workspaces, or stopped being public): recompute access for everyone
+ * connected to its rooms and apply it to their open sockets.
+ */
+export async function reapplyProjectAccess(
+  server: Pick<Hocuspocus, 'documents'>,
+  projectId: string,
+  accessOf: (projectId: string, userId: string) => Promise<ProjectRole | null> = checkProjectAccess,
+): Promise<void> {
+  const connected = new Set<string>();
+  server.documents.forEach((document) => {
+    document.connections.forEach(({ connection }) => {
+      const user = (connection.context as { user?: { id?: string; projectId?: string } }).user;
+      if (user?.projectId === projectId && user.id) connected.add(user.id);
+    });
+  });
+  for (const userId of connected) {
+    applyAccessChange(server, projectId, userId, await accessOf(projectId, userId));
+  }
+}
+
+/**
  * Nudge everyone in a diagram's live room that some side data changed
  * (e.g. comments), so they refetch it right away instead of polling.
  */

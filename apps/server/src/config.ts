@@ -169,6 +169,15 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     }
   }
 
+  const trustProxy = parseTrustProxy(env.TRUST_PROXY);
+  // "true" trusts every hop, so the client address becomes whatever the client
+  // put first in X-Forwarded-For: every rate limit could be dodged
+  if (isProduction && trustProxy === true) {
+    problems.push(
+      'TRUST_PROXY=true trusts any X-Forwarded-For a client sends: set the number of proxies in front of the API (usually 1) or their addresses',
+    );
+  }
+
   const provider = (env.MAIL_PROVIDER ?? (isProduction ? 'none' : 'log')).toLowerCase();
   if (!['resend', 'postmark', 'log', 'outbox', 'none'].includes(provider)) {
     problems.push('MAIL_PROVIDER must be resend, postmark, log, outbox or none');
@@ -194,7 +203,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     jwtSecret: secret('JWT_SECRET', DEV.jwtSecret),
     cookieSecret: secret('COOKIE_SECRET', DEV.cookieSecret),
     corsOrigin: required('CORS_ORIGIN', 'http://localhost:3000'),
-    trustProxy: parseTrustProxy(env.TRUST_PROXY),
+    trustProxy,
     logLevel: env.LOG_LEVEL ?? 'info',
     appUrl: (env.APP_URL ?? env.CORS_ORIGIN ?? 'http://localhost:3000').replace(/\/+$/, ''),
     mail: {

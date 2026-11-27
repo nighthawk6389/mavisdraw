@@ -36,10 +36,11 @@ services:
         generateValue: true
       - key: NODE_ENV
         value: production
-      # Requests reach the app through Render's proxy: use X-Forwarded-For
-      # for the client address (rate limits are per user, not per proxy)
+      # Requests reach the app through Render's proxy: use the address it
+      # appends to X-Forwarded-For (rate limits are per client, not per proxy).
+      # A hop count, not "true": "true" would believe whatever the client sends.
       - key: TRUST_PROXY
-        value: "true"
+        value: "1"
       # Set these in the dashboard to enable GitHub (see docs/github-oauth-setup.md):
       # GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_REDIRECT_URI,
       # GITHUB_TOKEN_ENCRYPTION_KEY (64 hex chars: openssl rand -hex 32)

@@ -32,6 +32,8 @@ export interface ProposalView {
 }
 
 export class TooManyProposalsError extends Error {
+  /** The message is meant for whoever asked (an agent, a reviewer). */
+  readonly userFacing = true;
   constructor() {
     super(
       `This project already has ${MAX_PENDING_PER_PROJECT} proposals waiting for review. Ask a project member to go through them first.`,

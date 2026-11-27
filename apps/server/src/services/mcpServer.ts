@@ -150,6 +150,10 @@ export function buildMcpServer(caller: McpCaller, deps: McpDeps): McpServer {
       return await body();
     } catch (err) {
       if (err instanceof ToolError) return failure(err.message);
+      // e.g. a full review queue: the agent should hear why, not "something went wrong"
+      if (err instanceof Error && (err as { userFacing?: boolean }).userFacing) {
+        return failure(err.message);
+      }
       console.error('[mcp] tool failed:', err);
       return failure('Something went wrong on the MavisDraw side. Try again in a moment.');
     }

@@ -5,6 +5,7 @@ import {
   applyAccessChange,
   createHocuspocusServer,
   persistOpenDocuments,
+  reapplyProjectAccess,
 } from '../ws/hocuspocus.js';
 import { seedElements } from '../ws/ydocElements.js';
 import { updateDiagram } from '../services/diagramService.js';
@@ -120,5 +121,28 @@ describe('applyAccessChange (permissions change while connected)', () => {
     expect(conns[1].readOnly).toBe(false);
     applyAccessChange(server, 'p1', 'bob', 'editor');
     expect(conns[0].readOnly).toBe(false);
+  });
+
+  it('a project leaving a workspace or going private re-checks everyone connected', async () => {
+    const { doc, conns } = room([
+      { id: 'owner', projectId: 'p1' },
+      { id: 'teammate', projectId: 'p1' }, // had edit access through the workspace
+      { id: 'passerby', projectId: 'p1' }, // was viewing it because it was public
+      { id: 'teammate', projectId: 'p2' },
+    ]);
+    const server = { documents: new Map([['diagram:d1', doc]]) } as unknown as Pick<
+      Hocuspocus,
+      'documents'
+    >;
+    const accessOf = vi.fn(async (_p: string, userId: string) =>
+      userId === 'owner' ? ('owner' as const) : null,
+    );
+    await reapplyProjectAccess(server, 'p1', accessOf);
+    expect(accessOf.mock.calls.map((c) => c[1]).sort()).toEqual(['owner', 'passerby', 'teammate']);
+    expect(conns[0].webSocket.close).not.toHaveBeenCalled();
+    expect(conns[1].webSocket.close).toHaveBeenCalledWith(4403, 'Access revoked');
+    expect(conns[2].webSocket.close).toHaveBeenCalledWith(4403, 'Access revoked');
+    // The same person in another project's room is untouched
+    expect(conns[3].webSocket.close).not.toHaveBeenCalled();
   });
 });
