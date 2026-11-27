@@ -142,6 +142,40 @@ describe('REST saves after a teammate changed the diagram', () => {
     expect(server.find((e) => e.id === 'E')).toMatchObject({ x: 999 });
   });
 
+  it('keep an edit this tab made mid-save to a shape that save wrote', async () => {
+    let release!: () => void;
+    vi.mocked(apiUpdateDiagram).mockImplementationOnce(async (_id, body) => {
+      await new Promise<void>((r) => (release = r));
+      return serverMerge(body as Body) as never;
+    });
+    put(el('E', 6, 10)); // this tab moves E → save #1
+    const saving = saveNow();
+    put(el('E', 7, 20)); // …and keeps dragging it while the save is in flight
+    release();
+    await saving;
+    expect(store().get('E')).toMatchObject({ x: 20 });
+
+    // Save #2 builds on this tab's own write: applied, not a "teammate" conflict
+    await saveNow();
+    expect(server.find((e) => e.id === 'E')).toMatchObject({ x: 20 });
+    expect(store().get('E')).toMatchObject({ x: 20 });
+  });
+
+  it('after a conflict, build on the version kept instead of conflicting again', async () => {
+    server = [el('E', 6, 999)]; // a teammate moved E
+    put(el('E', 6, -5)); // so did this tab, from v5
+    await saveNow();
+    expect(store().get('E')).toMatchObject({ x: 999 }); // theirs kept
+    expect(savedVersions(D)?.get('E')).toBe(6);
+    // Nothing left to save: the tab holds exactly what the server has
+    expect(findDirtyDiagrams(store(), new Map([[D, diagram]]))).toHaveLength(0);
+
+    // An edit on top of their version goes through
+    put(el('E', 7, 5));
+    await saveNow();
+    expect(server.find((e) => e.id === 'E')).toMatchObject({ x: 5 });
+  });
+
   it('do not add an undo step', async () => {
     server = [el('E', 6, 999)];
     put(el('F', 1));

@@ -267,3 +267,32 @@ export function linkIn(email: SentEmail): string {
   if (!match) throw new Error(`No link in email "${email.subject}"`);
   return match[0];
 }
+
+/**
+ * Wait until everything `from` has sent over its live connection so far has
+ * been through the server and reached `to`: `from` publishes a unique
+ * awareness value (allowed even on read-only connections) and `to` waits to
+ * see it. One connection's messages are handled in order, so a write `from`
+ * sent earlier would have arrived first. Use this instead of sleeping before
+ * asserting that a write did NOT get through.
+ */
+export async function liveBarrier(from: Page, to: Page): Promise<void> {
+  const mark = `${Date.now()}-${Math.random()}`;
+  await from.evaluate(async (value) => {
+    const m = await import('/src/stores/collaborationStore.ts');
+    m.useCollaborationStore.getState().provider!.setAwarenessField('e2eBarrier', value);
+  }, mark);
+  await expect
+    .poll(
+      () =>
+        to.evaluate(async (value) => {
+          const m = await import('/src/stores/collaborationStore.ts');
+          const states = m.useCollaborationStore.getState().provider?.awareness?.getStates();
+          return [...(states?.values() ?? [])].some(
+            (s) => (s as { e2eBarrier?: string }).e2eBarrier === value,
+          );
+        }, mark),
+      { timeout: 10_000 },
+    )
+    .toBe(true);
+}

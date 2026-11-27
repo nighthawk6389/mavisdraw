@@ -5,6 +5,7 @@ import {
   dragPage,
   getActiveElements,
   interactiveCanvas,
+  liveBarrier,
   screenCenterOf,
   twoPeople,
   types,
@@ -141,7 +142,8 @@ test.describe('Teams', () => {
     await b.mouse.up();
     await b.keyboard.press('Delete');
     expect(box).toBeTruthy();
-    await b.waitForTimeout(500);
+    // Anything the viewer's tab sent has been through the server by now
+    await liveBarrier(b, a);
     expect(await types(b)).toEqual(['rectangle']);
     expect(await types(a)).toEqual(['rectangle']);
     expect((await getActiveElements(a))[0].x).toBe(rect.x);

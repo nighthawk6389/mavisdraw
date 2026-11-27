@@ -52,6 +52,14 @@ export async function resolveShareToken(
 
   if (!permission) return null;
 
+  // The owner following their own link gets nothing new (a share row would
+  // list them as a viewer, and outlive a transfer of ownership)
+  const project = await db.query.projects.findFirst({
+    where: eq(projects.id, permission.projectId),
+    columns: { ownerId: true },
+  });
+  if (project?.ownerId === userId) return { projectId: permission.projectId, role: permission.role };
+
   // Check if user already has access
   const existing = await db.query.projectPermissions.findFirst({
     where: and(

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import * as Y from 'yjs';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { diagrams } from '../db/schema.js';
+import { diagrams, projects } from '../db/schema.js';
 import {
   createDiagram,
   getDiagram,
@@ -105,6 +105,17 @@ const updateDiagramSchema = z.object({
 
 /** Diagrams carry inline images, so saves can be much larger than Fastify's 1MB default. */
 const DIAGRAM_BODY_LIMIT = 25 * 1024 * 1024;
+
+const snapshotPageSchema = z.object({
+  // Larger pages are capped rather than refused
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .default(50)
+    .transform((n) => Math.min(n, 100)),
+  offset: z.coerce.number().int().min(0).default(0),
+});
 
 const createSnapshotSchema = z.object({
   trigger: z.enum(['auto', 'manual']).optional(),
@@ -289,6 +300,16 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(403).send({ error: 'Access denied' });
     }
 
+    // Without its top-level diagram a project can't be opened (and the
+    // diagram's version history goes with it): delete the project instead
+    const project = await db.query.projects.findFirst({
+      where: eq(projects.id, existing.projectId),
+      columns: { rootDiagramId: true },
+    });
+    if (project?.rootDiagramId === id) {
+      return reply.code(409).send({ error: "A project's top-level diagram can't be deleted" });
+    }
+
     await deleteDiagram(id);
     return reply.code(200).send({ message: 'Diagram deleted' });
   });
@@ -365,7 +386,10 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/diagrams/:id/snapshots', { preHandler: [requireAuth] }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const userId = request.user!.userId;
-    const query = request.query as { limit?: string; offset?: string };
+    const page = snapshotPageSchema.safeParse(request.query ?? {});
+    if (!page.success) {
+      return reply.code(400).send({ error: 'Validation failed', details: page.error.issues });
+    }
 
     const existing = await getDiagram(id);
     if (!existing) {
@@ -377,10 +401,7 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(403).send({ error: 'Access denied' });
     }
 
-    const limit = Math.min(parseInt(query.limit ?? '50', 10), 100);
-    const offset = parseInt(query.offset ?? '0', 10);
-
-    const snapshotList = await getSnapshots(id, limit, offset);
+    const snapshotList = await getSnapshots(id, page.data.limit, page.data.offset);
     // The list is for browsing: counts, not whole element arrays
     return reply.code(200).send({
       snapshots: snapshotList.map((s) => ({

@@ -1,7 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import * as path from 'path';
 import * as fs from 'fs';
-import * as os from 'os';
 import { mockAuthAndOpenEditor } from './helpers/auth';
 
 function toolButton(page: Page, titlePrefix: string) {
@@ -87,15 +85,13 @@ test.describe('Export Dialog', () => {
     expect(download.suggestedFilename()).toMatch(/\.mavisdraw$/);
 
     // Read and validate file content
-    const filePath = path.join(os.tmpdir(), download.suggestedFilename());
+    const filePath = test.info().outputPath(download.suggestedFilename());
     await download.saveAs(filePath);
     const content = fs.readFileSync(filePath, 'utf-8');
     const parsed = JSON.parse(content);
     expect(parsed.type).toBe('mavisdraw');
     expect(parsed.version).toBe(1);
     expect(parsed.scene.elements.length).toBeGreaterThan(0);
-
-    fs.unlinkSync(filePath);
   });
 
   test('exports SVG file', async ({ page }) => {
@@ -111,13 +107,11 @@ test.describe('Export Dialog', () => {
 
     expect(download.suggestedFilename()).toMatch(/\.svg$/);
 
-    const filePath = path.join(os.tmpdir(), download.suggestedFilename());
+    const filePath = test.info().outputPath(download.suggestedFilename());
     await download.saveAs(filePath);
     const content = fs.readFileSync(filePath, 'utf-8');
     expect(content).toContain('<svg');
     expect(content).toContain('</svg>');
-
-    fs.unlinkSync(filePath);
   });
 });
 
@@ -182,12 +176,13 @@ test.describe('Import', () => {
       },
     });
 
-    // Write fixture to temp file
-    const fixturePath = path.join(os.tmpdir(), 'test-import.mavisdraw');
+    // Write fixture to this test's own output folder (tests run in parallel)
+    const fixturePath = test.info().outputPath('test-import.mavisdraw');
     fs.writeFileSync(fixturePath, fixture);
 
-    // Set up dialog handler before triggering import
+    const messages: string[] = [];
     page.on('dialog', async (dialog) => {
+      messages.push(dialog.message());
       await dialog.accept();
     });
 
@@ -195,10 +190,22 @@ test.describe('Import', () => {
     const input = page.locator('#import-file-input');
     await input.setInputFiles(fixturePath);
 
-    // Wait for the import alert to be handled
-    await page.waitForTimeout(1000);
-
-    fs.unlinkSync(fixturePath);
+    await expect.poll(() => messages).toEqual(['Imported 1 elements from mavisdraw file.']);
+    // The shape lands in the diagram on screen (this project's), under a new id
+    const active = await page.evaluate(() =>
+      (
+        window as unknown as {
+          __MAVISDRAW__: {
+            getActiveElements: () => Array<{ id: string; type: string; x: number; y: number }>;
+            getActiveDiagramId: () => string;
+          };
+        }
+      ).__MAVISDRAW__.getActiveElements(),
+    );
+    expect(active.map(({ type, x, y }) => ({ type, x, y }))).toEqual([
+      { type: 'rectangle', x: 100, y: 100 },
+    ]);
+    expect(active[0].id).not.toBe('test-rect-1');
   });
 });
 

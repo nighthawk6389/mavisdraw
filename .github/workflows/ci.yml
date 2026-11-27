@@ -118,3 +118,48 @@ jobs:
           name: playwright-report-real
           path: apps/web/playwright-report
           retention-days: 7
+
+  docker:
+    name: Docker images
+    # Pinned like the e2e jobs, so the Docker engine and tooling don't move under us
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: mavisdraw
+          POSTGRES_PASSWORD: mavisdraw_dev
+          POSTGRES_DB: mavisdraw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mavisdraw"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the server image (root Dockerfile)
+        run: docker build --target server -t mavisdraw-server .
+      - name: Build the web image (root Dockerfile)
+        run: docker build --target web -t mavisdraw-web .
+      - name: Build the standalone server image (apps/server/Dockerfile)
+        run: docker build -f apps/server/Dockerfile -t mavisdraw-server-standalone .
+      - name: docker-compose.yml is valid
+        run: docker compose config --quiet
+      # Each server image migrates a fresh database of its own
+      - name: Create databases
+        run: |
+          for db in smoke_compose smoke_standalone; do
+            docker exec ${{ job.services.postgres.id }} psql -U mavisdraw -c "CREATE DATABASE $db"
+          done
+      - name: Smoke-test the server image (migrate + seed like docker-compose, then serve)
+        run: >-
+          SMOKE_DB_INIT=1 scripts/docker-smoke.sh server mavisdraw-server
+          postgresql://mavisdraw:mavisdraw_dev@localhost:5432/smoke_compose 3001
+      - name: Smoke-test the standalone server image
+        run: >-
+          scripts/docker-smoke.sh server mavisdraw-server-standalone
+          postgresql://mavisdraw:mavisdraw_dev@localhost:5432/smoke_standalone 3001
+      - name: Smoke-test the web image
+        run: scripts/docker-smoke.sh web mavisdraw-web 3000
