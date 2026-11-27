@@ -15,26 +15,27 @@ import {
   type TestUser,
 } from './helpers';
 
-/** Lose the network: no HTTP, and the live socket drops too. */
+/**
+ * Lose the network: no HTTP, and the live socket drops too. Chromium's
+ * offline mode leaves open sockets alone, so the app's socket is closed by
+ * hand, and again while waiting in case it was being replaced just then.
+ */
 async function goOffline(context: BrowserContext, page: Page) {
-  await page.evaluate(async () => {
-    const m = await import('/src/stores/collaborationStore.ts');
-    const provider = m.useCollaborationStore.getState().provider as unknown as {
-      configuration: { websocketProvider: { disconnect: () => void } };
-    } | null;
-    provider?.configuration.websocketProvider.disconnect();
-  });
+  const dropSocket = () =>
+    page.evaluate(async () => {
+      const m = await import('/src/stores/collaborationStore.ts');
+      const provider = m.useCollaborationStore.getState().provider as unknown as {
+        configuration: { websocketProvider: { disconnect: () => void } };
+      } | null;
+      provider?.configuration.websocketProvider.disconnect();
+      return (
+        window as unknown as { __MAVISDRAW__?: { getConnectionStatus: () => string } }
+      ).__MAVISDRAW__?.getConnectionStatus();
+    });
+  await dropSocket();
   await context.setOffline(true);
   // Really offline: the live connection is down too
-  await expect
-    .poll(() =>
-      page.evaluate(() =>
-        (
-          window as unknown as { __MAVISDRAW__?: { getConnectionStatus: () => string } }
-        ).__MAVISDRAW__?.getConnectionStatus(),
-      ),
-    )
-    .toBe('disconnected');
+  await expect.poll(dropSocket).toBe('disconnected');
 }
 
 /**
