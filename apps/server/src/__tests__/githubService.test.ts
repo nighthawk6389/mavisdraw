@@ -73,7 +73,12 @@ describe('githubService', () => {
       expect(() => verifyOAuthState(`${forged}.${sig}`, 'user-1', 2_000)).toThrow(
         'Invalid OAuth state',
       );
-      expect(() => verifyOAuthState(`${payload}.x${sig.slice(1)}`, 'user-1', 2_000)).toThrow();
+      // A changed signature (always a different first character: the state is
+      // random, so a fixed replacement would sometimes be no change at all)
+      const tampered = `${sig[0] === 'A' ? 'B' : 'A'}${sig.slice(1)}`;
+      expect(() => verifyOAuthState(`${payload}.${tampered}`, 'user-1', 2_000)).toThrow(
+        'Invalid OAuth state',
+      );
       expect(() => verifyOAuthState(state, 'user-2', 2_000)).toThrow('another account');
       expect(() => verifyOAuthState(state, 'user-1', 1_000 + 11 * 60 * 1000)).toThrow('too long');
       expect(() => verifyOAuthState('garbage', 'user-1')).toThrow('Invalid OAuth state');
