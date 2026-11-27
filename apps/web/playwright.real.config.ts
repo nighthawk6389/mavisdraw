@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from 'node:crypto';
 import { defineConfig, devices } from '@playwright/test';
 
 /**
@@ -18,11 +19,24 @@ const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
 const API_PORT = process.env.E2E_API_PORT ?? '3101';
 const WEB_PORT = process.env.E2E_WEB_PORT ?? '3100';
 const DATABASE_URL =
-  process.env.E2E_DATABASE_URL ??
-  'postgresql://mavisdraw:mavisdraw_dev@localhost:5432/mavisdraw';
+  process.env.E2E_DATABASE_URL ?? 'postgresql://mavisdraw:mavisdraw_dev@localhost:5432/mavisdraw';
 
 export const API_URL = `http://localhost:${API_PORT}`;
 export const WEB_URL = `http://localhost:${WEB_PORT}`;
+
+/**
+ * Pull-request checks talk to a fake GitHub (e2e-real/fake-github.mjs) as a
+ * GitHub App with a key made for this run; tests sign webhooks with the
+ * secret below.
+ */
+const GITHUB_PORT = process.env.E2E_GITHUB_PORT ?? '3102';
+export const GITHUB_URL = `http://localhost:${GITHUB_PORT}`;
+export const GITHUB_APP_WEBHOOK_SECRET = 'e2e-github-webhook-secret';
+const githubAppKey = generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+  privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
+  publicKeyEncoding: { type: 'spki', format: 'pem' },
+});
 
 export default defineConfig({
   testDir: './e2e-real',
@@ -65,6 +79,30 @@ export default defineConfig({
         APP_URL: WEB_URL,
         LOG_LEVEL: 'warn',
         NODE_ENV: 'test',
+        // The fake GitHub is this instance's Enterprise server (people
+        // connect to it) and hosts its GitHub App
+        GITHUB_ENTERPRISE_URL: GITHUB_URL,
+        GITHUB_ENTERPRISE_CLIENT_ID: 'e2e-client',
+        GITHUB_ENTERPRISE_CLIENT_SECRET: 'e2e-client-secret',
+        GITHUB_TOKEN_ENCRYPTION_KEY: 'ab'.repeat(32),
+        GITHUB_APP_ID: '424242',
+        GITHUB_APP_PRIVATE_KEY: githubAppKey.privateKey,
+        GITHUB_APP_WEBHOOK_SECRET,
+        GITHUB_APP_SLUG: 'mavisdraw-e2e',
+        GITHUB_APP_WEB_URL: GITHUB_URL,
+        GITHUB_APP_API_URL: `${GITHUB_URL}/api/v3`,
+      },
+    },
+    {
+      command: 'node e2e-real/fake-github.mjs',
+      url: `${GITHUB_URL}/health`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 30_000,
+      env: {
+        FAKE_GITHUB_PORT: GITHUB_PORT,
+        FAKE_GITHUB_APP_ID: '424242',
+        FAKE_GITHUB_APP_PUBLIC_KEY: githubAppKey.publicKey,
+        FAKE_GITHUB_APP_SLUG: 'mavisdraw-e2e',
       },
     },
     {

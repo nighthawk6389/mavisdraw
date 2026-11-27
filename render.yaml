@@ -44,6 +44,9 @@ services:
       # GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_REDIRECT_URI,
       # GITHUB_TOKEN_ENCRYPTION_KEY (64 hex chars: openssl rand -hex 32)
       # and optionally GITHUB_ENTERPRISE_URL + GITHUB_ENTERPRISE_CLIENT_ID/SECRET
+      # Pull request checks (optional, see docs/pr-checks.md): GITHUB_APP_ID,
+      # GITHUB_APP_SLUG, GITHUB_APP_WEBHOOK_SECRET, GITHUB_APP_PRIVATE_KEY
+      # (from https://<this service>/api/github-app/setup)
       # Error reporting (optional): SENTRY_DSN
       # Email (invites, @mentions): MAIL_PROVIDER=resend|postmark, MAIL_FROM,
       # RESEND_API_KEY or POSTMARK_SERVER_TOKEN; APP_URL = the web app's URL

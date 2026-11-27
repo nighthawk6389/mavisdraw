@@ -552,6 +552,10 @@ async function loadProject(projectId: string, diagramId: string | null): Promise
   void useCommentsStore.getState().load(projectId);
   useProposalsStore.getState().reset();
   void useProposalsStore.getState().load(projectId);
+  // ?proposals=open (from a pull request comment) shows what's waiting for review
+  if (new URLSearchParams(window.location.search).has('proposals')) {
+    useProposalsStore.getState().setPanelOpen(true);
+  }
   useRepoStore.getState().setSource(project.repoSource ?? null);
   // Someone may already be presenting
   usePresentStore.setState({ stops: [], presenting: false, following: false, remote: null });

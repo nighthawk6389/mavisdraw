@@ -2,9 +2,25 @@
   "name": "@mavisdraw/compat",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./repo": {
+      "node": {
+        "types": "./dist/repo/index.d.ts",
+        "default": "./dist/repo/index.js"
+      },
+      "types": "./src/repo/index.ts",
+      "default": "./src/repo/index.ts"
+    }
+  },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src"

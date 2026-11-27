@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 
 vi.mock('../db/client.js', () => ({ db: {} }));
 const { getRepoSnapshot } = await import('../services/githubService.js');
-const { isManifest, isRelevantPath } = await import('../services/repoFiles.js');
+const { isManifest, isRelevantPath } = await import('@mavisdraw/compat/repo');
 
 afterEach(() => vi.unstubAllGlobals());
 

@@ -815,3 +815,9 @@ export function apiPublishEmbed(projectId: string, rotate = false): Promise<{ em
 export function apiUnpublishEmbed(projectId: string): Promise<void> {
   return apiFetch(`/api/projects/${projectId}/embed`, { method: 'DELETE' });
 }
+
+// ── Pull request checks (GitHub App) ──
+
+export function apiGitHubAppStatus(): Promise<{ configured: boolean; installUrl: string | null }> {
+  return apiFetch('/api/github-app/status');
+}

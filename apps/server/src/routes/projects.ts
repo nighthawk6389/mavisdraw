@@ -7,6 +7,8 @@ import { projects } from '../db/schema.js';
 import { checkProjectAccess, createDiagram } from '../services/diagramService.js';
 import { getWorkspaceRole } from '../services/workspaceService.js';
 import { listAccessibleProjects } from '../services/projectService.js';
+import { canReadRepo, getDecryptedToken, GitHubError } from '../services/githubService.js';
+import { config } from '../config.js';
 import { requireAuth } from '../middleware/auth.js';
 
 const createProjectSchema = z.object({
@@ -204,8 +206,36 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     }
     const access = await checkProjectAccess(id, userId);
     if (!access || access === 'viewer') return reply.code(403).send({ error: 'Access denied' });
+    let host: string | undefined;
+    if (parsed.data?.kind === 'github') {
+      // A map linked to a repository hears about its pull requests: the person
+      // linking it must be able to see that repository through their own
+      // GitHub connection
+      const { owner, repo, connectionId } = parsed.data;
+      if (!owner || !repo || !connectionId) {
+        return reply
+          .code(400)
+          .send({ error: 'A GitHub link needs the repository and your connection' });
+      }
+      let token: Awaited<ReturnType<typeof getDecryptedToken>>;
+      try {
+        token = await getDecryptedToken(connectionId, userId);
+      } catch (err) {
+        if (err instanceof GitHubError) return reply.code(403).send({ error: err.message });
+        throw err;
+      }
+      if (!(await canReadRepo(token.accessToken, owner, repo, token.enterpriseUrl))) {
+        return reply.code(403).send({ error: `Your GitHub connection can't see ${owner}/${repo}` });
+      }
+      host = token.enterpriseUrl ?? config.github.cloud.url;
+    }
     const repoSource = parsed.data
-      ? { ...parsed.data, generatedAt: new Date().toISOString(), generatedBy: userId }
+      ? {
+          ...parsed.data,
+          ...(host ? { host } : {}),
+          generatedAt: new Date().toISOString(),
+          generatedBy: userId,
+        }
       : null;
     await db.update(projects).set({ repoSource, updatedAt: new Date() }).where(eq(projects.id, id));
     return reply.send({ repoSource });

@@ -201,6 +201,13 @@ main folders inside, and the datastores and services it uses (from `package.json
 Later, **Check against the code** lists what changed since — new or removed packages, new
 dependencies, new services — each with a one-click fix, then **Mark map as up to date**.
 
+### Pull request checks
+
+With the MavisDraw GitHub App installed, every pull request on a mapped repository gets one comment
+(kept current) saying which components it touches and how it changes the architecture, with a
+proposed map update waiting under **Proposals** for one-click review. See
+[docs/pr-checks.md](docs/pr-checks.md).
+
 ### Coding agents (MCP)
 
 **Connect a coding agent** (dashboard, or ⌘K) gives Claude Code, Cursor and other MCP clients

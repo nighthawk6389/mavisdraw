@@ -1,4 +1,4 @@
-export { analyzeRepo, isManifest, isRelevantPath, parseCompose } from './analyze';
+export { analyzeRepo, isManifest, isRelevantPath, parseCompose } from './analyze.js';
 export type {
   RepoSnapshot,
   RepoModel,
@@ -6,6 +6,6 @@ export type {
   RepoResource,
   ComponentKind,
   ResourceKind,
-} from './analyze';
-export { repoToGraph, diffModels, describeDrift, componentKey, SHARED_GROUP } from './map';
-export type { RepoGraph, DriftChange } from './map';
+} from './analyze.js';
+export { repoToGraph, diffModels, describeDrift, componentKey, SHARED_GROUP } from './map.js';
+export type { RepoGraph, DriftChange } from './map.js';

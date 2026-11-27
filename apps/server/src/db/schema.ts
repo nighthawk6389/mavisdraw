@@ -376,6 +376,12 @@ export interface RepoSource {
   repo?: string;
   ref?: string;
   connectionId?: string;
+  /**
+   * GitHub host the link was verified on (set by the server when the linker's
+   * own connection could read the repository). Pull-request checks only use
+   * verified links.
+   */
+  host?: string;
   /** Architecture model (see @mavisdraw/compat analyzeRepo) at generation time. */
   model: unknown;
   generatedAt: string;

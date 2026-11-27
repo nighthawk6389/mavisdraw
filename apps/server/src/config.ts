@@ -37,6 +37,22 @@ export interface Config {
     /** One GitHub Enterprise Server, if configured. Only this host is ever contacted besides github.com. */
     enterprise: GitHubHostConfig | null;
   };
+  /** The GitHub App behind pull-request map checks (null when not set up). */
+  githubApp: GitHubAppConfig | null;
+}
+
+export interface GitHubAppConfig {
+  appId: string;
+  /** PEM private key, for signing the app's JWTs. */
+  privateKey: string;
+  /** Shared secret GitHub signs webhook deliveries with. */
+  webhookSecret: string;
+  /** The app's URL name, for "install the app" links. */
+  slug: string | null;
+  /** REST API base (github.com's by default; Enterprise or a test double otherwise). */
+  apiUrl: string;
+  /** Web origin, for install links. */
+  webUrl: string;
 }
 
 const DEV = {
@@ -121,6 +137,38 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     );
   }
 
+  // GitHub App (PR checks): all three secrets, or none
+  const appParts = [env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, env.GITHUB_APP_WEBHOOK_SECRET];
+  let githubApp: GitHubAppConfig | null = null;
+  if (appParts.some(Boolean)) {
+    if (!appParts.every(Boolean)) {
+      problems.push(
+        'The GitHub App needs GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY and GITHUB_APP_WEBHOOK_SECRET together',
+      );
+    } else {
+      // Render and .env files often hold the PEM on one line with \n escapes
+      const privateKey = env.GITHUB_APP_PRIVATE_KEY!.replace(/\\n/g, '\n');
+      if (!/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(privateKey)) {
+        problems.push('GITHUB_APP_PRIVATE_KEY must be the PEM private key GitHub generated');
+      }
+      if (isProduction && env.GITHUB_APP_WEBHOOK_SECRET!.length < 16) {
+        problems.push('GITHUB_APP_WEBHOOK_SECRET must be at least 16 characters');
+      }
+      const apiUrl = (env.GITHUB_APP_API_URL || 'https://api.github.com').replace(/\/+$/, '');
+      if (isProduction && !apiUrl.startsWith('https://')) {
+        problems.push('GITHUB_APP_API_URL must use https');
+      }
+      githubApp = {
+        appId: env.GITHUB_APP_ID!,
+        privateKey,
+        webhookSecret: env.GITHUB_APP_WEBHOOK_SECRET!,
+        slug: env.GITHUB_APP_SLUG || null,
+        apiUrl,
+        webUrl: originOf(env.GITHUB_APP_WEB_URL) || 'https://github.com',
+      };
+    }
+  }
+
   const provider = (env.MAIL_PROVIDER ?? (isProduction ? 'none' : 'log')).toLowerCase();
   if (!['resend', 'postmark', 'log', 'outbox', 'none'].includes(provider)) {
     problems.push('MAIL_PROVIDER must be resend, postmark, log, outbox or none');
@@ -163,6 +211,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       },
       enterprise,
     },
+    githubApp,
   };
   return { config, problems };
 }

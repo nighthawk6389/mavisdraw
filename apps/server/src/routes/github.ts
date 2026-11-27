@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { isManifest, isRelevantPath } from '../services/repoFiles.js';
+import { isManifest, isRelevantPath } from '@mavisdraw/compat/repo';
 import { requireAuth } from '../middleware/auth.js';
 import {
   getAuthorizeUrl,

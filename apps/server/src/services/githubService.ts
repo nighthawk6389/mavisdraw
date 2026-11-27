@@ -43,7 +43,10 @@ export function resolveGitHubHost(
   }
   const origin = originOf(enterpriseUrl);
   if (!origin || !github.enterprise || origin !== github.enterprise.url) {
-    throw new GitHubError('That GitHub Enterprise server is not enabled on this MavisDraw instance', 400);
+    throw new GitHubError(
+      'That GitHub Enterprise server is not enabled on this MavisDraw instance',
+      400,
+    );
   }
   return {
     authUrl: origin,
@@ -99,8 +102,10 @@ export function verifyOAuthState(
     e: string | null;
     x: number;
   };
-  if (data.u !== userId) throw new GitHubError('This GitHub authorization was started by another account', 400);
-  if (data.x < now) throw new GitHubError('The GitHub authorization took too long; please try again', 400);
+  if (data.u !== userId)
+    throw new GitHubError('This GitHub authorization was started by another account', 400);
+  if (data.x < now)
+    throw new GitHubError('The GitHub authorization took too long; please try again', 400);
   return { enterpriseUrl: data.e };
 }
 
@@ -249,6 +254,28 @@ async function githubFetch<T>(
   return response.json() as Promise<T>;
 }
 
+/** Can this token see the repository? (Proof of access before linking a map to it.) */
+export async function canReadRepo(
+  accessToken: string,
+  owner: string,
+  repo: string,
+  enterpriseUrl?: string | null,
+): Promise<boolean> {
+  try {
+    await githubFetch(
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+      accessToken,
+      enterpriseUrl,
+    );
+    return true;
+  } catch (err) {
+    if (err instanceof GitHubError && (err.statusCode === 404 || err.statusCode === 403)) {
+      return false;
+    }
+    throw err;
+  }
+}
+
 export async function getGitHubUser(
   accessToken: string,
   enterpriseUrl?: string | null,
@@ -363,7 +390,11 @@ export async function getRepoSnapshot(
   const tree = await githubFetch<{
     tree: Array<{ path: string; type: string }>;
     truncated: boolean;
-  }>(`/repos/${owner}/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`, accessToken, enterpriseUrl);
+  }>(
+    `/repos/${owner}/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
+    accessToken,
+    enterpriseUrl,
+  );
 
   const files = tree.tree
     .filter((e) => e.type === 'blob' && isRelevant(e.path))
@@ -387,7 +418,13 @@ export async function getRepoSnapshot(
     );
     for (const r of results) if (r) manifests[r[0]] = r[1];
   }
-  return { name: repo, ref, files, manifests, truncated: tree.truncated || files.length >= SNAPSHOT_MAX_FILES };
+  return {
+    name: repo,
+    ref,
+    files,
+    manifests,
+    truncated: tree.truncated || files.length >= SNAPSHOT_MAX_FILES,
+  };
 }
 
 // ── Connection Management ───────────────────────────────────

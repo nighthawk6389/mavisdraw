@@ -94,6 +94,9 @@ export async function applyProposal(proposal: DiagramProposal): Promise<ApplyRes
     if (type === 'portal') {
       const portal = shape as PortalElement;
       portal.label = change.label;
+      // A system proposed from the code (PR checks) stays linked to its folder
+      const codePath = change.properties?.codePath;
+      if (typeof codePath === 'string' && codePath.length <= 300) portal.codePath = codePath;
       const child = useDiagramStore.getState().createDiagram(diagramId, portal.id, change.label);
       portal.targetDiagramId = child.id;
       newDiagrams.push(child);

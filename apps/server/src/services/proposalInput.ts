@@ -10,7 +10,8 @@ export type ComponentKind = 'component' | 'datastore' | 'system';
 
 export interface ProposalRequest {
   description: string;
-  add?: Array<{ name: string; kind?: ComponentKind }>;
+  /** `codePath`: the repository folder a new system stands for (PR checks know it). */
+  add?: Array<{ name: string; kind?: ComponentKind; codePath?: string }>;
   connect?: Array<{ from: string; to: string; label?: string }>;
   rename?: Array<{ component: string; to: string }>;
   remove?: Array<{ component: string }>;
@@ -89,7 +90,13 @@ export function buildProposal(
     }
     if (added.has(key(name))) continue;
     added.set(key(name), name);
-    changes.push({ action: 'add', elementType: ELEMENT_TYPE[a.kind ?? 'component'], label: name });
+    const change: ProposedChange = {
+      action: 'add',
+      elementType: ELEMENT_TYPE[a.kind ?? 'component'],
+      label: name,
+    };
+    if (a.codePath) change.properties = { codePath: a.codePath };
+    changes.push(change);
   }
 
   for (const r of rename) {

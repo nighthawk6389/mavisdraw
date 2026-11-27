@@ -18,6 +18,7 @@ import {
   type GitHubRepo,
 } from '../../services/github';
 import { toast } from '../../stores/toastStore';
+import PullRequestChecks from './PullRequestChecks';
 
 const timeAgo = (iso: string) => {
   const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -278,6 +279,10 @@ export default function RepoMapDialog() {
                 />
               )}
             </div>
+
+            {source.kind === 'github' && source.owner && source.repo && (
+              <PullRequestChecks repo={`${source.owner}/${source.repo}`} />
+            )}
 
             {drift && drift.length > 0 && (
               <>
