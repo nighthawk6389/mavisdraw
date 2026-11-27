@@ -398,6 +398,43 @@ test.describe('Rotating', () => {
   });
 });
 
+test.describe('Editing labels', () => {
+  test.beforeEach(async ({ page }) => {
+    await mockAuthAndOpenEditor(page);
+  });
+
+  // The second press of a double-click opens the editor; its mousedown used
+  // to move focus to the page for a frame, losing keys typed in that gap
+  test('the label editor keeps focus from the double-click on', async ({ page }) => {
+    const rect = await drawRect(page, 200, 200, 360, 280);
+    await page.evaluate(() => {
+      const w = window as unknown as { __editorBlurs: number };
+      w.__editorBlurs = 0;
+      document.addEventListener(
+        'focusout',
+        (e) => {
+          if ((e.target as HTMLElement).isContentEditable) w.__editorBlurs++;
+        },
+        true,
+      );
+    });
+    const box = await canvasBox(page);
+    await page.mouse.dblclick(box.x + rect.x + 80, box.y + rect.y + 40);
+    await expect(page.locator('[contenteditable]')).toBeFocused();
+    await page.evaluate(
+      () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
+    );
+    expect(
+      await page.evaluate(() => (window as unknown as { __editorBlurs: number }).__editorBlurs),
+    ).toBe(0);
+    await page.keyboard.type('Billing', { delay: 0 });
+    await page.keyboard.press('Enter');
+    await expect
+      .poll(async () => (await hooks.elements(page)).find((e) => e.type === 'text'))
+      .toMatchObject({ text: 'Billing' });
+  });
+});
+
 test.describe('Selecting', () => {
   test.beforeEach(async ({ page }) => {
     await mockAuthAndOpenEditor(page);

@@ -215,6 +215,12 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
   // editor actually having focus. Without this, fast typing loses the first
   // letters, and they trigger tool shortcuts instead ("A" → arrow tool).
   const typeaheadRef = useRef<{ text: string; since: number } | null>(null);
+  /**
+   * The press now in progress opened the text editor (a double-click's
+   * second press). Its mousedown must not move focus to the page, or keys
+   * typed before the editor is re-focused a frame later are lost.
+   */
+  const editorOpenedByPressRef = useRef(false);
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const pending = typeaheadRef.current;
@@ -236,6 +242,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     (element: MavisElement, isNew: boolean) => {
       textEditStartTimeRef.current = Date.now();
       typeaheadRef.current = { text: '', since: Date.now() };
+      editorOpenedByPressRef.current = true;
 
       // Connectors: edit the existing label or start a new one at the midpoint
       if (element.type === 'arrow' || element.type === 'line') {
@@ -1074,6 +1081,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLCanvasElement>) => {
+      editorOpenedByPressRef.current = false;
       if (textEditState) finalizeTextEdit();
       setContextMenu(null);
 
@@ -1371,6 +1379,11 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         className="absolute inset-0"
         style={{ touchAction: 'none' }}
         onPointerDown={handlePointerDown}
+        onMouseDown={(e) => {
+          // Keep focus in the editor this press just opened (see editorOpenedByPressRef)
+          if (editorOpenedByPressRef.current) e.preventDefault();
+          editorOpenedByPressRef.current = false;
+        }}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
