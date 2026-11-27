@@ -43,6 +43,7 @@ import { useUIStore } from './stores/uiStore';
 import { openImportDialog } from './components/export/ImportHandler';
 import { useDiagramStore } from './stores/diagramStore';
 import LoginPage from './routes/login';
+import VerifyEmailPage from './routes/verifyEmail';
 import Dashboard from './routes/dashboard';
 import {
   apiAcceptInvite,
@@ -637,6 +638,11 @@ export default function App() {
     let cancelled = false;
     apiAcceptInvite(inviteToken)
       .then(({ kind, targetId }) => {
+        // The invite went to their address, so the server now counts it as confirmed
+        const user = useAuthStore.getState().user;
+        if (user && !user.emailVerified) {
+          useAuthStore.setState({ user: { ...user, emailVerified: true } });
+        }
         if (cancelled) return;
         toast(
           kind === 'project' ? "You've joined the project" : "You've joined the workspace",
@@ -704,6 +710,9 @@ export default function App() {
       </div>
     );
   }
+
+  // The confirmation link works signed in or out
+  if (route.name === 'verifyEmail') return <VerifyEmailPage />;
 
   if (!isAuthenticated) {
     // Keyed: once the invite details arrive, open on "sign up" (it usually is a new account)

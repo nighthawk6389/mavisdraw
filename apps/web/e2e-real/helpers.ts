@@ -27,15 +27,26 @@ export async function registerUser(
   context: BrowserContext,
   name = 'E2E User',
   prefix = 'user',
+  options: { email?: string; verify?: boolean } = {},
 ): Promise<TestUser> {
-  const email = uniqueEmail(prefix);
+  const email = options.email ?? uniqueEmail(prefix);
   const password = 'correct-horse-battery';
   const res = await context.request.post(`${API_URL}/api/auth/register`, {
     data: { email, password, name },
   });
   expect(res.status(), await res.text()).toBe(201);
   const body = (await res.json()) as { accessToken: string };
+  // Like a real person: open the confirmation email (unless the test is about not doing that)
+  if (options.verify !== false) await confirmEmail(context.request, email);
   return { email, password, name, accessToken: body.accessToken };
+}
+
+/** Follow the confirmation link emailed to `email` (through the API). */
+export async function confirmEmail(request: APIRequestContext, email: string): Promise<void> {
+  const sent = await waitForEmail(request, email, /Confirm your email/);
+  const token = new URL(linkIn(sent)).searchParams.get('token');
+  const res = await request.post(`${API_URL}/api/auth/verify-email`, { data: { token } });
+  expect(res.status(), await res.text()).toBe(200);
 }
 
 export async function apiCreateProject(

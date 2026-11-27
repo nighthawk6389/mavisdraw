@@ -22,6 +22,11 @@ export const users = pgTable('users', {
   avatarUrl: text('avatar_url'),
   oauthProvider: varchar('oauth_provider', { length: 50 }),
   oauthProviderId: text('oauth_provider_id'),
+  /**
+   * When they proved they own the email (confirmation link, or an invite link
+   * sent to it). Until then, invites to the address aren't granted to them.
+   */
+  emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

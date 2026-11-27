@@ -7,12 +7,14 @@ import { useSyncExternalStore } from 'react';
  *   /p/:projectId/d/:diagramId a nested diagram (deep link)
  *   /share/:token              accept a share link, then open the project
  *   /invite/:token             accept an email invite (project or workspace)
+ *   /verify-email?token=…      confirm the account's email address
  */
 export type Route =
   | { name: 'dashboard' }
   | { name: 'project'; projectId: string; diagramId: string | null }
   | { name: 'share'; token: string }
-  | { name: 'invite'; token: string };
+  | { name: 'invite'; token: string }
+  | { name: 'verifyEmail' };
 
 export function parseRoute(pathname: string): Route {
   const parts = pathname.split('/').filter(Boolean).map(decodeURIComponent);
@@ -25,6 +27,7 @@ export function parseRoute(pathname: string): Route {
   }
   if (parts[0] === 'share' && parts[1]) return { name: 'share', token: parts[1] };
   if (parts[0] === 'invite' && parts[1]) return { name: 'invite', token: parts[1] };
+  if (parts[0] === 'verify-email') return { name: 'verifyEmail' };
   return { name: 'dashboard' };
 }
 

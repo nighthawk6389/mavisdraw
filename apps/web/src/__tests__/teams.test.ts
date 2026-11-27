@@ -35,6 +35,8 @@ describe('routing', () => {
       diagramId: 'xyz',
     });
     expect(parseRoute('/share/tok123')).toEqual({ name: 'share', token: 'tok123' });
+    // The confirmation link (its token is in the query string)
+    expect(parseRoute('/verify-email')).toEqual({ name: 'verifyEmail' });
     // Unknown or incomplete paths fall back to the dashboard
     expect(parseRoute('/p')).toEqual({ name: 'dashboard' });
     expect(parseRoute('/nope')).toEqual({ name: 'dashboard' });

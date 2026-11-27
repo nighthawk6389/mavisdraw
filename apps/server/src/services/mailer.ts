@@ -186,3 +186,22 @@ Reply: ${input.link}`;
   );
   return { to: input.to, subject, text, html };
 }
+
+/** Confirm a new account's email address (needed before invites to it are granted). */
+export function verifyEmail(input: { to: string; name: string; link: string }): Email {
+  const subject = 'Confirm your email for MavisDraw';
+  const text = `Hi ${input.name},
+
+Confirm that ${input.to} is your email address:
+${input.link}
+
+Until you do, projects and workspaces shared with this address stay waiting for you.
+If you didn't create a MavisDraw account, ignore this email.`;
+  const html = layout(
+    'Confirm your email',
+    `<p>Hi ${escapeHtml(input.name)}, confirm that <strong>${escapeHtml(input.to)}</strong> is your email address.</p><p>Until you do, projects and workspaces shared with this address stay waiting for you.</p>`,
+    { label: 'Confirm my email', url: input.link },
+    "If you didn't create a MavisDraw account, you can ignore this email.",
+  );
+  return { to: input.to, subject, text, html };
+}

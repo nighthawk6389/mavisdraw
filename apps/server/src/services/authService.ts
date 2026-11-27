@@ -26,6 +26,8 @@ export interface UserResponse {
   email: string;
   name: string;
   avatarUrl: string | null;
+  /** Confirmed ownership of the email (see services/emailVerification.ts). */
+  emailVerified: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -36,6 +38,7 @@ function toUserResponse(user: typeof users.$inferSelect): UserResponse {
     email: user.email,
     name: user.name,
     avatarUrl: user.avatarUrl,
+    emailVerified: user.emailVerifiedAt !== null,
     createdAt: user.createdAt.toISOString(),
     updatedAt: user.updatedAt.toISOString(),
   };

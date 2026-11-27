@@ -15,6 +15,8 @@ export interface AuthUser {
   email: string;
   name: string;
   avatarUrl: string | null;
+  /** Has the account confirmed its email? Invites to it wait until then. */
+  emailVerified?: boolean;
   createdAt: string;
   updatedAt: string;
 }

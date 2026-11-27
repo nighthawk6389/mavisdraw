@@ -9,6 +9,11 @@ import {
   AuthError,
 } from '../services/authService.js';
 import { claimInvitesForEmail } from '../services/workspaceService.js';
+import {
+  confirmEmail,
+  sendVerificationEmail,
+  VerificationError,
+} from '../services/emailVerification.js';
 import { requireAuth } from '../middleware/auth.js';
 import { authRateLimit } from '../middleware/rateLimit.js';
 
@@ -37,8 +42,9 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
     try {
       const { user, tokens } = await registerUser(parsed.data.email, parsed.data.password, parsed.data.name);
-      // Invitations sent to this address before the account existed
-      await claimInvitesForEmail(user.id, user.email);
+      // Invitations to this address wait until it's confirmed as theirs
+      // (anyone can type any address into a sign-up form)
+      await sendVerificationEmail(user);
 
       reply.setCookie('refreshToken', tokens.refreshToken, {
         httpOnly: true,
@@ -67,7 +73,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
     try {
       const { user, tokens } = await loginUser(parsed.data.email, parsed.data.password);
-      await claimInvitesForEmail(user.id, user.email);
+      if (user.emailVerified) await claimInvitesForEmail(user.id, user.email);
 
       reply.setCookie('refreshToken', tokens.refreshToken, {
         httpOnly: true,
@@ -86,6 +92,32 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       throw err;
     }
   });
+
+  // Confirm the account's email (the link from the confirmation email; no
+  // sign-in needed: it may be opened on another device)
+  app.post('/api/auth/verify-email', { preHandler: [authRateLimit] }, async (request, reply) => {
+    const parsed = z.object({ token: z.string().min(1).max(2000) }).safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'Missing confirmation token' });
+    try {
+      const { userId, claimed } = await confirmEmail(parsed.data.token);
+      return reply.send({ verified: true, userId, claimed });
+    } catch (err) {
+      if (err instanceof VerificationError) return reply.code(400).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  // Send the confirmation email again
+  app.post(
+    '/api/auth/resend-verification',
+    { preHandler: [authRateLimit, requireAuth] },
+    async (request, reply) => {
+      const user = await getUserById(request.user!.userId);
+      if (!user) return reply.code(404).send({ error: 'User not found' });
+      if (user.emailVerified) return reply.send({ sent: false, verified: true });
+      return reply.send({ sent: await sendVerificationEmail(user), verified: false });
+    },
+  );
 
   // Refresh token
   app.post('/api/auth/refresh', async (request, reply) => {

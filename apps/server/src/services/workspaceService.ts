@@ -173,9 +173,10 @@ export async function grant(kind: InviteKind, targetId: string, userId: string, 
 }
 
 /**
- * Invite an email address. Someone who already has an account gets access
- * right away; anyone else gets a pending invite (and a link to send them),
- * claimed when they sign up or log in with that email.
+ * Invite an email address. Someone whose account has confirmed that address
+ * gets access right away; anyone else gets a pending invite (and a link to
+ * send them), claimed once an account confirms the address or opens the link.
+ * (An account that merely typed the address at sign-up proves nothing.)
  */
 export async function inviteByEmail(input: {
   kind: InviteKind;
@@ -189,7 +190,7 @@ export async function inviteByEmail(input: {
 > {
   const email = normalizeEmail(input.email);
   const user = await db.query.users.findFirst({ where: eq(users.email, email) });
-  if (user) {
+  if (user?.emailVerifiedAt) {
     await grant(input.kind, input.targetId, user.id, input.role);
     const emailed = await emailAbout(input, email, null);
     return { status: 'added', userId: user.id, emailed };
@@ -272,7 +273,7 @@ export async function revokeInvite(id: string, kind: InviteKind, targetId: strin
     .where(and(eq(invites.id, id), eq(invites.kind, kind), eq(invites.targetId, targetId)));
 }
 
-/** Grant every pending invite for this email (called on sign-up and log-in). */
+/** Grant every pending invite for this email (once an account has confirmed it). */
 export async function claimInvitesForEmail(userId: string, email: string): Promise<number> {
   const pending = await db.query.invites.findMany({
     where: and(eq(invites.email, normalizeEmail(email)), isNull(invites.acceptedAt)),
@@ -337,6 +338,15 @@ export async function acceptInvite(token: string, userId: string, userEmail: str
       .update(invites)
       .set({ acceptedAt: new Date(), acceptedBy: userId })
       .where(eq(invites.id, invite.id));
+  }
+  // The link went to that address, so opening it confirms the address is theirs
+  const user = await db.query.users.findFirst({
+    where: eq(users.id, userId),
+    columns: { emailVerifiedAt: true },
+  });
+  if (user && !user.emailVerifiedAt) {
+    await db.update(users).set({ emailVerifiedAt: new Date() }).where(eq(users.id, userId));
+    await claimInvitesForEmail(userId, userEmail);
   }
   return { kind: invite.kind, targetId: invite.targetId };
 }

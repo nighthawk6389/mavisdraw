@@ -29,6 +29,13 @@
       "when": 1795741658634,
       "tag": "0003_project_embeds",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795745706345,
+      "tag": "0004_email_verification",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuthStore } from '../stores/authStore';
+import ConfirmEmailBanner from '../components/auth/ConfirmEmailBanner';
 import { navigate, projectPath } from '../routing';
 import {
   apiListProjects,
@@ -251,6 +252,7 @@ export default function Dashboard({ onOpenProject }: DashboardProps) {
           </div>
         </div>
       </header>
+      <ConfirmEmailBanner />
 
       <div className="mx-auto flex max-w-7xl gap-6 px-4 py-8 sm:px-6 lg:px-8">
         {/* Spaces */}

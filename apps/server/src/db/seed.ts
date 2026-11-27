@@ -27,6 +27,7 @@ async function seed() {
   await db.insert(users).values({
     id: userId,
     email: 'demo@mavisdraw.dev',
+    emailVerifiedAt: new Date(),
     name: 'Demo User',
     passwordHash,
     createdAt: now,

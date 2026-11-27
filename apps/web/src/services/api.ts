@@ -145,6 +145,8 @@ export interface AuthResponse {
     email: string;
     name: string;
     avatarUrl: string | null;
+    /** Has the account confirmed its email? Invites to it wait until then. */
+    emailVerified?: boolean;
     createdAt: string;
     updatedAt: string;
   };
@@ -176,6 +178,17 @@ export async function apiLogout(): Promise<void> {
 
 export async function apiGetMe(): Promise<{ user: AuthResponse['user'] }> {
   return apiFetch('/api/auth/me');
+}
+
+/** Confirm an email address from the emailed link (no sign-in needed). */
+export async function apiVerifyEmail(
+  token: string,
+): Promise<{ verified: true; userId: string; claimed: number }> {
+  return apiFetch('/api/auth/verify-email', { method: 'POST', body: JSON.stringify({ token }) });
+}
+
+export async function apiResendVerification(): Promise<{ sent: boolean; verified: boolean }> {
+  return apiFetch('/api/auth/resend-verification', { method: 'POST', body: JSON.stringify({}) });
 }
 
 export async function apiRefreshToken(): Promise<{ accessToken: string }> {
