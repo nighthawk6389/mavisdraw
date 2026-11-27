@@ -20,6 +20,7 @@ import {
   boundTextBox,
   isLinear,
   cascadeDelete,
+  reglueArrowEndpoints,
   syncBoundElements,
   withBoundLabels,
 } from './elementBindings';
@@ -200,6 +201,14 @@ interface ElementsState {
   // Bulk operations
   setElements: (elements: MavisElement[]) => void;
   updateElements: (updates: { id: string; changes: Partial<MavisElement> }[]) => void;
+  /**
+   * Apply many updates as one store change, without opening an undo step —
+   * for pointer gestures (drag, resize) that already run inside a history
+   * batch. One Map copy and one change notification per call, however many
+   * elements move. Labels stay inside their shapes and bound arrows stay
+   * attached, including arrows that move while their target stays put.
+   */
+  updateElementsSilent: (updates: { id: string; changes: Partial<MavisElement> }[]) => void;
 
   // Query
   getElementById: (id: string) => MavisElement | undefined;
@@ -272,10 +281,11 @@ interface ElementsState {
 
   copyElements: (ids: string[]) => ClipboardEnvelope | null;
   /** Paste the internal clipboard. With `at`, the pasted group is centered there. */
-  pasteElements: (diagramId: string, at?: Point) => MavisElement[];
+  pasteElements: (diagramId: string, at?: Point, offset?: Point) => MavisElement[];
   /** Load elements from a system-clipboard envelope into the internal clipboard. */
   setClipboardFromEnvelope: (envelope: ClipboardEnvelope) => void;
-  duplicateElements: (ids: string[]) => MavisElement[];
+  /** Copy elements (with their labels) offset by `offset` (default 10, 10). */
+  duplicateElements: (ids: string[], offset?: Point) => MavisElement[];
 
   // ── Alignment ──────────────────────────────────────────────
 
@@ -382,6 +392,43 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
   updateElementSilent: (id: string, updates: Partial<MavisElement>) => {
     if (!get().elements.has(id)) return;
     applyElementUpdate(set, id, updates);
+  },
+
+  updateElementsSilent: (updates: { id: string; changes: Partial<MavisElement> }[]) => {
+    const state = get();
+    if (!updates.some((u) => state.elements.has(u.id))) return;
+    set((prev) => {
+      const next = new Map(prev.elements);
+      const now = Date.now();
+      const changed: string[] = [];
+      for (const { id, changes } of updates) {
+        const current = next.get(id);
+        if (!current) continue;
+        next.set(id, {
+          ...current,
+          ...changes,
+          version: current.version + 1,
+          updatedAt: now,
+        } as MavisElement);
+        changed.push(id);
+      }
+      for (const id of changed) {
+        const el = next.get(id)!;
+        // A label moved on its own stays inside its shape
+        if (el.type === 'text' && el.containerId) {
+          const container = next.get(el.containerId);
+          if (container && !container.isDeleted && !isLinear(container)) {
+            next.set(id, {
+              ...el,
+              ...clampBoundTextToContainer(el.x, el.y, el.width, el.height, container),
+            } as MavisElement);
+          }
+        }
+      }
+      for (const id of changed) syncBoundElements(next, id);
+      for (const id of changed) reglueArrowEndpoints(next, id);
+      return { elements: next };
+    });
   },
 
   updateElements: (updates: { id: string; changes: Partial<MavisElement> }[]) => {
@@ -976,14 +1023,14 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
     set({ clipboard: { elements, sourceOffset: { x: minX, y: minY } } });
   },
 
-  pasteElements: (diagramId: string, at?: Point): MavisElement[] => {
+  pasteElements: (diagramId: string, at?: Point, offset?: Point): MavisElement[] => {
     const state = get();
     const clipData = state.clipboard;
     if (!clipData || clipData.elements.length === 0) return [];
 
     // Where to put the pasted group: centered on `at`, or nudged from the source
-    let dx = 10;
-    let dy = 10;
+    let dx = offset?.x ?? 10;
+    let dy = offset?.y ?? 10;
     if (at) {
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const el of clipData.elements) {
@@ -1063,13 +1110,13 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
     return newElements;
   },
 
-  duplicateElements: (ids: string[]): MavisElement[] => {
+  duplicateElements: (ids: string[], offset?: Point): MavisElement[] => {
     const state = get();
     const previousClipboard = state.clipboard;
     const envelope = state.copyElements(ids);
     if (!envelope) return [];
     const diagramId = envelope.elements[0].diagramId;
-    const pasted = get().pasteElements(diagramId);
+    const pasted = get().pasteElements(diagramId, undefined, offset);
     // Duplicating shouldn't clobber what the user copied
     set({ clipboard: previousClipboard });
     return pasted;
@@ -1329,6 +1376,7 @@ const MUTATORS = [
   'updateElement',
   'updateElementSilent',
   'updateElements',
+  'updateElementsSilent',
   'deleteElement',
   'deleteElements',
   'discardElements',

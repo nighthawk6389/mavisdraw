@@ -161,39 +161,63 @@ export function syncBoundElements(next: Map<string, MavisElement>, id: string): 
     }
 
     if (el.type === 'arrow' || el.type === 'line') {
-      const arrow = el as LinearElement;
-      const points = arrow.points.map((p) => [...p] as [number, number]);
-      let changed = false;
-
-      if (arrow.startBinding?.elementId === id && points.length >= 2) {
-        const other = points[points.length - 1];
-        const edge = getBindingEdgePoint(
-          shape,
-          arrow.x + other[0],
-          arrow.y + other[1],
-          arrow.startBinding.gap,
-        );
-        points[0] = [edge.x - arrow.x, edge.y - arrow.y];
-        changed = true;
-      }
-      if (arrow.endBinding?.elementId === id && points.length >= 2) {
-        const other = points[0];
-        const edge = getBindingEdgePoint(
-          shape,
-          arrow.x + other[0],
-          arrow.y + other[1],
-          arrow.endBinding.gap,
-        );
-        points[points.length - 1] = [edge.x - arrow.x, edge.y - arrow.y];
-        changed = true;
-      }
-      if (changed) {
-        const moved = bump(arrow, { points });
-        next.set(arrow.id, moved);
-        syncConnectorLabels(next, moved);
-      }
+      glueEndpoints(next, el as LinearElement, (targetId) => (targetId === id ? shape : null), true);
     }
   }
+}
+
+/**
+ * Put an arrow's bound endpoints back on the outline of the shapes they're
+ * bound to. `targetFor` picks which bindings to honour. With `always`, the
+ * arrow is rewritten even when nothing moved (the historical behaviour of
+ * `syncBoundElements`); otherwise only when an endpoint actually changed.
+ */
+function glueEndpoints(
+  next: Map<string, MavisElement>,
+  arrow: LinearElement,
+  targetFor: (targetId: string) => MavisElement | null,
+  always: boolean,
+): void {
+  if (arrow.points.length < 2) return;
+  const points = arrow.points.map((p) => [...p] as [number, number]);
+  let glued = false;
+  let moved = false;
+  const place = (index: number, otherIndex: number, target: MavisElement, gap: number) => {
+    const other = points[otherIndex];
+    const edge = getBindingEdgePoint(target, arrow.x + other[0], arrow.y + other[1], gap);
+    const value: [number, number] = [edge.x - arrow.x, edge.y - arrow.y];
+    if (value[0] !== points[index][0] || value[1] !== points[index][1]) moved = true;
+    points[index] = value;
+    glued = true;
+  };
+  const start = arrow.startBinding ? targetFor(arrow.startBinding.elementId) : null;
+  if (start && arrow.startBinding) place(0, points.length - 1, start, arrow.startBinding.gap);
+  const end = arrow.endBinding ? targetFor(arrow.endBinding.elementId) : null;
+  if (end && arrow.endBinding) place(points.length - 1, 0, end, arrow.endBinding.gap);
+  if (glued && (always || moved)) {
+    const updated = bump(arrow, { points });
+    next.set(arrow.id, updated);
+    syncConnectorLabels(next, updated);
+  }
+}
+
+/**
+ * After an arrow itself moved (dragged along with a selection), keep its
+ * bound ends attached to their shapes — including shapes that stayed put —
+ * so connectors stretch instead of detaching (Miro/tldraw behaviour).
+ */
+export function reglueArrowEndpoints(next: Map<string, MavisElement>, arrowId: string): void {
+  const arrow = next.get(arrowId);
+  if (!arrow || arrow.isDeleted || (arrow.type !== 'arrow' && arrow.type !== 'line')) return;
+  glueEndpoints(
+    next,
+    arrow as LinearElement,
+    (targetId) => {
+      const target = next.get(targetId);
+      return target && !target.isDeleted && target.type !== 'text' ? target : null;
+    },
+    false,
+  );
 }
 
 /** Keep a connector's labels centred on it (their size is kept). */
