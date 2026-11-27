@@ -83,6 +83,36 @@ Still open:
     - **The refresh cookie is `SameSite=Lax` across Render's two sites,** so it isn't sent cross-site. The fix is to serve the API from the app's origin on Render too (a rewrite of `/api`), as the self-hosted image does. `SameSite=None` would expose sign-out and refresh to CSRF, and Safari blocks it anyway.
     - **Per-process state** (single instance only) is by design for now; see Architecture.
 
+### Third independent review (2026-11-27, `edcb5e1..HEAD`, focus `730bf7e..HEAD`) — not fixed yet
+
+High (1–4 also affect `main`):
+1. **Any signed-in user can overwrite labels in other people's projects.** A rename (`modelService.renameComponent`) patches whatever diagram each element *says* it's on; `loadProjectScene` keeps the client-written `diagramId`. Drop edits for diagrams outside the project, and stamp `diagramId` from the row when loading.
+2. **Accepting an invite link confirms the email address** (`workspaceService` accept), but the inviter gets the link too, so a squatter can invite their own unconfirmed account and get it confirmed, then receive everyone's pending invites to that address.
+3. **SSO links to an existing unconfirmed account and leaves the squatter's password, sessions and tokens** (`oidc.ts` `accountFor`). Treat it like a reset takeover, or refuse to link.
+4. **A password reset leaves access tokens and signed-in agents working** (`passwordReset.ts` deletes sessions only).
+
+Medium:
+5. OIDC accepts a missing `email_verified` (only `false` is refused).
+6. The pre-auth WebSocket cap stops counting once any document on the socket authenticates; messages for other, unauthenticated document names queue without bound in Hocuspocus.
+7. A nested diagram created offline is lost with its contents (the journal keeps elements, not new diagrams, and drops entries for unknown diagrams).
+8. Behind the bundled nginx on a non-default port (`:8080`), the agent sign-in metadata, its `resource` check and the OIDC callback lose the port (`$host` has none; use `$http_host`).
+9. Model, MCP and PR-check reads load every diagram row with `yjs_state`, several times per request; the component panel refetches the model on every selection.
+10. Server-side reads (scene, embeds, diagram GET) treat a room that's still loading as an empty diagram.
+11. Reset and verification emails aren't covered by the per-recipient email caps; `/register` mails a free-text name to any address.
+
+Low:
+12. One diagram that fails to save stops autosave for the others (`useAutoSave` loop).
+13. A transient GitHub error during the daily re-verify unlinks a map's PR checks.
+14. Applying a proposal can undo the wrong step, or land on another level, if the person edits or navigates during its awaits.
+15. The model store never loads after switching projects while a fetch is in flight.
+16. `/api/oauth/authorize` errors and the consent page's Cancel redirect to an address any registered client chose.
+17. Unused client registrations are deleted after a day even if they once had a connection, which can strand an agent's cached client id.
+18. The journal's synchronous backup stringifies the whole journal up to 10×/s before checking its size.
+19. SSO can't complete on Render's two-site layout (the refresh cookie isn't sent cross-site).
+20. With the HTTPS profile, the web container still serves plain HTTP on `:8080` on every interface.
+21. Model API inputs: no length check on `:componentId`, no cap on model-only components, and elements without `boundElements`/`points` cause 500s.
+22. The layer cache keeps two full-size bitmaps after the first drag; `elementCountsKey` walks every element on every store change.
+
 ### Roadmap Phase 3 items not done yet
 
 - ~~Comments & @mentions~~ — done: threads pinned to shapes (pins follow them), replies, resolve/reopen, @mention autocomplete, in-app notifications, a panel across every nested level, `?thread=` deep links, live updates through the room. @mentions are emailed when mail is configured. Still missing: per-user notification settings (email on/off, digests), Slack delivery, comment reactions, and lazy-loading the comments UI (it added ~7 KB gzip to the main bundle).
