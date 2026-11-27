@@ -45,8 +45,8 @@ Still open:
 
 ### Architecture model follow-ups (docs/model-layer.md)
 
-- **Proposals and PR checks on component ids**: proposals still name components by label within one diagram (`components/agent/applyProposal.ts`, `services/prDrift.ts`). With ids, a proposal could add a relationship to a component drawn on another level, and a PR comment could link each touched component to its panel.
-- **Inspector column hides shapes on the right**: selecting a shape opens the style (and component) column, which narrows the canvas. A shape near the right edge can end up under it. Keep the selection in view, or let the column overlay a reserved gutter.
+- ~~**Proposals and PR checks on component ids**~~: done. Adding a component drawn elsewhere shows the same one; connections to other levels are recorded in the model; PR checks see dependencies known anywhere.
+- ~~**Inspector column hides shapes on the right**~~: fixed. When the column narrows the canvas, the view scrolls so the selection stays visible (`components/canvas/keepInView.ts`).
 - **Component panel actions are separate undo steps from server renames**: renaming everywhere is a server edit (other appearances, titles). Undoing the local label edit doesn't undo the rename elsewhere.
 - **Tags have no editor yet** (the API takes them; the panel shows none).
 

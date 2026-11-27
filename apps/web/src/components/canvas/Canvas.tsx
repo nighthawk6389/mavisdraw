@@ -6,6 +6,8 @@ import { useElementsStore } from '../../stores/elementsStore';
 import { renameEverywhere } from '../../services/modelSync';
 import { useToolStore } from '../../stores/toolStore';
 import { useSelectionStore } from '../../stores/selectionStore';
+import { unionVisualBounds } from './HitTesting';
+import { shiftToKeepInView } from './keepInView';
 import { useUIStore } from '../../stores/uiStore';
 import { useLayerStore } from '../../stores/layerStore';
 import { useDiagramStore } from '../../stores/diagramStore';
@@ -998,10 +1000,37 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    let lastWidth = container.clientWidth;
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
         const { width, height } = entry.contentRect;
-        rendererRef.current?.resize(width, height);
+        const renderer = rendererRef.current;
+        renderer?.resize(width, height);
+        // The inspector column opening beside the canvas mustn't cover the
+        // shape that was just selected: scroll it back into view (never in
+        // the middle of a drag, which moves the view itself)
+        if (renderer && width < lastWidth && !interactionRef.current?.isGestureActive()) {
+          const selected = Array.from(useSelectionStore.getState().selectedIds)
+            .map((id) => useElementsStore.getState().elements.get(id))
+            .filter((el): el is MavisElement => !!el && !el.isDeleted);
+          const bounds = selected.length > 0 ? unionVisualBounds(selected) : null;
+          if (bounds) {
+            const vp = renderer.getViewport().getViewport();
+            const shift = shiftToKeepInView(
+              {
+                left: bounds.x * vp.zoom + vp.scrollX,
+                right: (bounds.x + bounds.width) * vp.zoom + vp.scrollX,
+              },
+              lastWidth,
+              width,
+            );
+            if (shift > 0) {
+              renderer.getViewport().setViewport({ ...vp, scrollX: vp.scrollX - shift });
+              renderer.invalidateStatic();
+            }
+          }
+        }
+        lastWidth = width;
       }
     });
     observer.observe(container);
