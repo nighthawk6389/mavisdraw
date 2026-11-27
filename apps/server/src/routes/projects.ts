@@ -7,7 +7,7 @@ import { projects } from '../db/schema.js';
 import { checkProjectAccess, createDiagram } from '../services/diagramService.js';
 import { getWorkspaceRole } from '../services/workspaceService.js';
 import { listAccessibleProjects } from '../services/projectService.js';
-import { canReadRepo, getDecryptedToken, GitHubError } from '../services/githubService.js';
+import { getDecryptedToken, GitHubError, repoAccess } from '../services/githubService.js';
 import { config } from '../config.js';
 import { requireAuth } from '../middleware/auth.js';
 
@@ -196,7 +196,8 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  // Link the map to the repository it was generated from (editors+)
+  // Link the map to the repository it was generated from (editors+; pull
+  // request checks need an owner/admin with push access)
   app.put('/api/projects/:id/repo', { preHandler: [requireAuth] }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const userId = request.user!.userId;
@@ -206,11 +207,10 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     }
     const access = await checkProjectAccess(id, userId);
     if (!access || access === 'viewer') return reply.code(403).send({ error: 'Access denied' });
-    let host: string | undefined;
+    // What makes a GitHub link feed pull-request checks (see docs/pr-checks.md)
+    let prChecks: { host: string; verifiedAt: string } | undefined;
     if (parsed.data?.kind === 'github') {
-      // A map linked to a repository hears about its pull requests: the person
-      // linking it must be able to see that repository through their own
-      // GitHub connection
+      // The linker must see the repository through their own GitHub connection
       const { owner, repo, connectionId } = parsed.data;
       if (!owner || !repo || !connectionId) {
         return reply
@@ -224,15 +224,25 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
         if (err instanceof GitHubError) return reply.code(403).send({ error: err.message });
         throw err;
       }
-      if (!(await canReadRepo(token.accessToken, owner, repo, token.enterpriseUrl))) {
+      const repoRights = await repoAccess(token.accessToken, owner, repo, token.enterpriseUrl);
+      if (!repoRights) {
         return reply.code(403).send({ error: `Your GitHub connection can't see ${owner}/${repo}` });
       }
-      host = token.enterpriseUrl ?? config.github.cloud.url;
+      // Pull requests are only checked against maps linked by someone who
+      // speaks for both sides: a project owner/admin with push access to the
+      // repository. Anyone can read a public repository; that alone must not
+      // put their map's text into its pull requests.
+      if ((access === 'owner' || access === 'admin') && repoRights.push) {
+        prChecks = {
+          host: token.enterpriseUrl ?? config.github.cloud.url,
+          verifiedAt: new Date().toISOString(),
+        };
+      }
     }
     const repoSource = parsed.data
       ? {
           ...parsed.data,
-          ...(host ? { host } : {}),
+          ...(prChecks ?? {}),
           generatedAt: new Date().toISOString(),
           generatedBy: userId,
         }

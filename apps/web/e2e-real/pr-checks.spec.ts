@@ -134,7 +134,27 @@ test('a pull request is checked against the map, commented on, and its update ap
       },
     });
   expect((await link('acme/secret')).status()).toBe(403);
-  expect((await link(fullName)).status()).toBe(200);
+  // Read access alone (anyone can read a public repository) links the map
+  // for drift checks, but never turns on pull-request comments
+  const readOnly = `${fullName}-readonly`;
+  await context.request.post(`${GITHUB_URL}/__test/repo`, {
+    data: { repo: readOnly, trees: {}, contents: {}, pulls: {}, push: false },
+  });
+  const viaRead = await link(readOnly);
+  expect(viaRead.status()).toBe(200);
+  expect(
+    ((await viaRead.json()) as { repoSource: { host?: string } }).repoSource.host,
+  ).toBeUndefined();
+  await page.reload();
+  await page.getByRole('button', { name: /^Code/ }).click();
+  await expect(page.getByTestId('pr-checks-off')).toContainText('can push to');
+  await page.keyboard.press('Escape');
+
+  const linked = await link(fullName);
+  expect(linked.status()).toBe(200);
+  expect(((await linked.json()) as { repoSource: { host?: string } }).repoSource.host).toBe(
+    GITHUB_URL,
+  );
 
   // The Code dialog explains pull request checks
   await page.reload();

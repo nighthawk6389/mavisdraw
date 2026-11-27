@@ -7,7 +7,7 @@ import { API_BASE } from '../../services/apiBase';
  * the MavisDraw GitHub App is installed on it, every pull request gets a
  * comment with what it changes on the map, and a proposed update here.
  */
-export default function PullRequestChecks({ repo }: { repo: string }) {
+export default function PullRequestChecks({ repo, active }: { repo: string; active: boolean }) {
   const [status, setStatus] = useState<{ configured: boolean; installUrl: string | null } | null>(
     null,
   );
@@ -33,7 +33,13 @@ export default function PullRequestChecks({ repo }: { repo: string }) {
         which components it touches and how it changes the architecture, and the map update shows up
         here under Proposals for one-click review.
       </p>
-      {status.configured ? (
+      {status.configured && !active ? (
+        <p className="text-xs text-amber-800" data-testid="pr-checks-off">
+          Off for this map: pull requests are only checked against maps linked by a project owner or
+          admin whose GitHub account can push to {repo}. Such a person can turn them on with “Check
+          against the code”, then “Mark map as up to date”.
+        </p>
+      ) : status.configured ? (
         status.installUrl ? (
           <a
             href={status.installUrl}

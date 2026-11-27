@@ -246,6 +246,34 @@ export const hasNews = (impacts: ProjectImpact[]) =>
 
 const MAX_ROWS = 8;
 
+/**
+ * Text from maps and repositories, safe to put in a comment: it can't add
+ * links (markdown, HTML or bare URLs GitHub would auto-link), images,
+ * emphasis or table cells, and can't @mention anyone. One line, bounded.
+ * It's always placed mid-line, so line-start markup (#, -, >) can't apply.
+ */
+export function mdText(value: string, max = 200): string {
+  const oneLine = value.replace(/\s+/g, ' ').trim();
+  const clipped = oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine;
+  return (
+    clipped
+      .replace(/[\\`*_[\]|~]/g, (c) => `\\${c}`)
+      .replace(/</g, '&lt;')
+      // Zero-width spaces: "@team" notifies no one, and URLs aren't auto-linked
+      .replace(/@/g, '@\u200b')
+      .replace(/:\/\//g, ':\u200b//')
+      .replace(/www\./gi, (w) => `${w.slice(0, 3)}\u200b.`)
+  );
+}
+
+/** A diagram id or project id as part of a link (they are nanoids). */
+const idPart = (id: string) => encodeURIComponent(id);
+
+const MAX_PROJECTS = 5;
+const MAX_CHANGES = 20;
+/** GitHub rejects comments over 65,536 characters. */
+const MAX_COMMENT_CHARS = 60_000;
+
 export function renderPrComment(input: {
   impacts: ProjectImpact[];
   headSha: string;
@@ -257,19 +285,20 @@ export function renderPrComment(input: {
   if (!hasNews(input.impacts)) {
     lines.push('This pull request no longer touches the mapped architecture.');
   }
-  for (const impact of input.impacts) {
-    if (impact.touched.length === 0 && impact.changes.length === 0) continue;
-    const link = `${input.appUrl}/p/${impact.project.id}`;
-    if (input.impacts.length > 1) lines.push(`#### [${impact.project.name}](${link})`, '');
+  const shown = input.impacts.filter((i) => i.touched.length > 0 || i.changes.length > 0);
+  for (const impact of shown.slice(0, MAX_PROJECTS)) {
+    const link = `${input.appUrl}/p/${idPart(impact.project.id)}`;
+    if (input.impacts.length > 1)
+      lines.push(`#### [${mdText(impact.project.name, 100)}](${link})`, '');
     if (impact.touched.length > 0) {
-      const names = impact.touched.slice(0, 3).map((t) => `**${t.component.label}**`);
+      const names = impact.touched.slice(0, 3).map((t) => `**${mdText(t.component.label, 80)}**`);
       const more = impact.touched.length > 3 ? ` and ${impact.touched.length - 3} more` : '';
       lines.push(`Touches ${names.join(', ')}${more}.`, '');
       lines.push('| Component | Where on the map | Files |', '| --- | --- | ---: |');
       for (const t of impact.touched.slice(0, MAX_ROWS)) {
-        const where = t.component.path.join(' › ');
+        const where = t.component.path.map((p) => mdText(p, 60)).join(' › ');
         lines.push(
-          `| [${t.component.label.replace(/\|/g, '\\|')}](${link}/d/${t.component.diagramId}) | ${where.replace(/\|/g, '\\|')} | ${t.files} |`,
+          `| [${mdText(t.component.label, 80)}](${link}/d/${idPart(t.component.diagramId)}) | ${where} | ${t.files} |`,
         );
       }
       if (impact.unmapped > 0) lines.push(`| _not on the map_ | | ${impact.unmapped} |`);
@@ -277,9 +306,12 @@ export function renderPrComment(input: {
     }
     if (impact.changes.length > 0) {
       lines.push('**Architecture changes**', '');
-      for (const c of impact.changes) {
+      for (const c of impact.changes.slice(0, MAX_CHANGES)) {
         const note = c.onMap ? '' : c.removal ? ' — _still on the map_' : ' — _not on the map yet_';
-        lines.push(`- ${c.text}${note}`);
+        lines.push(`- ${mdText(c.text, 300)}${note}`);
+      }
+      if (impact.changes.length > MAX_CHANGES) {
+        lines.push(`- …and ${impact.changes.length - MAX_CHANGES} more`);
       }
       lines.push('');
     }
@@ -293,6 +325,12 @@ export function renderPrComment(input: {
       lines.push(`[Open the map](${link})`, '');
     }
   }
-  lines.push(`<sub>Updated for ${input.headSha.slice(0, 7)}</sub>`);
-  return lines.join('\n');
+  if (shown.length > MAX_PROJECTS) {
+    lines.push(`…and ${shown.length - MAX_PROJECTS} more maps of this repository.`, '');
+  }
+  lines.push(`<sub>Updated for ${mdText(input.headSha.slice(0, 7))}</sub>`);
+  const body = lines.join('\n');
+  return body.length > MAX_COMMENT_CHARS
+    ? `${body.slice(0, MAX_COMMENT_CHARS)}\n\n…(shortened)`
+    : body;
 }

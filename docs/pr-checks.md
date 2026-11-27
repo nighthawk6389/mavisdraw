@@ -30,14 +30,19 @@ and pull request events. For GitHub Enterprise, also set `GITHUB_APP_WEB_URL` (y
 
 ## Which maps are checked
 
-A map is checked when it's linked to the repository **and that link was verified**: linking a map to
-a GitHub repository requires your own GitHub connection to be able to read it (MavisDraw checks
-with GitHub when the link is saved, and records the host). So a pull request's details never reach a
-map made by someone without access to the repository. Maps linked before this check existed are
-picked up again the next time they're linked (**Code → Check against the code → Mark map as up to
-date**).
+A map's pull requests are checked only when it was linked to the repository by someone who speaks
+for both sides: a **project owner or admin whose GitHub connection can push to the repository**.
+MavisDraw asks GitHub when the link is saved, records the host, and re-checks at least daily through
+the linker's own connection; if they lose push access or their project role, checks turn off for that
+map. Anyone else (an editor, or someone who can only read a public repository) can still link a map
+for drift checks in the editor, but it never feeds pull-request comments — the **Code** dialog says
+so.
 
-The comment names the map's components and links to it; people need MavisDraw access to open it.
+Everything the comment shows from a map or a repository (project and component names, diagram
+titles, package names) is escaped: it can't add links, images, HTML or @mentions. The comment names
+the map's components and links to it; people need MavisDraw access to open it. Maps linked before
+these rules existed are picked up again once an owner/admin re-links them (**Code → Check against
+the code → Mark map as up to date**).
 
 ## Details
 

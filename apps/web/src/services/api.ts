@@ -705,6 +705,9 @@ export interface RepoSourceData {
   repo?: string;
   ref?: string;
   connectionId?: string;
+  /** Set by the server when pull-request checks are on for this link. */
+  host?: string;
+  verifiedAt?: string;
   model: import('@mavisdraw/compat').RepoModel;
   generatedAt: string;
   generatedBy: string;

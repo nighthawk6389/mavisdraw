@@ -286,4 +286,54 @@ describe('the comment', () => {
     });
     expect(body).toContain('[api \\| gateway]');
   });
+
+  it('cannot be used to inject links, mentions or HTML through map text', () => {
+    const scene = mapScene();
+    (scene.elements[0] as unknown as { label: string }).label =
+      'API](https://evil.example/login) — **re-authenticate** [x <img src=x> @acme/everyone';
+    const impact = impactOnProject({
+      project: { id: 'p1', name: '[Security notice](https://evil.example) @victim-org/admins' },
+      scene,
+      changes: [{ filename: 'apps/api/x.ts', status: 'modified' }],
+      drift: [],
+      pr,
+    });
+    const body = renderPrComment({
+      impacts: [impact, { ...impact, project: { id: 'p2', name: 'Other' } }],
+      headSha: '1234567',
+      appUrl: 'https://app.example',
+      proposals: new Map(),
+    });
+    // Our own links are the only links
+    const links = Array.from(body.matchAll(/(?<!\\)\]\((?!https:\/\/app\.example)/g));
+    expect(links).toEqual([]);
+    expect(body).not.toContain('https://evil');
+    expect(body).not.toContain('<img');
+    expect(body).not.toMatch(/@acme|@victim/);
+    expect(body).toContain('\\[Security notice\\]');
+  });
+
+  it('stays within GitHub’s comment limits for huge changes', () => {
+    const many = Array.from({ length: 50 }, (_, i) => ({
+      text: `pkg${i} now uses Thing ${i}`,
+      removal: false,
+      onMap: false,
+    }));
+    const body = renderPrComment({
+      impacts: [
+        {
+          project: { id: 'p1', name: 'Shop' },
+          touched: [],
+          unmapped: 0,
+          changes: many,
+          proposal: null,
+        },
+      ],
+      headSha: '1234567',
+      appUrl: 'https://app.example',
+      proposals: new Map(),
+    });
+    expect(body).toContain('…and 30 more');
+    expect(body.length).toBeLessThan(65_536);
+  });
 });

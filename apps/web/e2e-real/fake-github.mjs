@@ -54,8 +54,8 @@ const server = http.createServer(async (req, res) => {
 
     // ── Test controls ─────────────────────────────────────────
     if (path === '/__test/repo' && req.method === 'POST') {
-      const { repo, trees, contents, pulls } = await readBody(req);
-      repos.set(repo.toLowerCase(), { trees, contents, pulls, comments: {} });
+      const { repo, trees, contents, pulls, push = true } = await readBody(req);
+      repos.set(repo.toLowerCase(), { trees, contents, pulls, push, comments: {} });
       return send(res, 200, { ok: true });
     }
     if (path === '/__test/comments' && req.method === 'GET') {
@@ -75,11 +75,15 @@ const server = http.createServer(async (req, res) => {
     }
     let r = path.match(/^\/repos\/([^/]+)\/([^/]+)$/);
     if (r && userTokens.has(bearer)) {
-      const known = repos.has(
+      const known = repos.get(
         `${decodeURIComponent(r[1])}/${decodeURIComponent(r[2])}`.toLowerCase(),
       );
       return known
-        ? send(res, 200, { full_name: `${r[1]}/${r[2]}`, private: true })
+        ? send(res, 200, {
+            full_name: `${r[1]}/${r[2]}`,
+            private: true,
+            permissions: { admin: false, push: known.push, pull: true },
+          })
         : send(res, 404, { message: 'Not Found' });
     }
 

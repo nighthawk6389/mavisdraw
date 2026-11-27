@@ -254,23 +254,31 @@ async function githubFetch<T>(
   return response.json() as Promise<T>;
 }
 
-/** Can this token see the repository? (Proof of access before linking a map to it.) */
-export async function canReadRepo(
+/**
+ * What this token may do on a repository: null when it can't see it at
+ * all. Reading proves little (anyone can read a public repository); push
+ * access is what it takes to speak for a repository, e.g. to have its pull
+ * requests checked against a map.
+ */
+export async function repoAccess(
   accessToken: string,
   owner: string,
   repo: string,
   enterpriseUrl?: string | null,
-): Promise<boolean> {
+): Promise<{ push: boolean } | null> {
   try {
-    await githubFetch(
+    const info = await githubFetch<{
+      permissions?: { admin?: boolean; maintain?: boolean; push?: boolean };
+    }>(
       `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
       accessToken,
       enterpriseUrl,
     );
-    return true;
+    const p = info.permissions ?? {};
+    return { push: !!(p.push || p.maintain || p.admin) };
   } catch (err) {
     if (err instanceof GitHubError && (err.statusCode === 404 || err.statusCode === 403)) {
-      return false;
+      return null;
     }
     throw err;
   }

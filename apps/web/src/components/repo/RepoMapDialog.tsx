@@ -281,7 +281,7 @@ export default function RepoMapDialog() {
             </div>
 
             {source.kind === 'github' && source.owner && source.repo && (
-              <PullRequestChecks repo={`${source.owner}/${source.repo}`} />
+              <PullRequestChecks repo={`${source.owner}/${source.repo}`} active={!!source.host} />
             )}
 
             {drift && drift.length > 0 && (
