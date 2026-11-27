@@ -1,6 +1,7 @@
 import { Hocuspocus } from '@hocuspocus/server';
 import { verifyAccessToken } from '../services/authService.js';
 import { getDiagram, updateDiagram, checkProjectAccess } from '../services/diagramService.js';
+import { withDiagramLock } from '../services/diagramLock.js';
 import type * as Y from 'yjs';
 import {
   applyState,
@@ -165,7 +166,9 @@ export function createHocuspocusServer(): Hocuspocus {
 
     async onLoadDocument({ document, documentName }) {
       const diagramId = documentName.replace(DOCUMENT_PREFIX, '');
-      const diagram = await getDiagram(diagramId);
+      // A save or restore writing the stored state right now finishes first,
+      // so the room starts from what it wrote (services/diagramContents.ts)
+      const diagram = await withDiagramLock(diagramId, () => getDiagram(diagramId));
       if (!diagram) return document;
 
       if (diagram.yjsState) {

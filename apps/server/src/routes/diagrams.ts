@@ -1,6 +1,5 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import * as Y from 'yjs';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { diagrams, projects } from '../db/schema.js';
@@ -21,37 +20,18 @@ import {
   mergeElements,
   readLiveElements,
   replaceElements,
-  mergeElementList,
-  applyState,
-  encodeState,
   type ElementJSON,
 } from '../ws/ydocElements.js';
+import {
+  changeDiagramElements,
+  openRoom,
+  replaceStoredElements,
+} from '../services/diagramContents.js';
 import type { Document } from '@hocuspocus/server';
 
 /** The open collaboration document for a diagram, if anyone is editing it live. */
 function liveDocument(documents: Map<string, Document>, diagramId: string): Document | undefined {
   return documents.get(documentNameFor(diagramId));
-}
-
-/**
- * The live document for a diagram, waiting for it if the collaboration
- * server is still loading it (reading or merging into a half-loaded,
- * empty document would lose data).
- */
-async function openDocument(
-  server: FastifyInstance['hocuspocus'],
-  diagramId: string,
-): Promise<Document | undefined> {
-  const name = documentNameFor(diagramId);
-  const loading = server.loadingDocuments.get(name);
-  if (loading) {
-    try {
-      return await loading;
-    } catch {
-      return undefined;
-    }
-  }
-  return server.documents.get(name);
 }
 
 /** Never send the CRDT blob to REST clients. */
@@ -184,7 +164,7 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(403).send({ error: 'Access denied' });
     }
 
-    await openDocument(app.hocuspocus, id);
+    await openRoom(app.hocuspocus, id);
     return reply.code(200).send({
       diagram: currentDiagram(app.hocuspocus.documents, diagram),
     });
@@ -242,38 +222,31 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
       // the client last saw it; otherwise it's reported back as a conflict.
       // While people are editing live, the collaboration document is the
       // source of truth, so the write goes into it and it persists itself.
+      // With no room open, the merge goes through the stored CRDT state (so
+      // deletions are tombstones), one save at a time (diagramContents.ts)
       const { elements, baseVersions, deletedIds, ...metadata } = parsed.data;
       const write = { elements: (elements ?? []) as ElementJSON[], baseVersions, deletedIds };
-      const live = elements ? await openDocument(app.hocuspocus, id) : undefined;
-      let diagram;
       let conflicts: string[] = [];
-      if (elements && live) {
-        conflicts = mergeElements(live, write).conflicts;
-        diagram = await updateDiagram(id, metadata);
-      } else if (elements && baseVersions) {
-        if (existing.yjsState) {
-          // Merge through the stored CRDT state so tombstones and history survive
-          const doc = new Y.Doc();
-          applyState(doc, existing.yjsState);
-          conflicts = mergeElements(doc, write).conflicts;
-          diagram = await updateDiagram(id, {
-            ...metadata,
-            elements: readLiveElements(doc),
-            yjsState: encodeState(doc),
-          });
-        } else {
-          const merged = mergeElementList((existing.elements ?? []) as ElementJSON[], write);
-          conflicts = merged.conflicts;
-          diagram = await updateDiagram(id, { ...metadata, elements: merged.elements });
+      if (elements && baseVersions) {
+        const merged = await changeDiagramElements(
+          app.hocuspocus,
+          id,
+          (doc) => mergeElements(doc, write).conflicts,
+        );
+        if (!merged) return reply.code(404).send({ error: 'Diagram not found' });
+        conflicts = merged.result;
+      } else if (elements) {
+        // Legacy whole-diagram replace (API clients without base versions);
+        // into a live room it's a merge, like any other edit
+        if (!(await replaceStoredElements(app.hocuspocus, id, elements))) {
+          const merged = await changeDiagramElements(app.hocuspocus, id, (doc) =>
+            mergeElements(doc, write),
+          );
+          if (!merged) return reply.code(404).send({ error: 'Diagram not found' });
+          conflicts = merged.result.conflicts;
         }
-      } else {
-        // Legacy whole-diagram replace (API clients without base versions):
-        // the stored CRDT state is now stale, re-seed next session
-        diagram = await updateDiagram(id, {
-          ...metadata,
-          ...(elements ? { elements, yjsState: null } : {}),
-        });
       }
+      const diagram = await updateDiagram(id, metadata);
       if (!diagram) {
         return reply.code(404).send({ error: 'Diagram not found' });
       }
@@ -334,7 +307,7 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(403).send({ error: 'Access denied' });
     }
 
-    const live = await openDocument(app.hocuspocus, id);
+    const live = await openRoom(app.hocuspocus, id);
     const snapshot = await createSnapshot(
       id,
       userId,
@@ -440,9 +413,7 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(404).send({ error: 'Snapshot not found' });
       }
 
-      const live = await openDocument(app.hocuspocus, id);
-      const liveElements = () =>
-        live ? readLiveElements(live) : undefined;
+      const open = await openRoom(app.hocuspocus, id);
 
       // Create a new snapshot of current state before restoring
       // Kept as a named version (automatic ones get pruned) so a restore can
@@ -452,7 +423,7 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
         userId,
         'manual',
         `Before restoring “${snapshot.label ?? `version ${snapshot.version}`}”`,
-        liveElements(),
+        open ? readLiveElements(open) : undefined,
       );
 
       // Restore the diagram from the snapshot
@@ -464,18 +435,14 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
         renderMode: appState.renderMode as string | undefined,
         layers: appState.layers as unknown[] | undefined,
       };
-      let diagram;
-      if (live) {
-        // Everyone connected sees the restore immediately
-        replaceElements(live, snapshot.elements as ElementJSON[]);
-        diagram = await updateDiagram(id, metadata);
-      } else {
-        diagram = await updateDiagram(id, {
-          ...metadata,
-          elements: snapshot.elements as unknown[],
-          yjsState: null,
-        });
-      }
+      // In the live room everyone connected sees it at once. Otherwise it goes
+      // through the stored CRDT state: what the version doesn't have is
+      // deleted there, so a tab with an older copy can't bring it back.
+      const restored = await changeDiagramElements(app.hocuspocus, id, (doc) =>
+        replaceElements(doc, snapshot.elements as ElementJSON[]),
+      );
+      if (!restored) return reply.code(404).send({ error: 'Diagram not found' });
+      const diagram = await updateDiagram(id, metadata);
 
       // Create a post-restore snapshot
       await createSnapshot(
@@ -483,7 +450,7 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
         userId,
         'auto',
         'Restored from version ' + snapshot.version,
-        liveElements(),
+        restored.live ? readLiveElements(restored.live) : undefined,
       );
 
       return reply.code(200).send({

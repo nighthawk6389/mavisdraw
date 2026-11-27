@@ -1,7 +1,6 @@
 import { and, eq } from 'drizzle-orm';
-import * as Y from 'yjs';
 import { nanoid } from 'nanoid';
-import type { Document, Hocuspocus } from '@hocuspocus/server';
+import type { Document } from '@hocuspocus/server';
 import type {
   ComponentDetails,
   ProjectModel,
@@ -11,24 +10,15 @@ import type {
 import { buildProjectModel, renameEdits } from '@mavisdraw/llm';
 import { db } from '../db/client.js';
 import { diagrams, modelComponents, modelRelationships, type RepoSource } from '../db/schema.js';
-import { getDiagram, updateDiagram } from './diagramService.js';
 import { loadProjectScene } from './projectService.js';
+import { changeDiagramElements, type Rooms } from './diagramContents.js';
 import { documentNameFor, persistDocument } from '../ws/hocuspocus.js';
-import {
-  applyState,
-  encodeState,
-  patchElements,
-  readLiveElements,
-  seedElements,
-  type ElementJSON,
-} from '../ws/ydocElements.js';
+import { patchElements } from '../ws/ydocElements.js';
 
 /**
  * The project's architecture model (docs/model-layer.md): computed from the
  * diagrams (live rooms first) plus the two model tables.
  */
-
-type Rooms = Pick<Hocuspocus, 'documents' | 'loadingDocuments'>;
 
 interface ProjectRef {
   id: string;
@@ -184,19 +174,6 @@ export async function deleteRelationship(projectId: string, sourceId: string, ta
 }
 
 /** A diagram's live room, waiting for one that's still loading. */
-async function liveRoom(rooms: Rooms, diagramId: string): Promise<Document | undefined> {
-  const name = documentNameFor(diagramId);
-  const loading = rooms.loadingDocuments.get(name);
-  if (loading) {
-    try {
-      return await loading;
-    } catch {
-      return undefined;
-    }
-  }
-  return rooms.documents.get(name);
-}
-
 /**
  * Change elements of one diagram as an edit: in its live room when one is
  * open (everyone sees it at once; the room persists itself), otherwise
@@ -208,34 +185,16 @@ export async function patchDiagramElements(
   patches: Array<{ id: string; changes: Record<string, unknown> }>,
 ): Promise<number> {
   if (patches.length === 0) return 0;
-  const live = await liveRoom(rooms, diagramId);
-  if (live) {
-    const changed = patchElements(live, patches);
-    // Saved now, not on the room's debounce: a room nobody is in any more may
-    // be unloading, and an edit after its last save would go with it
-    if (changed.length > 0) await persistDocument(documentNameFor(diagramId), live);
-    return changed.length;
+  const outcome = await changeDiagramElements(rooms, diagramId, (doc) =>
+    patchElements(doc, patches),
+  );
+  if (!outcome) return 0;
+  // Saved now, not on the room's debounce: a room nobody is in any more may
+  // be unloading, and an edit after its last save would go with it
+  if (outcome.live && outcome.result.length > 0) {
+    await persistDocument(documentNameFor(diagramId), outcome.live);
   }
-  const stored = await getDiagram(diagramId);
-  if (!stored) return 0;
-  const doc = new Y.Doc();
-  if (stored.yjsState) applyState(doc, stored.yjsState);
-  else seedElements(doc, (stored.elements ?? []) as ElementJSON[]);
-  const changed = patchElements(doc, patches);
-  if (changed.length > 0) {
-    await updateDiagram(diagramId, {
-      elements: readLiveElements(doc),
-      yjsState: encodeState(doc),
-    });
-    // Someone may have opened the diagram meanwhile, loading the state from
-    // before this write: give that room the same edit (setting the same
-    // values twice is harmless), or it would save the old ones back
-    const opened = await liveRoom(rooms, diagramId);
-    if (opened && patchElements(opened, patches).length > 0) {
-      await persistDocument(documentNameFor(diagramId), opened);
-    }
-  }
-  return changed.length;
+  return outcome.result.length;
 }
 
 /**

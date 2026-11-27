@@ -64,8 +64,8 @@ Fixed: C1 (REST autosave reverting teammates' work), H1 (unverified emails recei
 
 Still open:
 - **M3 — outbound email can be abused** (`services/commentService.ts` `emailMentions`, `services/workspaceService.ts` `inviteByEmail`): anyone signed in can @mention the members of a public project, or invite arbitrary addresses, as often as they like, with their own text in the email. Needs per-user and per-recipient limits, and no mention emails from non-members.
-- **M6 — a version restore with no live room writes old versions and no tombstones** (`routes/diagrams.ts` restore): a stale tab joining later reverts it. Restore through the stored CRDT state, like the live path (`replaceElements`).
-- **M7 — the non-live REST merge is an unlocked read-modify-write** (`routes/diagrams.ts`): two concurrent saves both merge into the old state, and the second silently drops the first. Needs `SELECT … FOR UPDATE` in a transaction, plus a per-diagram lock that `onLoadDocument` honours. The model API's rename of non-live diagrams (`services/modelService.ts` `patchDiagramElements`) has the same race.
+- ~~**M6 — a version restore with no live room writes old versions and no tombstones**~~: fixed. A restore with no room open now goes through the stored CRDT state, so what the version doesn't have is deleted there and a tab with an older copy can't bring it back (`e2e-real/sync-integrity.spec.ts`).
+- ~~**M7 — the non-live REST merge is an unlocked read-modify-write**~~: fixed. Every write from outside a live room (a save, a restore, a rename) goes through `services/diagramContents.ts`: under a per-diagram lock that a room opening meanwhile waits for, and a row lock (`SELECT … FOR UPDATE`). A room that just closed has its pending save run first. Twelve simultaneous saves all land (`e2e-real/diagrams-api.spec.ts`). The lock is per process, like the rest of the live state.
 - **M8 — the offline journal is per project, not per user or tab** (`services/offlineJournal.ts`):
   - it survives logout, so the next account on a shared browser restores the previous one's edits;
   - two tabs overwrite each other's journal;

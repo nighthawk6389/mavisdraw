@@ -6,7 +6,6 @@ import {
   readLiveElements,
   seedElements,
   mergeElements,
-  mergeElementList,
   replaceElements,
   encodeState,
   applyState,
@@ -114,12 +113,6 @@ describe('ydoc element helpers', () => {
     });
     expect(out.conflicts).toEqual(['a']);
     expect(byId(doc).a.x).toBe(999);
-    const list = mergeElementList([el('a', { x: 999, version: 6 })], {
-      elements: [el('a', { x: 0, version: 2 })],
-      baseVersions: { a: 6 },
-    });
-    expect(list.conflicts).toEqual(['a']);
-    expect(list.elements[0].x).toBe(999);
   });
 
   it('unchanged elements are skipped (no version churn)', () => {
@@ -153,19 +146,6 @@ describe('ydoc element helpers', () => {
     });
     expect(out.conflicts).toEqual(['a']);
     expect(byId(doc).a.isDeleted).toBe(true);
-  });
-
-  it('stored-list merge follows the same rules', () => {
-    const out = mergeElementList([el('a', { version: 2 }), el('b', { version: 5 })], {
-      elements: [el('a', { x: 7, version: 3 }), el('b', { x: 7, version: 3 }), el('c')],
-      deletedIds: [],
-      baseVersions: { a: 2, b: 1 },
-    });
-    expect(out.conflicts).toEqual(['b']);
-    const ids = Object.fromEntries(out.elements.map((e) => [e.id, e]));
-    expect(ids.a.x).toBe(7);
-    expect(ids.b.x).toBe(0);
-    expect(ids.c).toBeDefined();
   });
 
   it('live elements leave out soft-deleted ones', () => {

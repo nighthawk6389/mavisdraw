@@ -155,42 +155,6 @@ export function mergeElements(
 }
 
 /**
- * The same rules for a diagram with no live room: merge into the stored
- * element list (which holds only live elements, so a deleted element simply
- * isn't there and is never resurrected by a stale save).
- */
-export function mergeElementList(
-  current: ElementJSON[],
-  write: RestWrite,
-): MergeOutcome & { elements: ElementJSON[] } {
-  const byId = new Map(current.map((el) => [el.id, el]));
-  const conflicts: string[] = [];
-  let written = 0;
-  for (const el of write.elements) {
-    if (!el || typeof el.id !== 'string') continue;
-    const existing = byId.get(el.id);
-    const incoming = Number(el.version ?? 0);
-    const decision = decideWrite(existing, incoming, write.baseVersions?.[el.id]);
-    if (decision === 'conflict') conflicts.push(el.id);
-    if (decision !== 'apply') continue;
-    byId.set(el.id, { ...el, version: Math.max(incoming, Number(existing?.version ?? 0) + 1) });
-    written++;
-  }
-  for (const id of write.deletedIds ?? []) {
-    const decision = decideDelete(byId.get(id), write.baseVersions?.[id]);
-    if (decision === 'conflict') conflicts.push(id);
-    if (decision !== 'apply') continue;
-    byId.delete(id);
-    written++;
-  }
-  return {
-    elements: Array.from(byId.values()).filter((el) => el.isDeleted !== true),
-    written,
-    conflicts,
-  };
-}
-
-/**
  * Replace the live contents with a snapshot (version restore): snapshot
  * elements come back with versions above anything live, everything else is
  * soft-deleted, so every connected client converges on the snapshot.

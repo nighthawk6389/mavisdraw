@@ -1,10 +1,14 @@
 import { test, expect, type Page } from '@playwright/test';
 import {
+  API_URL,
+  apiCreateProject,
   apiGetDiagram,
   dragOnCanvas,
   dragPage,
   getActiveElements,
   isConnected,
+  openProject,
+  registerUser,
   screenCenterOf,
   twoPeople,
 } from './helpers';
@@ -29,6 +33,18 @@ async function goOffline(page: Page) {
     provider.configuration.websocketProvider.disconnect();
   });
   await expect.poll(() => status(page)).toBe('disconnected');
+}
+
+/** Reconnect a tab that went offline (it keeps its copy of the document). */
+async function goOnline(page: Page) {
+  await page.evaluate(async () => {
+    const m = await import('/src/stores/collaborationStore.ts');
+    const provider = m.useCollaborationStore.getState().provider as unknown as {
+      configuration: { websocketProvider: { connect: () => Promise<void> } };
+    };
+    void provider.configuration.websocketProvider.connect();
+  });
+  await isConnected(page);
 }
 
 test.describe('Sync integrity', () => {
@@ -115,6 +131,59 @@ test.describe('Sync integrity', () => {
 
     await ctxA.close();
     await ctxB.close();
+  });
+
+  test('a version restored while nobody is in the room holds when a tab that missed it returns', async ({
+    browser,
+  }) => {
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+    const owner = await registerUser(ctx, 'Owner');
+    const name = `Restore ${Date.now()}`;
+    const project = await apiCreateProject(ctx.request, owner, name);
+    const d = project.rootDiagramId;
+    const auth = { Authorization: `Bearer ${owner.accessToken}` };
+    const storedBoxes = async () =>
+      ((await apiGetDiagram(ctx.request, owner, d)).diagram?.elements ?? []).filter(
+        (e) => e.type === 'rectangle',
+      ).length;
+    await openProject(page, name);
+    await isConnected(page);
+
+    // One box, kept as a version; then a second box
+    await page.keyboard.press('r');
+    await dragOnCanvas(page, { x: 150, y: 150 }, { x: 300, y: 250 });
+    await expect.poll(storedBoxes).toBe(1);
+    const saved = await ctx.request.post(`${API_URL}/api/diagrams/${d}/save`, {
+      headers: auth,
+      data: { label: 'One box' },
+    });
+    const { snapshot } = (await saved.json()) as { snapshot: { id: string } };
+    await page.keyboard.press('r');
+    await dragOnCanvas(page, { x: 400, y: 300 }, { x: 550, y: 400 });
+    await expect.poll(storedBoxes).toBe(2);
+
+    // The tab drops out of the live room; with nobody left, the room saves and closes
+    await goOffline(page);
+    await page.waitForTimeout(1000);
+
+    // The version is restored with no room open
+    const restored = await ctx.request.post(
+      `${API_URL}/api/diagrams/${d}/snapshots/${snapshot.id}/restore`,
+      { headers: auth },
+    );
+    expect(restored.status(), await restored.text()).toBe(200);
+    expect(await storedBoxes()).toBe(1);
+
+    // The tab comes back with its copy from before the restore: the restore holds
+    await goOnline(page);
+    await expect
+      .poll(async () => (await getActiveElements(page)).filter((e) => e.type === 'rectangle'))
+      .toHaveLength(1);
+    await page.waitForTimeout(1500); // the room saves what it merged
+    expect(await storedBoxes()).toBe(1);
+    expect((await getActiveElements(page)).filter((e) => e.type === 'rectangle')).toHaveLength(1);
+    await ctx.close();
   });
 
   test('an edit from a tab that fell out of the room never overwrites newer work', async ({

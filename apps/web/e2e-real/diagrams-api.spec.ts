@@ -197,6 +197,31 @@ test.describe('Diagrams over REST', () => {
     expect(await elementsOf(request, owner, d)).toEqual([]);
   });
 
+  test('saves arriving at the same moment all land (none starts from a stale copy)', async ({
+    request,
+  }) => {
+    const owner = await signUp(request, 'Owner');
+    const { rootDiagramId: d } = await createProject(request, owner, `Parallel ${uniq()}`);
+    const c = as(request, owner);
+    await expectJson(
+      c.put(`/api/diagrams/${d}`, { elements: [box('first', d, 0)], baseVersions: {} }),
+      200,
+    );
+    // Twelve tabs each add their own shape at once, through the conflict-checked merge
+    const saves = Array.from({ length: 12 }, (_, i) =>
+      expectJson<{ conflicts: string[] }>(
+        c.put(`/api/diagrams/${d}`, {
+          elements: [box(`tab${i}`, d, (i + 1) * 120)],
+          baseVersions: {},
+        }),
+        200,
+      ),
+    );
+    for (const { conflicts } of await Promise.all(saves)) expect(conflicts).toEqual([]);
+    const ids = (await elementsOf(request, owner, d)).map((e) => e.id).sort();
+    expect(ids).toEqual(['first', ...Array.from({ length: 12 }, (_, i) => `tab${i}`)].sort());
+  });
+
   test('nested diagrams: created idempotently, deletable, but the top level stays', async ({
     request,
   }) => {
