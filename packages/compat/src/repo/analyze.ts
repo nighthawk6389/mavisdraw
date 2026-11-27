@@ -154,6 +154,33 @@ function parseJson<T>(text: string | undefined): T | null {
   }
 }
 
+/** A YAML line without its trailing comment (`#` after whitespace), in linear time. */
+function stripComment(line: string): string {
+  for (let i = 1; i < line.length; i++) {
+    if (line[i] === '#' && (line[i - 1] === ' ' || line[i - 1] === '\t')) {
+      return line.slice(0, i).trimEnd();
+    }
+  }
+  return line.startsWith('#') ? '' : line;
+}
+
+/** `name = "…"` in Cargo.toml's [package] section, without a backtracking regex. */
+function cargoPackageName(text: string): string | undefined {
+  let inPackage = false;
+  for (const raw of text.split('\n')) {
+    if (raw.length > MAX_LINE_CHARS) continue;
+    const line = raw.trim();
+    if (line.startsWith('[')) {
+      inPackage = line === '[package]';
+      continue;
+    }
+    if (!inPackage) continue;
+    const m = /^name[ \t]*=[ \t]*"([^"]+)"/.exec(line);
+    if (m) return m[1];
+  }
+  return undefined;
+}
+
 /** Minimal docker-compose reader: services with their image, build context and depends_on. */
 export function parseCompose(
   text: string,
@@ -172,8 +199,9 @@ export function parseCompose(
   let inDepends = false;
   let dependsIndent = -1;
 
-  for (const raw of lines) {
-    const line = raw.replace(/\s+#.*$/, '');
+  for (const full of lines) {
+    if (full.length > MAX_LINE_CHARS) continue;
+    const line = stripComment(full);
     if (!line.trim()) continue;
     const indent = line.length - line.trimStart().length;
     const trimmed = line.trim();
@@ -269,6 +297,19 @@ function kindOf(path: string, pkg: PackageJson | null, files: Set<string>): Comp
   return 'library';
 }
 
+/**
+ * Manifests are small; anything bigger is not one worth reading (and the
+ * analyzer runs on files from pull requests, so input sizes must be bounded).
+ */
+export const MAX_MANIFEST_CHARS = 256 * 1024;
+const MAX_LINE_CHARS = 4000;
+
+/** A manifest's text, or undefined when missing or too big to be a real one. */
+function readManifest(snapshot: RepoSnapshot, path: string): string | undefined {
+  const text = snapshot.read(path);
+  return text !== undefined && text.length <= MAX_MANIFEST_CHARS ? text : undefined;
+}
+
 /** Build the architecture model of a repository. */
 export function analyzeRepo(snapshot: RepoSnapshot): RepoModel {
   const files = snapshot.files.filter(isRelevantPath);
@@ -285,18 +326,20 @@ export function analyzeRepo(snapshot: RepoSnapshot): RepoModel {
     if (base === 'package.json') {
       found.set(dir, {
         ...(found.get(dir) ?? { path: dir }),
-        pkg: parseJson<PackageJson>(snapshot.read(f)),
+        pkg: parseJson<PackageJson>(readManifest(snapshot, f)),
       });
     } else if (base === 'go.mod') {
-      const mod = /^module\s+(\S+)/m.exec(snapshot.read(f) ?? '')?.[1];
+      const mod = /^module[ \t]+(\S+)/m.exec(readManifest(snapshot, f) ?? '')?.[1];
       found.set(dir, { ...(found.get(dir) ?? { path: dir, pkg: null }), goModule: mod });
     } else if (base === 'Cargo.toml') {
-      const text = snapshot.read(f) ?? '';
-      const name = /\[package\][^[]*?name\s*=\s*"([^"]+)"/s.exec(text)?.[1];
+      const text = readManifest(snapshot, f) ?? '';
+      const name = cargoPackageName(text);
       if (name)
         found.set(dir, { ...(found.get(dir) ?? { path: dir, pkg: null }), cargoName: name });
     } else if (base === 'pyproject.toml') {
-      const name = /^\s*name\s*=\s*"([^"]+)"/m.exec(snapshot.read(f) ?? '')?.[1];
+      const name = /^[ \t]*name[ \t]*=[ \t]*"([^"\n]+)"/m.exec(
+        readManifest(snapshot, f) ?? '',
+      )?.[1];
       if (name && !found.has(dir)) found.set(dir, { path: dir, pkg: { name } });
     }
   }
@@ -338,7 +381,7 @@ export function analyzeRepo(snapshot: RepoSnapshot): RepoModel {
     }
     // Go: internal modules this one requires
     if (c.goModule) {
-      const text = snapshot.read(c.path === '.' ? 'go.mod' : `${c.path}/go.mod`) ?? '';
+      const text = readManifest(snapshot, c.path === '.' ? 'go.mod' : `${c.path}/go.mod`) ?? '';
       for (const [mod, path] of byPackageName) {
         if (
           path !== c.path &&
@@ -366,7 +409,7 @@ export function analyzeRepo(snapshot: RepoSnapshot): RepoModel {
 
   // ── docker-compose: infrastructure, and which app uses it
   for (const f of files.filter((p) => /(^|\/)(docker-)?compose(\.[\w-]+)?\.ya?ml$/.test(p))) {
-    const services = parseCompose(snapshot.read(f) ?? '');
+    const services = parseCompose(readManifest(snapshot, f) ?? '');
     const composeDir = dirOf(f);
     const serviceToComponent = new Map<string, string>();
     const serviceToResource = new Map<string, string>();

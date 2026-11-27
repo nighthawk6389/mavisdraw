@@ -101,6 +101,8 @@ export interface IssueComment {
   user: { login: string; type: string } | null;
 }
 
+/** Files read from pull requests (manifests): bigger ones are skipped. */
+const MAX_FILE_BYTES = 256 * 1024;
 const MAX_FILE_PAGES = 30; // GitHub lists at most 3,000 files per PR
 const MAX_COMMENT_PAGES = 10;
 
@@ -137,11 +139,13 @@ export function installationClient(cfg: GitHubAppConfig, installationId: number)
     /** A file's text at a commit, or undefined if it isn't there. */
     async content(owner: string, repo: string, path: string, ref: string) {
       try {
-        const file = await as<{ content?: string; encoding?: string }>(
+        const file = await as<{ content?: string; encoding?: string; size?: number }>(
           'GET',
           `${repoPath(owner, repo)}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref)}`,
         );
         if (!file.content || file.encoding !== 'base64') return undefined;
+        // Manifests are small: a huge one is skipped, not parsed
+        if ((file.size ?? file.content.length) > MAX_FILE_BYTES) return undefined;
         return Buffer.from(file.content, 'base64').toString('utf8');
       } catch (err) {
         if (err instanceof GitHubApiError && err.status === 404) return undefined;
