@@ -22,6 +22,7 @@ import { tokenRoutes } from './routes/tokens.js';
 import { proposalRoutes } from './routes/proposals.js';
 import { embedRoutes } from './routes/embeds.js';
 import { githubAppRoutes } from './routes/githubApp.js';
+import { modelRoutes } from './routes/model.js';
 import {
   createHocuspocusServer,
   persistOpenDocuments,
@@ -169,6 +170,7 @@ export async function buildApp() {
   await app.register(mcpRoutes);
   await app.register(embedRoutes);
   await app.register(githubAppRoutes);
+  await app.register(modelRoutes);
 
   return app;
 }

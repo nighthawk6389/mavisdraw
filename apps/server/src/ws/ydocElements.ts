@@ -222,6 +222,33 @@ export function replaceElements(
   }, origin);
 }
 
+/**
+ * Change some properties of existing elements, as an edit (the version goes
+ * up, so open tabs, offline copies and REST saves resolve against it like
+ * any other change). Missing or deleted elements are skipped. Returns the
+ * ids changed.
+ */
+export function patchElements(
+  doc: Y.Doc,
+  patches: Array<{ id: string; changes: Record<string, unknown> }>,
+  origin: unknown = 'server',
+): string[] {
+  const map = doc.getMap('elements');
+  const now = Date.now();
+  const changed: string[] = [];
+  doc.transact(() => {
+    for (const { id, changes } of patches) {
+      const el = map.get(id);
+      if (!(el instanceof Y.Map) || el.get('isDeleted') === true) continue;
+      for (const [k, v] of Object.entries(changes)) el.set(k, v);
+      el.set('version', Number(el.get('version') ?? 0) + 1);
+      el.set('updatedAt', now);
+      changed.push(id);
+    }
+  }, origin);
+  return changed;
+}
+
 export function encodeState(doc: Y.Doc): string {
   return Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64');
 }

@@ -9,6 +9,7 @@ import {
   jsonb,
   index,
   uniqueIndex,
+  primaryKey,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
@@ -515,4 +516,47 @@ export const projectEmbeds = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex('project_embeds_token_idx').on(table.token)],
+);
+
+// ── The architecture model (docs/model-layer.md) ────────────
+// Identity and names live on the shapes (componentId, labels); these
+// tables hold what drawings can't say.
+
+export const modelComponents = pgTable(
+  'model_components',
+  {
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    /** The component id shapes carry (unique within the project). */
+    id: text('id').notNull(),
+    /** Last known name (the name of model-only components; labels win otherwise). */
+    name: varchar('name', { length: 255 }).notNull(),
+    /** service | datastore | queue | external | system | person | other (null: from the shape) */
+    kind: varchar('kind', { length: 20 }),
+    description: text('description'),
+    technology: varchar('technology', { length: 255 }),
+    owner: varchar('owner', { length: 255 }),
+    tags: jsonb('tags').$type<string[]>().notNull().default([]),
+    links: jsonb('links').$type<Array<{ label: string; url: string }>>().notNull().default([]),
+    updatedBy: text('updated_by').references(() => users.id, { onDelete: 'set null' }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.projectId, table.id] })],
+);
+
+export const modelRelationships = pgTable(
+  'model_relationships',
+  {
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    sourceId: text('source_id').notNull(),
+    targetId: text('target_id').notNull(),
+    description: text('description'),
+    technology: varchar('technology', { length: 255 }),
+    updatedBy: text('updated_by').references(() => users.id, { onDelete: 'set null' }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.projectId, table.sourceId, table.targetId] })],
 );

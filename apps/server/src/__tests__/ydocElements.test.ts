@@ -10,6 +10,7 @@ import {
   replaceElements,
   encodeState,
   applyState,
+  patchElements,
 } from '../ws/ydocElements.js';
 
 const el = (id: string, extra: Record<string, unknown> = {}) => ({
@@ -180,5 +181,24 @@ describe('ydoc element helpers', () => {
     const copy = new Y.Doc();
     applyState(copy, encodeState(doc));
     expect(byId(copy).s1.x).toBe(42);
+  });
+});
+
+describe('patchElements (server-side edits, e.g. a rename)', () => {
+  it('changes only the given properties, as an edit that open tabs see', () => {
+    const doc = new Y.Doc();
+    seedElements(doc, [el('t1', { text: 'API', version: 4 }), el('t2', { isDeleted: true })]);
+    const peer = new Y.Doc();
+    Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc));
+    doc.on('update', (u: Uint8Array) => Y.applyUpdate(peer, u));
+
+    const changed = patchElements(doc, [
+      { id: 't1', changes: { text: 'Core API' } },
+      { id: 't2', changes: { text: 'x' } }, // deleted: left alone
+      { id: 'nope', changes: { text: 'x' } }, // missing: skipped
+    ]);
+    expect(changed).toEqual(['t1']);
+    expect(byId(peer).t1).toMatchObject({ text: 'Core API', version: 5, x: 0, type: 'rectangle' });
+    expect(byId(peer).t2).not.toHaveProperty('text');
   });
 });

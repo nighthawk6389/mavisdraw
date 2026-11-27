@@ -59,6 +59,24 @@ like any edit, so offline copies and REST saves resolve against it normally.
 - Existing maps: shapes get ids the first time an editor opens their diagram. Same-named components
   on different diagrams are *offered* for linking, never merged automatically.
 
+## API
+
+Everyone on a project can read its model. People who can edit the map can change it. Viewers get
+403.
+
+| Request | What it does |
+| --- | --- |
+| `GET /api/projects/:id/model` | The computed model: components (with appearances, containment, code and details) and relationships (drawn and recorded) |
+| `POST /api/projects/:id/model/components` | Record a component nobody has drawn yet: `{ name, kind?, description?, technology?, owner?, tags?, links? }` |
+| `PUT /api/projects/:id/model/components/:componentId` | Change details; a new `name` renames it everywhere (labels in live rooms and stored diagrams, and its detail diagram's title) |
+| `DELETE /api/projects/:id/model/components/:componentId` | Forget its recorded details and recorded relationships (drawn shapes and arrows stay) |
+| `PUT /api/projects/:id/model/relationships` | Record a relationship's details, or one nobody has drawn: `{ sourceId, targetId, description?, technology? }` |
+| `DELETE /api/projects/:id/model/relationships?source=…&target=…` | Forget a recorded relationship |
+
+Edits to diagrams nobody has open go through the stored CRDT state, so a room opened later keeps
+them. Every change sends a `model` signal to the project's open rooms (and `diagrams` after a
+rename).
+
 ## What it enables
 
 - Rename once, everywhere — including the nested diagram’s title.
