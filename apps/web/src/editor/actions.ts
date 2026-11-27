@@ -8,6 +8,7 @@ import { useSelectionStore } from '../stores/selectionStore';
 import { useDiagramStore } from '../stores/diagramStore';
 import { useUIStore } from '../stores/uiStore';
 import { getCanvasController } from '../components/canvas/canvasController';
+import { unionVisualBounds } from '../components/canvas/HitTesting';
 
 /**
  * Editor commands shared by keyboard shortcuts, the context menu and (later)
@@ -105,6 +106,28 @@ export function duplicate(): void {
   if (ids.length === 0) return;
   const created = useElementsStore.getState().duplicateElements(ids);
   if (created.length > 0) useSelectionStore.getState().selectMultiple(topLevelIds(created));
+}
+
+/** Gap left between the selection and a copy placed beside it (Alt+Arrow). */
+export const DUPLICATE_BESIDE_GAP = 40;
+
+/**
+ * Alt+Arrow (Miro): copy the selection and put the copy right next to it in
+ * that direction — the fast way to lay out a row or column of services.
+ */
+export function duplicateBeside(direction: { x: -1 | 0 | 1; y: -1 | 0 | 1 }): void {
+  const ids = selectedIds();
+  const elements = selectedElements();
+  if (ids.length === 0 || elements.length === 0) return;
+  const bounds = unionVisualBounds(elements);
+  if (!bounds) return;
+  const offset = {
+    x: direction.x * (bounds.width + DUPLICATE_BESIDE_GAP),
+    y: direction.y * (bounds.height + DUPLICATE_BESIDE_GAP),
+  };
+  const created = useElementsStore.getState().duplicateElements(ids, offset);
+  if (created.length > 0) useSelectionStore.getState().selectMultiple(topLevelIds(created));
+  getCanvasController()?.invalidate();
 }
 
 export function deleteSelection(): void {

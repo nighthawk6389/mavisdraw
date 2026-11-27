@@ -67,6 +67,7 @@ function createMockCallbacks(overrides?: Partial<InteractionCallbacks>): Interac
     addElement: vi.fn(),
     updateElement: vi.fn(),
     updateElementSilent: vi.fn(),
+    updateElementsSilent: vi.fn(),
     deleteSelectedElements: vi.fn(),
     pushHistory: vi.fn(),
 
@@ -146,12 +147,24 @@ describe('InteractionManager', () => {
       expect(callbacks.addElement).toHaveBeenCalledTimes(1);
     });
 
-    it('too-small drag does not add element', () => {
+    it('jitter below the drag threshold shows no preview', () => {
+      mgr.onPointerDown(100, 100, { button: 0, shiftKey: false });
+      mgr.onPointerMove(101, 101);
+      expect(mgr.getCreatingElement()).toBeNull();
+    });
+
+    // Previously a click with a shape tool created nothing. Like tldraw and
+    // Miro, a click now places a default-size shape centred on the pointer.
+    it('a click (or sub-threshold jitter) places a default-size shape centred on the pointer', () => {
       mgr.onPointerDown(100, 100, { button: 0, shiftKey: false });
       mgr.onPointerMove(101, 101);
       mgr.onPointerUp(101, 101);
 
-      expect(callbacks.addElement).not.toHaveBeenCalled();
+      expect(callbacks.addElement).toHaveBeenCalledTimes(1);
+      const placed = vi.mocked(callbacks.addElement).mock.calls[0][0];
+      expect(placed).toMatchObject({ x: 20, y: 60, width: 160, height: 80 });
+      expect(callbacks.select).toHaveBeenCalledWith(placed.id);
+      expect(callbacks.resetToSelect).toHaveBeenCalled();
     });
   });
 

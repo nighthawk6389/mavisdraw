@@ -423,22 +423,121 @@ function resolveLabelToContainer(
 }
 
 /**
- * Find all elements within a selection rectangle (canvas coordinates).
+ * Elements picked by a selection rectangle (canvas coordinates).
+ *
+ * - `intersect` (default, like tldraw and Figma): anything the rectangle
+ *   touches. Connectors count only if the rectangle crosses the line itself,
+ *   not just its bounding box, so a long diagonal arrow isn't grabbed by
+ *   accident.
+ * - `contain` (Ctrl/Cmd held, Excalidraw's default): only elements entirely
+ *   inside the rectangle.
  */
 export function hitTestSelectionBox(
   selectionBounds: Bounds,
   elements: MavisElement[],
+  mode: 'intersect' | 'contain' = 'intersect',
 ): MavisElement[] {
   return elements.filter((element) => {
     if (element.isDeleted) return false;
     // Labels come along with their shape, never on their own
     if (element.type === 'text' && element.containerId) return false;
-    return boundsOverlap(selectionBounds, getVisualBounds(element));
+    const visual = getVisualBounds(element);
+    if (mode === 'contain') return boundsContain(selectionBounds, visual);
+    if (!boundsOverlap(selectionBounds, visual)) return false;
+    if (
+      (element.type === 'line' || element.type === 'arrow' || element.type === 'freedraw') &&
+      element.points.length > 1
+    ) {
+      return polylineTouchesRect(element.x, element.y, element.points, selectionBounds);
+    }
+    return true;
   });
 }
 
+function boundsContain(outer: Bounds, inner: Bounds): boolean {
+  return (
+    inner.x >= outer.x &&
+    inner.y >= outer.y &&
+    inner.x + inner.width <= outer.x + outer.width &&
+    inner.y + inner.height <= outer.y + outer.height
+  );
+}
+
+function pointInBounds(x: number, y: number, b: Bounds): boolean {
+  return x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height;
+}
+
+/** Proper crossing of segments AB and CD. */
+function segmentsCross(a: Point, b: Point, c: Point, d: Point): boolean {
+  const d1 = (d.x - c.x) * (a.y - c.y) - (d.y - c.y) * (a.x - c.x);
+  const d2 = (d.x - c.x) * (b.y - c.y) - (d.y - c.y) * (b.x - c.x);
+  const d3 = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  const d4 = (b.x - a.x) * (d.y - a.y) - (b.y - a.y) * (d.x - a.x);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+/** True if any point of a polyline lies inside the rectangle or a segment crosses it. */
+function polylineTouchesRect(
+  originX: number,
+  originY: number,
+  points: [number, number][],
+  rect: Bounds,
+): boolean {
+  const right = rect.x + rect.width;
+  const bottom = rect.y + rect.height;
+  const corners: Point[] = [
+    { x: rect.x, y: rect.y },
+    { x: right, y: rect.y },
+    { x: right, y: bottom },
+    { x: rect.x, y: bottom },
+  ];
+  let prev: Point | null = null;
+  for (const [px, py] of points) {
+    const p = { x: originX + px, y: originY + py };
+    if (pointInBounds(p.x, p.y, rect)) return true;
+    if (prev) {
+      for (let i = 0; i < 4; i++) {
+        if (segmentsCross(prev, p, corners[i], corners[(i + 1) % 4])) return true;
+      }
+    }
+    prev = p;
+  }
+  return false;
+}
+
+/** Union of the visual bounds of `elements` (null when empty). */
+export function unionVisualBounds(elements: MavisElement[]): Bounds | null {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const el of elements) {
+    const b = getVisualBounds(el);
+    minX = Math.min(minX, b.x);
+    minY = Math.min(minY, b.y);
+    maxX = Math.max(maxX, b.x + b.width);
+    maxY = Math.max(maxY, b.y + b.height);
+  }
+  if (!Number.isFinite(minX) || !Number.isFinite(minY)) return null;
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+/**
+ * The box drawn around a selection, with its resize handles. Connectors have
+ * their own endpoint handles, so when shapes are selected too the frame wraps
+ * the shapes only. The renderer and the handle hit-test both use this, so a
+ * handle is clickable exactly where it's drawn. Null when only connectors
+ * are selected.
+ */
+export function selectionFrameBounds(selected: MavisElement[]): Bounds | null {
+  const live = selected.filter((e) => !e.isDeleted);
+  const shapes = live.filter((e) => e.type !== 'arrow' && e.type !== 'line');
+  if (shapes.length === 0) return null;
+  return unionVisualBounds(shapes.length === live.length ? live : shapes);
+}
+
 /** Bounds of what's actually drawn: linear elements are measured by their points. */
-function getVisualBounds(element: MavisElement): Bounds {
+export function getVisualBounds(element: MavisElement): Bounds {
   if (
     (element.type === 'line' || element.type === 'arrow' || element.type === 'freedraw') &&
     element.points.length > 0

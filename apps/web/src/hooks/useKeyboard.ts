@@ -101,6 +101,16 @@ export function useKeyboard(
       }
 
       if (key === 'escape') {
+        // Mid-drag / resize / draw: put everything back as it was (tldraw, Figma)
+        const gesture = interactionManagerRef.current as {
+          isGestureActive?: () => boolean;
+          cancelGesture?: () => void;
+        } | null;
+        if (gesture?.isGestureActive?.()) {
+          event.preventDefault();
+          gesture.cancelGesture?.();
+          return;
+        }
         // Close an open comment / comparison first, then leave comment mode / clear selection
         if (useVersionStore.getState().compare) {
           useVersionStore.getState().stopCompare();
@@ -144,6 +154,14 @@ export function useKeyboard(
           else controller?.editLabel?.(id);
           return;
         }
+      }
+
+      // Alt+Arrow: duplicate the selection next to itself in that direction (Miro)
+      if (!mod && event.altKey && NUDGE_KEYS[key] && selectedIds.size > 0) {
+        event.preventDefault();
+        const [ux, uy] = NUDGE_KEYS[key];
+        actions.duplicateBeside({ x: ux as -1 | 0 | 1, y: uy as -1 | 0 | 1 });
+        return;
       }
 
       // Arrow keys nudge the selection (Shift = 10px)
@@ -270,6 +288,11 @@ export function useKeyboard(
 
       // Tool shortcuts (only without modifiers)
       if (!mod && !event.altKey && !event.shiftKey) {
+        // Q keeps the current drawing tool active after each shape (Excalidraw, tldraw)
+        if (key === 'q') {
+          useToolStore.getState().toggleToolLock();
+          return;
+        }
         const tool = KEY_TO_TOOL[key];
         if (tool) useToolStore.getState().setTool(tool);
       }

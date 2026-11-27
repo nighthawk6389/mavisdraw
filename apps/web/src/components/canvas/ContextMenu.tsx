@@ -39,6 +39,7 @@ function buildItems(
   canvasPoint: Point,
   renderMode: 'sketchy' | 'clean',
   showGrid: boolean,
+  snap: { grid: boolean; objects: boolean } = { grid: false, objects: true },
 ): MenuItem[] {
   const items: MenuItem[] = [];
   const sep = (id: string) => items.push({ kind: 'separator', id });
@@ -235,6 +236,21 @@ function buildItems(
       },
       {
         kind: 'item',
+        id: 'snap-grid',
+        label: 'Snap to grid',
+        checked: snap.grid,
+        run: () => useUIStore.getState().toggleSnapToGrid(),
+      },
+      {
+        kind: 'item',
+        id: 'snap-objects',
+        label: 'Snap to shapes',
+        hint: 'Hold Ctrl/⌘ to skip',
+        checked: snap.objects,
+        run: () => useUIStore.getState().toggleSnapToObjects(),
+      },
+      {
+        kind: 'item',
         id: 'sketchy',
         label: 'Hand-drawn style',
         checked: renderMode === 'sketchy',
@@ -265,18 +281,23 @@ export default function ContextMenu({
   const elements = useElementsStore((s) => s.elements);
   const renderMode = useUIStore((s) => s.renderMode);
   const showGrid = useUIStore((s) => s.showGrid);
+  const snapToGrid = useUIStore((s) => s.snapToGrid);
+  const snapToObjects = useUIStore((s) => s.snapToObjects);
 
   const editable = usePermissionStore((s) => s.canEdit);
   const items = useMemo(() => {
     const selected = Array.from(selectedIds)
       .map((id) => elements.get(id))
       .filter((el): el is MavisElement => !!el && !el.isDeleted);
-    const all = buildItems(selected, state.canvasPoint, renderMode, showGrid);
+    const all = buildItems(selected, state.canvasPoint, renderMode, showGrid, {
+      grid: snapToGrid,
+      objects: snapToObjects,
+    });
     if (editable) return all;
     // Viewers: look, copy and navigate only
     const allowed = new Set(['open-portal', 'copy', 'copy-png', 'select-all', 'fit', 'grid', 'sketchy']);
     return all.filter((item) => item.kind === 'separator' || allowed.has(item.id));
-  }, [selectedIds, elements, state.canvasPoint, renderMode, showGrid, editable]);
+  }, [selectedIds, elements, state.canvasPoint, renderMode, showGrid, snapToGrid, snapToObjects, editable]);
 
   // Keep the menu inside the canvas area
   useLayoutEffect(() => {

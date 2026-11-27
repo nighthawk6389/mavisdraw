@@ -1,7 +1,6 @@
-import type { MavisElement, Point, Bounds, LinearElement, TextElement } from '@mavisdraw/types';
+import type { MavisElement, Point, Bounds, LinearElement } from '@mavisdraw/types';
 import type { Tool } from '../../stores/toolStore';
 import type { ViewportManager } from './ViewportManager';
-import type { SmartGuide } from './CanvasRenderer';
 import {
   hitTestElements,
   hitTestSelectionBox,
@@ -17,10 +16,36 @@ import {
   getAnchorPoints,
   hitTestElbowSegment,
   computeElbowPoints,
+  getVisualBounds,
+  selectionFrameBounds,
+  unionVisualBounds,
+  SELECTION_PADDING_PX,
   type ResizeHandle,
 } from './HitTesting';
 import { simplifyTuplePoints, applyElbowSegmentDrag } from '@mavisdraw/math';
 import type { WheelIntent } from './wheel';
+import {
+  creationBox,
+  dominantAxis,
+  exceedsDragThreshold,
+  handleSides,
+  lockToAxis,
+  placedBox,
+  resizeBox,
+  resizeSnapCandidates,
+  scaleElementBox,
+  snapVectorAngle,
+} from './gestures/transform';
+import {
+  SNAP_DISTANCE_PX,
+  alignmentGuides,
+  createSnapContext,
+  snapMovingBox,
+  snapToGrid,
+  snapValues,
+  type SnapContext,
+  type SnapGuide,
+} from './gestures/snapping';
 
 export type InteractionMode =
   | 'idle'
@@ -35,6 +60,25 @@ export type InteractionMode =
   | 'moving-waypoint'
   | 'pending-waypoint'
   | 'dragging-elbow-segment';
+
+/** Keyboard modifiers held during a pointer gesture. */
+export interface PointerModifiers {
+  shiftKey: boolean;
+  altKey?: boolean;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+}
+
+export interface PointerDownInfo extends PointerModifiers {
+  button: number;
+  /** 'mouse' | 'pen' | 'touch' — coarse pointers get a larger drag threshold. */
+  pointerType?: string;
+}
+
+export interface ElementUpdate {
+  id: string;
+  changes: Partial<MavisElement>;
+}
 
 export interface InteractionCallbacks {
   getElements: () => MavisElement[];
@@ -67,8 +111,14 @@ export interface InteractionCallbacks {
   addElement: (element: MavisElement) => void;
   updateElement: (id: string, updates: Partial<MavisElement>) => void;
   updateElementSilent: (id: string, updates: Partial<MavisElement>) => void;
+  /** Many updates as one store change, no undo step of its own (drag, resize). */
+  updateElementsSilent: (updates: ElementUpdate[]) => void;
   deleteSelectedElements: () => void;
   pushHistory: () => void;
+  /** Copy elements in place, labels included (Alt-drag). Returns the copies. */
+  duplicateElements?: (ids: string[]) => MavisElement[];
+  /** Remove never-committed elements entirely (a cancelled Alt-drag's copies). */
+  discardElements?: (ids: string[]) => void;
 
   // Binding
   bindArrow: (
@@ -86,6 +136,14 @@ export interface InteractionCallbacks {
   // Tool
   resetToSelect: () => void;
   isToolLocked: () => boolean;
+
+  // Snapping
+  /** Grid size to snap to, or null when snapping to the grid is off. */
+  getGridSnap?: () => number | null;
+  /** Smart guides on (the default); Ctrl/Cmd still skips snapping for one gesture. */
+  isObjectSnapEnabled?: () => boolean;
+  /** The canvas-space rectangle on screen: only shapes you can see are snap targets. */
+  getVisibleBounds?: () => Bounds | null;
 
   // Render
   invalidateStatic: () => void;
@@ -109,7 +167,8 @@ const SHAPE_TOOLS = new Set<Tool>([
   'portal',
 ]);
 
-const SMART_GUIDE_THRESHOLD = 5; // pixels in screen space
+/** Tools that draw a box: a click places one at its default size. */
+const BOX_TOOLS = new Set<Tool>(['rectangle', 'ellipse', 'diamond', 'portal']);
 
 const RESIZE_CURSORS: Record<ResizeHandle, string> = {
   'top-left': 'nwse-resize',
@@ -121,6 +180,14 @@ const RESIZE_CURSORS: Record<ResizeHandle, string> = {
   'middle-left': 'ew-resize',
   'middle-right': 'ew-resize',
 };
+
+function isLinearType(type: string): boolean {
+  return type === 'arrow' || type === 'line' || type === 'freedraw';
+}
+
+function boundsOverlap(a: Bounds, b: Bounds): boolean {
+  return a.x <= b.x + b.width && a.x + a.width >= b.x && a.y <= b.y + b.height && a.y + a.height >= b.y;
+}
 
 export class InteractionManager {
   private mode: InteractionMode = 'idle';
@@ -137,7 +204,6 @@ export class InteractionManager {
   private dragStartPositions: Map<string, Point> = new Map();
   private dragStartSizes: Map<string, { width: number; height: number }> = new Map();
   private dragStartPoints: Map<string, [number, number][]> = new Map();
-  private shiftKey = false;
   private resizeHandle: ResizeHandle | null = null;
   private resizeStartBounds: Bounds | null = null;
   private isSpacePressed = false;
@@ -147,8 +213,40 @@ export class InteractionManager {
   private freedrawMaxX = -Infinity;
   private freedrawMaxY = -Infinity;
 
+  // Modifiers and pointer kind of the current gesture
+  private mods: Required<PointerModifiers> = {
+    shiftKey: false,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+  };
+  private pointerType = 'mouse';
+
+  /** The press has moved past the drag threshold (drag / create gestures). */
+  private dragActive = false;
+  /** Elements as they were when the gesture started (Escape restores them). */
+  private gestureOriginals: Map<string, MavisElement> = new Map();
+  /** Selection when the press started (Escape / cancelled marquee restore it). */
+  private selectionAtPress: string[] = [];
+  /** Union bounds of what's being moved, at the start of the drag. */
+  private dragStartBounds: Bounds | null = null;
+  /** Copies made by an Alt-drag (discarded if the drag is cancelled). */
+  private duplicateIds: string[] = [];
+  /** Shift-click on a selected element: deselect it if the press doesn't turn into a drag. */
+  private pendingDeselect: string[] | null = null;
+  /** Click on one element of a multi-selection: select just it unless it turns into a drag. */
+  private pendingSelectOnly: string[] | null = null;
+  /** The press landed on empty space inside the selection frame. */
+  private pressedOnFrame = false;
+  /** Where a shape being drawn started (snapped). */
+  private creationOrigin: Point = { x: 0, y: 0 };
+  /** Selection kept by a Shift-marquee. */
+  private marqueeBase: Set<string> = new Set();
+  private lastMarqueeKey = '';
+
   // Smart guides state
-  private currentSmartGuides: SmartGuide[] = [];
+  private snapContext: SnapContext | null = null;
+  private currentSmartGuides: SnapGuide[] = [];
 
   // Anchor / connection state (Phase 3)
   private anchorTarget: MavisElement | null = null;
@@ -215,7 +313,8 @@ export class InteractionManager {
     return this.creatingElement;
   }
 
-  getSmartGuides(): SmartGuide[] {
+  /** Alignment and spacing guides to draw for the current gesture. */
+  getSmartGuides(): SnapGuide[] {
     return this.currentSmartGuides;
   }
 
@@ -265,10 +364,80 @@ export class InteractionManager {
     return this.snapTarget;
   }
 
+  /** A pointer gesture is under way (something Escape could cancel). */
+  isGestureActive(): boolean {
+    return this.mode !== 'idle' && this.mode !== 'panning';
+  }
+
+  /** The current gesture benefits from auto-panning at the canvas edge. */
+  wantsEdgeScroll(): boolean {
+    switch (this.mode) {
+      case 'dragging':
+      case 'creating':
+        return this.dragActive;
+      case 'resizing':
+      case 'selecting':
+      case 'creating-from-anchor':
+      case 'rebinding-endpoint':
+      case 'moving-waypoint':
+      case 'dragging-elbow-segment':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  /** Last pointer position, canvas-relative screen pixels. */
+  getLastScreenPoint(): Point {
+    return this.lastScreenPoint;
+  }
+
+  /**
+   * Modifier keys changed mid-gesture without the pointer moving (pressing
+   * Shift to lock an axis, Ctrl to stop snapping): re-apply the gesture.
+   */
+  onModifiersChange(mods: PointerModifiers): void {
+    this.setModifiers(mods);
+    if (!this.isGestureActive()) return;
+    this.onPointerMove(this.lastScreenPoint.x, this.lastScreenPoint.y);
+  }
+
+  private setModifiers(mods: PointerModifiers): void {
+    this.mods = {
+      shiftKey: mods.shiftKey,
+      altKey: mods.altKey ?? false,
+      ctrlKey: mods.ctrlKey ?? false,
+      metaKey: mods.metaKey ?? false,
+    };
+  }
+
+  /** Ctrl/Cmd held: place freely, without snapping (Miro, tldraw, Excalidraw). */
+  private isSnapEnabled(): boolean {
+    return !(this.mods.ctrlKey || this.mods.metaKey);
+  }
+
+  private snapThreshold(): number {
+    return SNAP_DISTANCE_PX / Math.max(0.01, this.callbacks.getViewport().getViewport().zoom);
+  }
+
+  private gridSize(): number | null {
+    const size = this.callbacks.getGridSnap?.() ?? null;
+    return size && size > 0 ? size : null;
+  }
+
   // ─── Mouse Events ─────────────────────────────────────────
 
-  onPointerDown(screenX: number, screenY: number, event: { button: number; shiftKey: boolean }): void {
-    this.shiftKey = event.shiftKey;
+  onPointerDown(screenX: number, screenY: number, event: PointerDownInfo): void {
+    this.setModifiers(event);
+    this.pointerType = event.pointerType ?? 'mouse';
+    this.dragActive = false;
+    this.pendingDeselect = null;
+    this.pendingSelectOnly = null;
+    this.pressedOnFrame = false;
+    this.duplicateIds = [];
+    this.gestureOriginals = new Map();
+    this.snapContext = null;
+    this.currentSmartGuides = [];
     const viewport = this.callbacks.getViewport();
     const canvasPoint = viewport.screenToCanvas(screenX, screenY);
     this.startCanvasPoint = canvasPoint;
@@ -304,6 +473,7 @@ export class InteractionManager {
     const tool = this.callbacks.getActiveTool();
     const elements = this.callbacks.getElements();
     const selectedIds = this.callbacks.getSelectedIds();
+    this.selectionAtPress = Array.from(selectedIds);
 
     if (tool === 'select' || tool === 'arrow') {
       // Phase 4 & 5: Check endpoint/waypoint/midpoint handles on selected linear elements
@@ -452,32 +622,22 @@ export class InteractionManager {
 
       if (tool === 'arrow') {
         // Standard arrow creation
-        this.mode = 'creating';
-        this.creatingSeed = Math.floor(Math.random() * 2 ** 31);
-        this.creatingId = '';
-        this.callbacks.pushHistory();
+        this.startCreating(canvasPoint, tool);
         return;
       }
 
-      // Check resize handle hit (only for non-linear selections; arrows/lines use their own handles)
-      if (selectedIds.size > 0) {
-        const hasNonLinear = elements.some(
-          (e) => selectedIds.has(e.id) && e.type !== 'arrow' && e.type !== 'line' && !e.isDeleted,
-        );
-        const hasLocked = elements.some((e) => selectedIds.has(e.id) && e.isLocked);
-        if (hasNonLinear && !hasLocked) {
-          const selBounds = this.getSelectionBounds(elements, selectedIds);
-          if (selBounds) {
-            const handle = hitTestResizeHandle(canvasPoint, selBounds, zoom);
-            if (handle) {
-              this.mode = 'resizing';
-              this.resizeHandle = handle;
-              this.resizeStartBounds = selBounds;
-              this.captureElementPositions(elements, selectedIds);
-              this.callbacks.pushHistory();
-              return;
-            }
-          }
+      // Resize handles of the selection frame (exactly where they're drawn)
+      const frame = this.getSelectionFrame(elements, selectedIds);
+      if (frame && !elements.some((e) => selectedIds.has(e.id) && e.isLocked)) {
+        const handle = hitTestResizeHandle(canvasPoint, frame, zoom);
+        if (handle) {
+          this.mode = 'resizing';
+          this.resizeHandle = handle;
+          this.resizeStartBounds = frame;
+          this.captureElementPositions(elements, selectedIds);
+          this.snapContext = this.buildSnapContext(selectedIds);
+          this.callbacks.pushHistory();
+          return;
         }
       }
 
@@ -503,44 +663,63 @@ export class InteractionManager {
 
         // Get all group members if applicable
         const groupIds = getGroupElementIds(hitElement, elements, this.enteredGroupIds);
+        const alreadySelected = selectedIds.has(hitElement.id);
 
         if (event.shiftKey) {
-          // Add group members to selection
-          for (const gid of groupIds) {
-            this.callbacks.addToSelection(gid);
+          if (alreadySelected) {
+            // Shift-click toggles: deselect on release, unless this becomes a drag
+            this.pendingDeselect = groupIds;
+          } else {
+            for (const gid of groupIds) this.callbacks.addToSelection(gid);
           }
-        } else if (!selectedIds.has(hitElement.id) || groupIds.length > 1) {
+        } else if (!alreadySelected) {
           // If clicking a group member that's not selected, select the whole group
           if (groupIds.length > 1) {
             this.callbacks.selectMultiple(groupIds);
           } else {
             this.callbacks.select(hitElement.id);
           }
+        } else if (selectedIds.size > groupIds.length) {
+          // Pressing one shape of a bigger selection keeps the selection for a
+          // drag; a plain click selects just that shape (Figma, tldraw, Excalidraw)
+          this.pendingSelectOnly = groupIds;
         }
 
-        // Start drag
+        // Start drag (it begins moving once the pointer passes the threshold)
         this.mode = 'dragging';
-        const currentSelectedIds = this.callbacks.getSelectedIds();
-        this.captureElementPositions(elements, currentSelectedIds);
+        this.captureElementPositions(elements, this.callbacks.getSelectedIds());
         this.callbacks.pushHistory();
-      } else {
-        this.lastWaypointClick = null;
-        // Check for double-click on empty area
-        const now = Date.now();
-        if (now - this.lastClickTime < InteractionManager.DOUBLE_CLICK_THRESHOLD) {
-          // Exit any entered groups
-          this.enteredGroupIds.clear();
-        }
-        this.lastClickTime = now;
-        this.lastClickId = null;
-
-        // Start selection box
-        if (!event.shiftKey) {
-          this.callbacks.clearSelection();
-        }
-        this.mode = 'selecting';
-        this.callbacks.startSelectionBox(canvasPoint);
+        return;
       }
+
+      this.lastWaypointClick = null;
+      // Check for double-click on empty area
+      const now = Date.now();
+      if (now - this.lastClickTime < InteractionManager.DOUBLE_CLICK_THRESHOLD) {
+        // Exit any entered groups
+        this.enteredGroupIds.clear();
+      }
+      this.lastClickTime = now;
+      this.lastClickId = null;
+
+      // Empty space inside the selection frame grabs the whole selection
+      // (Excalidraw, tldraw, Figma); a click there without dragging deselects
+      if (frame && !event.shiftKey && this.frameContains(frame, canvasPoint, zoom)) {
+        this.pressedOnFrame = true;
+        this.mode = 'dragging';
+        this.captureElementPositions(elements, selectedIds);
+        this.callbacks.pushHistory();
+        return;
+      }
+
+      // Start selection box
+      this.marqueeBase = event.shiftKey ? new Set(selectedIds) : new Set();
+      this.lastMarqueeKey = '';
+      if (!event.shiftKey) {
+        this.callbacks.clearSelection();
+      }
+      this.mode = 'selecting';
+      this.callbacks.startSelectionBox(canvasPoint);
     } else if (tool === 'text') {
       // Text tool: check if clicking on existing text element
       const hitElement = hitTestElements(canvasPoint, elements);
@@ -576,15 +755,12 @@ export class InteractionManager {
       this.freedrawMaxY = canvasPoint.y;
       this.callbacks.pushHistory();
     } else if (SHAPE_TOOLS.has(tool)) {
-      this.mode = 'creating';
-      this.creatingSeed = Math.floor(Math.random() * 2 ** 31);
-      this.creatingId = '';
-      this.callbacks.pushHistory();
+      this.startCreating(canvasPoint, tool);
     }
   }
 
-  onPointerMove(screenX: number, screenY: number, modifiers?: { shiftKey: boolean }): void {
-    if (modifiers) this.shiftKey = modifiers.shiftKey;
+  onPointerMove(screenX: number, screenY: number, modifiers?: PointerModifiers): void {
+    if (modifiers) this.setModifiers(modifiers);
     const viewport = this.callbacks.getViewport();
     const canvasPoint = viewport.screenToCanvas(screenX, screenY);
     const deltaScreenX = screenX - this.lastScreenPoint.x;
@@ -631,86 +807,24 @@ export class InteractionManager {
       }
 
       case 'creating': {
-        const tool = this.callbacks.getActiveTool();
-
-        if (tool === 'arrow' || tool === 'line') {
-          const width = canvasPoint.x - this.startCanvasPoint.x;
-          const height = canvasPoint.y - this.startCanvasPoint.y;
-
-          this.creatingElement = this.callbacks.createElement(
-            tool,
-            this.diagramId,
-            this.startCanvasPoint.x,
-            this.startCanvasPoint.y,
-            Math.abs(width),
-            Math.abs(height),
-          );
-
-          if (this.creatingElement && 'points' in this.creatingElement) {
-            (this.creatingElement as LinearElement).points = [
-              [0, 0],
-              [width, height],
-            ];
+        if (!this.dragActive) {
+          if (!exceedsDragThreshold(this.startScreenPoint, { x: screenX, y: screenY }, this.pointerType)) {
+            break;
           }
-        } else {
-          const x = Math.min(this.startCanvasPoint.x, canvasPoint.x);
-          const y = Math.min(this.startCanvasPoint.y, canvasPoint.y);
-          const width = Math.abs(canvasPoint.x - this.startCanvasPoint.x);
-          const height = Math.abs(canvasPoint.y - this.startCanvasPoint.y);
-
-          if (width > 2 || height > 2) {
-            this.creatingElement = this.callbacks.createElement(
-              tool,
-              this.diagramId,
-              x,
-              y,
-              width,
-              height,
-            );
-          }
+          this.dragActive = true;
         }
-
-        // Stabilize seed and id across frames so rough.js doesn't shimmer
-        if (this.creatingElement) {
-          if (!this.creatingId) {
-            this.creatingId = this.creatingElement.id;
-          }
-          (this.creatingElement as { id: string }).id = this.creatingId;
-          (this.creatingElement as { seed: number }).seed = this.creatingSeed;
-        }
+        this.updateCreatingElement(canvasPoint);
         break;
       }
 
       case 'dragging': {
-        const dx = canvasPoint.x - this.startCanvasPoint.x;
-        const dy = canvasPoint.y - this.startCanvasPoint.y;
-
-        // Calculate smart guides
-        const elements = this.callbacks.getElements();
-        const selectedIds = this.callbacks.getSelectedIds();
-        const { snappedDx, snappedDy, guides } = this.calculateSmartGuides(
-          dx, dy, elements, selectedIds,
-        );
-
-        this.currentSmartGuides = guides;
-
-        for (const [id, startPos] of this.dragStartPositions) {
-          const element = elements.find((e) => e.id === id);
-          if (element && element.boundElements.length > 0) {
-            // Use moveElementWithBindings for elements with bindings
-            this.callbacks.moveElementWithBindings(
-              id,
-              startPos.x + snappedDx,
-              startPos.y + snappedDy,
-            );
-          } else {
-            this.callbacks.updateElementSilent(id, {
-              x: startPos.x + snappedDx,
-              y: startPos.y + snappedDy,
-            });
+        if (!this.dragActive) {
+          if (!exceedsDragThreshold(this.startScreenPoint, { x: screenX, y: screenY }, this.pointerType)) {
+            break;
           }
+          this.beginDrag();
         }
-        this.callbacks.invalidateStatic();
+        this.applyDrag(canvasPoint);
         break;
       }
 
@@ -722,6 +836,7 @@ export class InteractionManager {
 
       case 'selecting': {
         this.callbacks.updateSelectionBox(canvasPoint);
+        this.updateMarqueeSelection(canvasPoint);
         break;
       }
 
@@ -755,8 +870,13 @@ export class InteractionManager {
       }
 
       case 'creating-from-anchor': {
-        const width = canvasPoint.x - this.startCanvasPoint.x;
-        const height = canvasPoint.y - this.startCanvasPoint.y;
+        let width = canvasPoint.x - this.startCanvasPoint.x;
+        let height = canvasPoint.y - this.startCanvasPoint.y;
+        if (this.mods.shiftKey) {
+          const snapped = snapVectorAngle({ x: width, y: height });
+          width = snapped.x;
+          height = snapped.y;
+        }
 
         this.creatingElement = this.callbacks.createElement(
           'arrow',
@@ -846,7 +966,7 @@ export class InteractionManager {
         this.callbacks.updateElementSilent(arrow.id, { points: newPoints } as Partial<LinearElement>);
         this.mode = 'moving-waypoint';
         this.movingWaypointIndex = this.pendingWaypointSegment + 1;
-        this.waypointOriginalPoints = newPoints;
+        this.waypointOriginalPoints = arrow.points.map((p) => [...p] as [number, number]);
         this.pendingWaypointSegment = -1;
         this.callbacks.invalidateStatic();
         break;
@@ -906,9 +1026,8 @@ export class InteractionManager {
 
     switch (this.mode) {
       case 'creating': {
+        const tool = this.callbacks.getActiveTool();
         if (this.creatingElement) {
-          const tool = this.callbacks.getActiveTool();
-
           // For arrows, check binding at endpoints
           if ((tool === 'arrow' || tool === 'line') && 'points' in this.creatingElement) {
             const linear = this.creatingElement as LinearElement;
@@ -945,56 +1064,59 @@ export class InteractionManager {
                 startTarget.gap,
               );
             }
+            this.finishCreation(this.creatingElement);
           } else if (this.creatingElement.width > 2 || this.creatingElement.height > 2) {
             this.callbacks.addElement(this.creatingElement);
+            this.finishCreation(this.creatingElement);
           }
-
-          if (this.creatingElement.width > 2 || this.creatingElement.height > 2 ||
-              tool === 'arrow' || tool === 'line') {
-            this.callbacks.select(this.creatingElement.id);
-
-            // Portal creation flow: auto-create child diagram
-            if (
-              this.creatingElement.type === 'portal' &&
-              this.callbacks.onPortalCreated
-            ) {
-              this.callbacks.onPortalCreated(this.creatingElement);
-            }
-
-            if (!this.callbacks.isToolLocked()) {
-              this.callbacks.resetToSelect();
-            }
+        } else if (!this.dragActive && BOX_TOOLS.has(tool)) {
+          // A click places a shape of the default size, centred on the pointer
+          const box = placedBox(tool, this.creationOrigin);
+          const grid = this.isSnapEnabled() ? this.gridSize() : null;
+          if (grid) {
+            box.x = snapToGrid(box.x, grid);
+            box.y = snapToGrid(box.y, grid);
           }
+          const placed = this.callbacks.createElement(tool, this.diagramId, box.x, box.y, box.width, box.height);
+          this.callbacks.addElement(placed);
+          this.finishCreation(placed);
         }
         this.creatingElement = null;
+        this.snapContext = null;
+        this.currentSmartGuides = [];
         this.callbacks.invalidateStatic();
         break;
       }
 
       case 'dragging': {
-        this.dragStartPositions.clear();
-        this.dragStartSizes.clear();
-        this.currentSmartGuides = [];
-        this.callbacks.invalidateStatic();
+        if (!this.dragActive) {
+          // A click, not a drag
+          if (this.pendingDeselect) {
+            const drop = new Set(this.pendingDeselect);
+            this.callbacks.selectMultiple(
+              Array.from(this.callbacks.getSelectedIds()).filter((id) => !drop.has(id)),
+            );
+          } else if (this.pendingSelectOnly) {
+            this.callbacks.selectMultiple(this.pendingSelectOnly);
+          } else if (this.pressedOnFrame) {
+            this.callbacks.clearSelection();
+          }
+        }
+        this.endTransformGesture();
         break;
       }
 
       case 'resizing': {
         this.resizeHandle = null;
         this.resizeStartBounds = null;
-        this.dragStartPositions.clear();
-        this.dragStartSizes.clear();
-        this.callbacks.invalidateStatic();
+        this.endTransformGesture();
         break;
       }
 
       case 'selecting': {
-        const selBox = this.getSelectionBoxBounds();
-        if (selBox && selBox.width > 2 && selBox.height > 2) {
-          const elements = this.callbacks.getElements();
-          const hits = hitTestSelectionBox(selBox, elements);
-          this.callbacks.selectElementsInBox(hits.map((e) => e.id));
-        }
+        this.updateMarqueeSelection(
+          this.callbacks.getViewport().screenToCanvas(this.lastScreenPoint.x, this.lastScreenPoint.y),
+        );
         this.callbacks.endSelectionBox();
         break;
       }
@@ -1005,8 +1127,8 @@ export class InteractionManager {
           const zoom = this.callbacks.getViewport().getViewport().zoom;
           const tolerance = Math.max(1, 2 / zoom);
 
-          const minX = Math.min(...this.freedrawPoints.map((p) => p[0]));
-          const minY = Math.min(...this.freedrawPoints.map((p) => p[1]));
+          const minX = this.freedrawMinX;
+          const minY = this.freedrawMinY;
           const relativePoints: [number, number][] = this.freedrawPoints.map((p) => [
             p[0] - minX,
             p[1] - minY,
@@ -1135,14 +1257,18 @@ export class InteractionManager {
     }
 
     this.rightButtonDown = false;
+    this.dragActive = false;
     this.mode = 'idle';
   }
 
   /** Read-only pointer handling: select, box-select and drill into portals. */
   private onReadOnlyPointerDown(screenX: number, screenY: number, canvasPoint: Point, shiftKey: boolean): void {
     const elements = this.callbacks.getElements();
+    this.selectionAtPress = Array.from(this.callbacks.getSelectedIds());
     const hit = hitTestElementsWithGroups(canvasPoint, elements, this.enteredGroupIds);
     if (!hit) {
+      this.marqueeBase = shiftKey ? new Set(this.callbacks.getSelectedIds()) : new Set();
+      this.lastMarqueeKey = '';
       if (!shiftKey) this.callbacks.clearSelection();
       this.mode = 'selecting';
       this.callbacks.startSelectionBox(canvasPoint);
@@ -1181,14 +1307,51 @@ export class InteractionManager {
     return requested;
   }
 
-  /** Abort the current gesture (e.g. a second finger turned it into a pinch). */
+  /**
+   * Abort the current gesture and put everything back as it was before it
+   * started (Escape, or a second finger turning it into a pinch). The open
+   * undo step ends up empty, so nothing is left to undo.
+   */
   cancelGesture(): void {
+    const mode = this.mode;
+    if ((mode === 'dragging' || mode === 'resizing') && this.gestureOriginals.size > 0) {
+      this.callbacks.updateElementsSilent(
+        Array.from(this.gestureOriginals.values()).map((el) => ({ id: el.id, changes: el })),
+      );
+    }
+    if (this.duplicateIds.length > 0) {
+      this.callbacks.discardElements?.(this.duplicateIds);
+      this.callbacks.selectMultiple(this.selectionAtPress);
+      this.duplicateIds = [];
+    }
+    const restorePoints = (id: string, points: [number, number][]) => {
+      if (id && points.length > 0) {
+        this.callbacks.updateElementSilent(id, { points } as Partial<LinearElement>);
+      }
+    };
+    if (mode === 'rebinding-endpoint') restorePoints(this.rebindingArrowId, this.rebindingOriginalPoints);
+    if (mode === 'moving-waypoint') restorePoints(this.movingWaypointArrowId, this.waypointOriginalPoints);
+    if (mode === 'dragging-elbow-segment') {
+      restorePoints(this.elbowSegmentArrowId, this.elbowSegmentOriginalPoints);
+    }
+    if (mode === 'selecting') this.callbacks.selectMultiple(this.selectionAtPress);
+
     this.mode = 'idle';
+    this.dragActive = false;
     this.creatingElement = null;
+    this.anchorSourceElement = null;
+    this.snapTarget = null;
+    this.freedrawPoints = [];
     this.currentSmartGuides = [];
+    this.snapContext = null;
     this.rightButtonDown = false;
     this.dragStartPositions.clear();
     this.dragStartSizes.clear();
+    this.dragStartPoints.clear();
+    this.gestureOriginals = new Map();
+    this.pendingDeselect = null;
+    this.pendingSelectOnly = null;
+    this.pressedOnFrame = false;
     this.callbacks.endSelectionBox();
     this.callbacks.invalidateStatic();
   }
@@ -1304,150 +1467,260 @@ export class InteractionManager {
     }
   }
 
-  // ─── Smart Guides ──────────────────────────────────────────
+  // ─── Creating ──────────────────────────────────────────────
 
-  private calculateSmartGuides(
-    dx: number,
-    dy: number,
-    elements: MavisElement[],
-    selectedIds: Set<string>,
-  ): { snappedDx: number; snappedDy: number; guides: SmartGuide[] } {
-    const guides: SmartGuide[] = [];
-    let snappedDx = dx;
-    let snappedDy = dy;
-
-    const zoom = this.callbacks.getViewport().getViewport().zoom;
-    const threshold = SMART_GUIDE_THRESHOLD / zoom;
-
-    // Get dragging elements bounds
-    const draggingBounds = this.getDraggingBounds(dx, dy);
-    if (!draggingBounds) return { snappedDx, snappedDy, guides };
-
-    const dragLeft = draggingBounds.x;
-    const dragRight = draggingBounds.x + draggingBounds.width;
-    const dragCenterX = draggingBounds.x + draggingBounds.width / 2;
-    const dragTop = draggingBounds.y;
-    const dragBottom = draggingBounds.y + draggingBounds.height;
-    const dragCenterY = draggingBounds.y + draggingBounds.height / 2;
-
-    let bestSnapX: { offset: number; guides: SmartGuide[] } | null = null;
-    let bestSnapY: { offset: number; guides: SmartGuide[] } | null = null;
-    let bestDistX = threshold;
-    let bestDistY = threshold;
-
-    // Compare against all non-selected, non-deleted elements
-    for (const el of elements) {
-      if (selectedIds.has(el.id) || el.isDeleted) continue;
-
-      const elLeft = el.x;
-      const elRight = el.x + el.width;
-      const elCenterX = el.x + el.width / 2;
-      const elTop = el.y;
-      const elBottom = el.y + el.height;
-      const elCenterY = el.y + el.height / 2;
-
-      // Vertical guides (snap X positions)
-      const xSnaps: { dragVal: number; elVal: number }[] = [
-        { dragVal: dragLeft, elVal: elLeft },
-        { dragVal: dragLeft, elVal: elRight },
-        { dragVal: dragLeft, elVal: elCenterX },
-        { dragVal: dragRight, elVal: elLeft },
-        { dragVal: dragRight, elVal: elRight },
-        { dragVal: dragRight, elVal: elCenterX },
-        { dragVal: dragCenterX, elVal: elLeft },
-        { dragVal: dragCenterX, elVal: elRight },
-        { dragVal: dragCenterX, elVal: elCenterX },
-      ];
-
-      for (const snap of xSnaps) {
-        const dist = Math.abs(snap.dragVal - snap.elVal);
-        if (dist < bestDistX) {
-          bestDistX = dist;
-          const offset = snap.elVal - snap.dragVal;
-          const minY = Math.min(dragTop, dragBottom, elTop, elBottom);
-          const maxY = Math.max(dragTop, dragBottom, elTop, elBottom);
-          bestSnapX = {
-            offset,
-            guides: [{
-              type: 'vertical',
-              position: snap.elVal,
-              start: minY - 20,
-              end: maxY + 20,
-            }],
-          };
-        }
-      }
-
-      // Horizontal guides (snap Y positions)
-      const ySnaps: { dragVal: number; elVal: number }[] = [
-        { dragVal: dragTop, elVal: elTop },
-        { dragVal: dragTop, elVal: elBottom },
-        { dragVal: dragTop, elVal: elCenterY },
-        { dragVal: dragBottom, elVal: elTop },
-        { dragVal: dragBottom, elVal: elBottom },
-        { dragVal: dragBottom, elVal: elCenterY },
-        { dragVal: dragCenterY, elVal: elTop },
-        { dragVal: dragCenterY, elVal: elBottom },
-        { dragVal: dragCenterY, elVal: elCenterY },
-      ];
-
-      for (const snap of ySnaps) {
-        const dist = Math.abs(snap.dragVal - snap.elVal);
-        if (dist < bestDistY) {
-          bestDistY = dist;
-          const offset = snap.elVal - snap.dragVal;
-          const minX = Math.min(dragLeft, dragRight, elLeft, elRight);
-          const maxX = Math.max(dragLeft, dragRight, elLeft, elRight);
-          bestSnapY = {
-            offset,
-            guides: [{
-              type: 'horizontal',
-              position: snap.elVal,
-              start: minX - 20,
-              end: maxX + 20,
-            }],
-          };
-        }
-      }
-    }
-
-    if (bestSnapX) {
-      snappedDx = dx + bestSnapX.offset;
-      guides.push(...bestSnapX.guides);
-    }
-    if (bestSnapY) {
-      snappedDy = dy + bestSnapY.offset;
-      guides.push(...bestSnapY.guides);
-    }
-
-    return { snappedDx, snappedDy, guides };
+  private startCreating(canvasPoint: Point, tool: Tool): void {
+    this.mode = 'creating';
+    this.creatingSeed = Math.floor(Math.random() * 2 ** 31);
+    this.creatingId = '';
+    this.creatingElement = null;
+    const linear = tool === 'arrow' || tool === 'line';
+    // Shapes snap to other shapes; connectors leave that to binding
+    this.snapContext = linear ? null : this.buildSnapContext(new Set());
+    this.creationOrigin = this.snapCreationPoint(canvasPoint, !linear);
+    this.callbacks.pushHistory();
   }
 
-  private getDraggingBounds(dx: number, dy: number): Bounds | null {
-    if (this.dragStartPositions.size === 0) return null;
+  /** Snap a corner of a shape being drawn to other shapes and, if on, the grid. */
+  private snapCreationPoint(point: Point, toObjects: boolean): Point {
+    if (!this.isSnapEnabled()) return point;
+    const result = { ...point };
+    let snappedX = false;
+    let snappedY = false;
+    if (toObjects && this.snapContext) {
+      const hit = snapValues(this.snapContext, [point.x], [point.y], this.snapThreshold());
+      if (hit.x) {
+        result.x += hit.x.offset;
+        snappedX = true;
+      }
+      if (hit.y) {
+        result.y += hit.y.offset;
+        snappedY = true;
+      }
+    }
+    const grid = this.gridSize();
+    if (grid) {
+      if (!snappedX) result.x = snapToGrid(result.x, grid);
+      if (!snappedY) result.y = snapToGrid(result.y, grid);
+    }
+    return result;
+  }
 
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
+  private updateCreatingElement(canvasPoint: Point): void {
+    const tool = this.callbacks.getActiveTool();
+    const origin = this.creationOrigin;
 
-    const elements = this.callbacks.getElements();
-    for (const [id, startPos] of this.dragStartPositions) {
-      const el = elements.find((e) => e.id === id);
-      if (!el) continue;
+    if (tool === 'arrow' || tool === 'line') {
+      const end = this.snapCreationPoint(canvasPoint, false);
+      let width = end.x - origin.x;
+      let height = end.y - origin.y;
+      // Shift: 15° steps (horizontal, vertical, 45°…)
+      if (this.mods.shiftKey) {
+        const snapped = snapVectorAngle({ x: width, y: height });
+        width = snapped.x;
+        height = snapped.y;
+      }
 
-      const newX = startPos.x + dx;
-      const newY = startPos.y + dy;
-      minX = Math.min(minX, newX);
-      minY = Math.min(minY, newY);
-      maxX = Math.max(maxX, newX + el.width);
-      maxY = Math.max(maxY, newY + el.height);
+      this.creatingElement = this.callbacks.createElement(
+        tool,
+        this.diagramId,
+        origin.x,
+        origin.y,
+        Math.abs(width),
+        Math.abs(height),
+      );
+
+      if (this.creatingElement && 'points' in this.creatingElement) {
+        (this.creatingElement as LinearElement).points = [
+          [0, 0],
+          [width, height],
+        ];
+      }
+    } else {
+      const corner = this.snapCreationPoint(canvasPoint, true);
+      const box = creationBox(origin, corner, {
+        keepAspect: this.mods.shiftKey,
+        fromCenter: this.mods.altKey,
+      });
+      this.creatingElement = this.callbacks.createElement(
+        tool,
+        this.diagramId,
+        box.x,
+        box.y,
+        Math.max(1, box.width),
+        Math.max(1, box.height),
+      );
+      this.currentSmartGuides =
+        this.snapContext && this.isSnapEnabled() ? alignmentGuides(this.snapContext, box) : [];
     }
 
-    return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+    // Stabilize seed and id across frames so rough.js doesn't shimmer
+    if (this.creatingElement) {
+      if (!this.creatingId) {
+        this.creatingId = this.creatingElement.id;
+      }
+      (this.creatingElement as { id: string }).id = this.creatingId;
+      (this.creatingElement as { seed: number }).seed = this.creatingSeed;
+    }
+  }
+
+  /** Select a newly created element, hand portals their child diagram, leave the tool. */
+  private finishCreation(element: MavisElement): void {
+    this.callbacks.select(element.id);
+    if (element.type === 'portal' && this.callbacks.onPortalCreated) {
+      this.callbacks.onPortalCreated(element);
+    }
+    if (!this.callbacks.isToolLocked()) {
+      this.callbacks.resetToSelect();
+    }
+  }
+
+  // ─── Moving ────────────────────────────────────────────────
+
+  /** The press became a drag: Alt duplicates first, then the snap targets are fixed. */
+  private beginDrag(): void {
+    this.dragActive = true;
+    this.pendingDeselect = null;
+    this.pendingSelectOnly = null;
+
+    if (this.mods.altKey && this.callbacks.duplicateElements && this.dragStartPositions.size > 0) {
+      // Alt-drag leaves the originals in place and drags copies (Excalidraw, tldraw, Miro, Figma)
+      const copies = this.callbacks.duplicateElements(Array.from(this.dragStartPositions.keys()));
+      if (copies.length > 0) {
+        this.duplicateIds = copies.map((c) => c.id);
+        const copyIds = new Set(this.duplicateIds);
+        const topLevel = copies
+          .filter((c) => !(c.type === 'text' && c.containerId && copyIds.has(c.containerId)))
+          .map((c) => c.id);
+        this.callbacks.selectMultiple(topLevel);
+        this.captureElementPositions(copies, new Set(topLevel));
+        // The originals never move, so Escape only has to drop the copies
+        this.gestureOriginals = new Map();
+      }
+    }
+
+    const moving = new Set(this.dragStartPositions.keys());
+    for (const id of this.callbacks.getSelectedIds()) moving.add(id);
+    this.snapContext = this.buildSnapContext(moving);
+  }
+
+  private applyDrag(canvasPoint: Point): void {
+    let delta = {
+      x: canvasPoint.x - this.startCanvasPoint.x,
+      y: canvasPoint.y - this.startCanvasPoint.y,
+    };
+    let axes = { x: true, y: true };
+    if (this.mods.shiftKey) {
+      // Shift locks the move to the dominant axis
+      const axis = dominantAxis(delta);
+      delta = lockToAxis(delta);
+      axes = { x: axis === 'x', y: axis === 'y' };
+    }
+
+    this.currentSmartGuides = [];
+    const start = this.dragStartBounds;
+    if (start && this.isSnapEnabled()) {
+      let snappedX = false;
+      let snappedY = false;
+      if (this.snapContext) {
+        const moved = { ...start, x: start.x + delta.x, y: start.y + delta.y };
+        const snap = snapMovingBox(this.snapContext, moved, this.snapThreshold(), axes);
+        delta = { x: delta.x + snap.offset.x, y: delta.y + snap.offset.y };
+        this.currentSmartGuides = snap.guides;
+        snappedX = snap.guides.some((g) => g.axis === 'x');
+        snappedY = snap.guides.some((g) => g.axis === 'y');
+      }
+      // The grid only applies where no shape claimed the position (tldraw)
+      const grid = this.gridSize();
+      if (grid) {
+        if (axes.x && !snappedX) delta.x = snapToGrid(start.x + delta.x, grid) - start.x;
+        if (axes.y && !snappedY) delta.y = snapToGrid(start.y + delta.y, grid) - start.y;
+      }
+    }
+
+    const updates: ElementUpdate[] = [];
+    for (const [id, pos] of this.dragStartPositions) {
+      updates.push({ id, changes: { x: pos.x + delta.x, y: pos.y + delta.y } });
+    }
+    if (updates.length > 0) this.callbacks.updateElementsSilent(updates);
+    this.callbacks.invalidateStatic();
+  }
+
+  private endTransformGesture(): void {
+    this.dragStartPositions.clear();
+    this.dragStartSizes.clear();
+    this.dragStartPoints.clear();
+    this.gestureOriginals = new Map();
+    this.dragStartBounds = null;
+    this.duplicateIds = [];
+    this.snapContext = null;
+    this.currentSmartGuides = [];
+    this.pendingDeselect = null;
+    this.pendingSelectOnly = null;
+    this.pressedOnFrame = false;
+    this.callbacks.invalidateStatic();
+  }
+
+  // ─── Marquee ───────────────────────────────────────────────
+
+  /** Live marquee selection: what's under the rectangle is selected while dragging. */
+  private updateMarqueeSelection(canvasPoint: Point): void {
+    const start = this.startCanvasPoint;
+    const box = {
+      x: Math.min(start.x, canvasPoint.x),
+      y: Math.min(start.y, canvasPoint.y),
+      width: Math.abs(canvasPoint.x - start.x),
+      height: Math.abs(canvasPoint.y - start.y),
+    };
+    const ids = new Set(this.marqueeBase);
+    if (box.width > 2 && box.height > 2) {
+      const mode = this.mods.ctrlKey || this.mods.metaKey ? 'contain' : 'intersect';
+      for (const el of hitTestSelectionBox(box, this.callbacks.getElements(), mode)) ids.add(el.id);
+    }
+    const list = Array.from(ids);
+    const key = list.join(',');
+    if (key === this.lastMarqueeKey) return;
+    this.lastMarqueeKey = key;
+    this.callbacks.selectElementsInBox(list);
+  }
+
+  // ─── Snapping ──────────────────────────────────────────────
+
+  /**
+   * Snap targets: shapes on screen that aren't moving (connectors and labels
+   * excluded). Null when snapping to objects is switched off.
+   */
+  private buildSnapContext(exclude: Set<string>): SnapContext | null {
+    if (this.callbacks.isObjectSnapEnabled?.() === false) return null;
+    const visible = this.callbacks.getVisibleBounds?.() ?? null;
+    const references: Bounds[] = [];
+    for (const el of this.callbacks.getElements()) {
+      if (el.isDeleted || exclude.has(el.id) || isLinearType(el.type)) continue;
+      if (el.type === 'text' && el.containerId) continue;
+      const b = getVisualBounds(el);
+      if (visible && !boundsOverlap(b, visible)) continue;
+      references.push(b);
+    }
+    return createSnapContext(references);
   }
 
   // ─── Helpers ───────────────────────────────────────────────
+
+  private getSelectionFrame(elements: MavisElement[], selectedIds: Set<string>): Bounds | null {
+    if (selectedIds.size === 0) return null;
+    return selectionFrameBounds(elements.filter((e) => selectedIds.has(e.id)));
+  }
+
+  /** Inside the drawn selection outline (which sits a few pixels outside the bounds). */
+  private frameContains(frame: Bounds, point: Point, zoom: number): boolean {
+    const pad = SELECTION_PADDING_PX / zoom;
+    return (
+      point.x >= frame.x - pad &&
+      point.x <= frame.x + frame.width + pad &&
+      point.y >= frame.y - pad &&
+      point.y <= frame.y + frame.height + pad
+    );
+  }
 
   private computeHoverCursor(
     canvasPoint: Point,
@@ -1456,21 +1729,15 @@ export class InteractionManager {
   ): string {
     if (this.callbacks.getActiveTool() !== 'select') return 'default';
     const selectedIds = this.callbacks.getSelectedIds();
-    if (selectedIds.size > 0) {
-      const hasLocked = elements.some((e) => selectedIds.has(e.id) && e.isLocked);
-      const hasNonLinear = elements.some(
-        (e) => selectedIds.has(e.id) && e.type !== 'arrow' && e.type !== 'line',
-      );
-      if (hasNonLinear && !hasLocked) {
-        const bounds = this.getSelectionBounds(elements, selectedIds);
-        if (bounds) {
-          const zoom = this.callbacks.getViewport().getViewport().zoom;
-          const handle = hitTestResizeHandle(canvasPoint, bounds, zoom);
-          if (handle) return RESIZE_CURSORS[handle] ?? 'default';
-        }
-      }
+    const frame = this.getSelectionFrame(elements, selectedIds);
+    const zoom = this.callbacks.getViewport().getViewport().zoom;
+    const hasLocked = selectedIds.size > 0 && elements.some((e) => selectedIds.has(e.id) && e.isLocked);
+    if (frame && !hasLocked) {
+      const handle = hitTestResizeHandle(canvasPoint, frame, zoom);
+      if (handle) return RESIZE_CURSORS[handle] ?? 'default';
     }
     if (hit) return hit.isLocked ? 'not-allowed' : 'move';
+    if (frame && !hasLocked && this.frameContains(frame, canvasPoint, zoom)) return 'move';
     return 'default';
   }
 
@@ -1478,11 +1745,15 @@ export class InteractionManager {
     this.dragStartPositions.clear();
     this.dragStartSizes.clear();
     this.dragStartPoints.clear();
+    this.gestureOriginals = new Map();
+    const moving: MavisElement[] = [];
     for (const el of elements) {
       // Locked elements stay put; bound labels move with their container
       if (el.isLocked) continue;
       if (el.type === 'text' && el.containerId && selectedIds.has(el.containerId)) continue;
       if (selectedIds.has(el.id)) {
+        moving.push(el);
+        this.gestureOriginals.set(el.id, el);
         this.dragStartPositions.set(el.id, { x: el.x, y: el.y });
         this.dragStartSizes.set(el.id, { width: el.width, height: el.height });
         if (el.type === 'freedraw' || el.type === 'line' || el.type === 'arrow') {
@@ -1490,95 +1761,95 @@ export class InteractionManager {
         }
       }
     }
-  }
-
-  private getSelectionBounds(
-    elements: MavisElement[],
-    selectedIds: Set<string>,
-  ): Bounds | null {
-    const selected = elements.filter((e) => selectedIds.has(e.id));
-    if (selected.length === 0) return null;
-
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    for (const el of selected) {
-      minX = Math.min(minX, el.x);
-      minY = Math.min(minY, el.y);
-      maxX = Math.max(maxX, el.x + el.width);
-      maxY = Math.max(maxY, el.y + el.height);
-    }
-    return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
-  }
-
-  private getSelectionBoxBounds(): Bounds | null {
-    const viewport = this.callbacks.getViewport();
-    const startCanvas = this.startCanvasPoint;
-    const endCanvas = viewport.screenToCanvas(
-      this.lastScreenPoint.x,
-      this.lastScreenPoint.y,
-    );
-    const x = Math.min(startCanvas.x, endCanvas.x);
-    const y = Math.min(startCanvas.y, endCanvas.y);
-    const width = Math.abs(endCanvas.x - startCanvas.x);
-    const height = Math.abs(endCanvas.y - startCanvas.y);
-    return { x, y, width, height };
+    this.dragStartBounds = unionVisualBounds(moving);
   }
 
   private performResize(canvasPoint: Point): void {
     if (!this.resizeHandle || !this.resizeStartBounds) return;
 
     const handle = this.resizeHandle;
-    const dx = canvasPoint.x - this.startCanvasPoint.x;
-    const dy = canvasPoint.y - this.startCanvasPoint.y;
     const sb = this.resizeStartBounds;
-    const MIN = 10;
+    let delta = {
+      x: canvasPoint.x - this.startCanvasPoint.x,
+      y: canvasPoint.y - this.startCanvasPoint.y,
+    };
 
-    let x = sb.x;
-    let y = sb.y;
-    let w = sb.width;
-    let h = sb.height;
-
-    if (handle.includes('left')) w = sb.width - dx;
-    if (handle.includes('right')) w = sb.width + dx;
-    if (handle.startsWith('top')) h = sb.height - dy;
-    if (handle.startsWith('bottom')) h = sb.height + dy;
-    w = Math.max(MIN, w);
-    h = Math.max(MIN, h);
-
-    // Shift keeps proportions; images keep them by default
+    // Shift keeps proportions; images keep them by default on corners and never flip
     const isCorner = !handle.includes('center') && !handle.includes('middle');
-    const elements = this.callbacks.getElements();
-    const allImages = Array.from(this.dragStartPositions.keys()).every(
-      (id) => elements.find((e) => e.id === id)?.type === 'image',
-    );
-    if (isCorner && (this.shiftKey || allImages) && sb.width > 0 && sb.height > 0) {
-      const ratio = sb.width / sb.height;
-      if (w / sb.width > h / sb.height) h = w / ratio;
-      else w = h * ratio;
-    }
+    const types = Array.from(this.gestureOriginals.values()).map((el) => el.type);
+    const allImages = types.length > 0 && types.every((t) => t === 'image');
+    const anyImage = types.some((t) => t === 'image');
+    const keepAspect = this.mods.shiftKey || (allImages && isCorner);
+    const fromCenter = this.mods.altKey;
 
-    // Anchor the edge opposite to the dragged handle
-    if (handle.includes('left')) x = sb.x + sb.width - w;
-    if (handle.startsWith('top')) y = sb.y + sb.height - h;
-
-    const scaleX = sb.width > 0 ? w / sb.width : 1;
-    const scaleY = sb.height > 0 ? h / sb.height : 1;
-
-    for (const [id, startPos] of this.dragStartPositions) {
-      const startSize = this.dragStartSizes.get(id) ?? { width: MIN, height: MIN };
-      const updates: Partial<LinearElement> = {
-        x: x + (startPos.x - sb.x) * scaleX,
-        y: y + (startPos.y - sb.y) * scaleY,
-        width: Math.max(1, startSize.width * scaleX),
-        height: Math.max(1, startSize.height * scaleY),
-      };
-      const startPoints = this.dragStartPoints.get(id);
-      if (startPoints) {
-        updates.points = startPoints.map(([px, py]) => [px * scaleX, py * scaleY] as [number, number]);
+    this.currentSmartGuides = [];
+    const snapping = this.isSnapEnabled() && !keepAspect;
+    if (snapping) {
+      const candidates = resizeSnapCandidates(sb, handle, delta, fromCenter);
+      let snappedX = false;
+      let snappedY = false;
+      if (this.snapContext) {
+        const hit = snapValues(
+          this.snapContext,
+          candidates.x.values,
+          candidates.y.values,
+          this.snapThreshold(),
+        );
+        if (hit.x) {
+          delta = { ...delta, x: delta.x + hit.x.offset * candidates.x.k[hit.x.index] };
+          snappedX = true;
+        }
+        if (hit.y) {
+          delta = { ...delta, y: delta.y + hit.y.offset * candidates.y.k[hit.y.index] };
+          snappedY = true;
+        }
       }
-      this.callbacks.updateElementSilent(id, updates as Partial<MavisElement>);
+      const grid = this.gridSize();
+      if (grid) {
+        const edgeX = candidates.x.values[0];
+        const edgeY = candidates.y.values[0];
+        if (!snappedX && edgeX !== undefined) delta = { ...delta, x: delta.x + snapToGrid(edgeX, grid) - edgeX };
+        if (!snappedY && edgeY !== undefined) delta = { ...delta, y: delta.y + snapToGrid(edgeY, grid) - edgeY };
+      }
     }
+
+    const result = resizeBox(sb, handle, delta, {
+      keepAspect,
+      fromCenter,
+      minSize: 1,
+      noFlip: anyImage,
+    });
+
+    if (snapping && this.snapContext) {
+      // Guides for the edges being dragged
+      const { h, v } = handleSides(handle);
+      const mapX = (value: number) => result.originX + (value - result.originX) * result.scaleX;
+      const mapY = (value: number) => result.originY + (value - result.originY) * result.scaleY;
+      const xs =
+        h === 0
+          ? []
+          : fromCenter
+            ? [result.box.x, result.box.x + result.box.width]
+            : [mapX(h > 0 ? sb.x + sb.width : sb.x)];
+      const ys =
+        v === 0
+          ? []
+          : fromCenter
+            ? [result.box.y, result.box.y + result.box.height]
+            : [mapY(v > 0 ? sb.y + sb.height : sb.y)];
+      this.currentSmartGuides = alignmentGuides(this.snapContext, result.box, { only: { xs, ys } });
+    }
+
+    const updates: ElementUpdate[] = [];
+    for (const [id, startPos] of this.dragStartPositions) {
+      const startSize = this.dragStartSizes.get(id) ?? { width: 1, height: 1 };
+      const next = scaleElementBox(
+        { x: startPos.x, y: startPos.y, width: startSize.width, height: startSize.height },
+        result,
+        this.dragStartPoints.get(id),
+      );
+      updates.push({ id, changes: next as Partial<MavisElement> });
+    }
+    if (updates.length > 0) this.callbacks.updateElementsSilent(updates);
   }
 }
