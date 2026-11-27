@@ -66,12 +66,26 @@ Still open:
 
 ### Roadmap Phase 1 items not done yet
 
-- **Rotation handle, eraser, minimap, dark mode** — still missing from the editor.
+- ~~Rotation handle~~ — done (handle above the selection, Shift for 15°, rotated frames/resize/bindings/anchors). **Eraser, minimap, dark mode** — still missing from the editor.
 - **Architecture shape/icon libraries** (AWS/GCP/K8s stencils) — not started.
 - **Accessibility pass** — the new context menu and zoom controls have ARIA roles/labels and keyboard support; the toolbar and side panels still don't.
 - **Images stored inline as base64** — now downscaled to 1600px on insert, but should move to object storage (S3/R2) with references in the element.
 - **God objects** — `InteractionManager.ts` / `CanvasRenderer.ts` / `elementsStore.ts` still need splitting (per-tool handlers, one bounds/text-measure module).
-- **Touch** — pinch-zoom/pan and single-finger draw work via Pointer Events, but there's no e2e coverage on a touch device profile.
+- **Touch** — pinch-zoom/pan and single-finger draw work via Pointer Events (coarse pointers get a 6px drag threshold and 12px handle targets), but there's no e2e coverage on a touch device profile.
+
+### Editing interactions — remaining gaps (after the Excalidraw/tldraw/Miro parity pass)
+
+Ranked by user impact; the parity pass itself (smart guides with equal spacing, Shift/Alt modifiers, Alt-drag duplicate, drag threshold, auto-pan, live marquee, rotation, Escape-to-cancel) is in `apps/web/src/components/canvas/gestures/` and `InteractionManager.ts`.
+
+- **Connector points don't snap to guides** — dragging an arrow endpoint, waypoint or elbow segment only snaps by binding to shapes; Excalidraw/tldraw also align points with other shapes' edges/centres. `InteractionManager.ts` (rebinding/waypoint modes) can reuse `snapValues`.
+- **Static layer redraws every frame of a drag** — with ~2,000 shapes on screen that's most of the remaining per-move cost (~3ms dev build). Cache the non-moving elements as a bitmap for the gesture and draw only elements whose object changed since it started on the overlay (`CanvasRenderer.ts` render loop).
+- **StylePanel subscribes to the whole elements Map** (`components/toolbar/StylePanel.tsx`) — it re-renders on every move while the dragged shape is selected (~0.8ms/move in dev). Select only the style-relevant fields of the selection.
+- **Text resizing doesn't scale the font** — Excalidraw scales the font from corner handles and rewraps from side handles; MavisDraw stretches the box only.
+- **No lasso selection** (Excalidraw: Alt while box-selecting; tldraw: lasso tool) and **no Ctrl/Cmd+click deep-select** into groups (double-click to enter a group works).
+- **Multi-selections containing rotated shapes** resize them as if unrotated; a multi-selection's frame is axis-aligned again after a rotation (Excalidraw keeps the turned frame until deselect). Remote users' selection borders ignore rotation (`renderRemoteSelectionBorder`).
+- **Snapping is always on at any speed** — tldraw skips snapping while the pointer moves fast, which feels less sticky; worth trying once there's a way to test it.
+- **Toolbar subscribes to whole stores** (`Toolbar.tsx` destructures `useToolStore()` / `useUIStore()`), so any UI-store change re-renders every tool button.
+- **Offline journal runs on every element change** (`services/offlineJournal.ts` subscriber, ~0.25ms per move in a 2,000-shape drag).
 
 ### Testing / CI
 
@@ -101,4 +115,4 @@ Items noticed during PR #9 review (arrow improvements) that weren't fixed immedi
 
 ## Testing
 
-- **No e2e tests for multi-element resize** — `performResize` was rewritten in Phase 1 (proportional scaling, aspect lock); add e2e coverage for resizing multiple selected elements.
+- ~~No e2e tests for multi-element resize~~ — covered in `e2e/interactions.spec.ts` (Resizing).

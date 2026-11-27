@@ -327,6 +327,24 @@ test.describe('Resizing', () => {
       .toMatchObject({ x: 160, y: 180, width: 560, height: 280 });
   });
 
+  test('resizing a multi-selection scales every shape and the gaps between them', async ({
+    page,
+  }) => {
+    const a = await drawRect(page, 200, 200, 300, 260);
+    const b = await drawRect(page, 400, 300, 500, 360);
+    await page.keyboard.press(`${mod}+a`);
+    // Frame (200,200)–(500,360); pull its bottom-right handle to double the size
+    await drag(page, 504, 364, 504 + 300, 364 + 160);
+    await expect
+      .poll(async () => element(page, b.id))
+      .toMatchObject({ x: 600, y: 400, width: 200, height: 120 });
+    expect(await element(page, a.id)).toMatchObject({ x: 200, y: 200, width: 200, height: 120 });
+    // One undo step for the whole resize
+    await page.keyboard.press(`${mod}+z`);
+    await expect.poll(async () => element(page, b.id)).toMatchObject({ x: b.x, width: b.width });
+    expect(await element(page, a.id)).toMatchObject({ x: a.x, width: a.width });
+  });
+
   test('dragging a handle past the opposite edge flips instead of getting stuck', async ({
     page,
   }) => {
