@@ -38,11 +38,14 @@ const TEST_DIAGRAM = {
   updatedAt: '2025-01-01T00:00:00.000Z',
 };
 
+export { TEST_USER, TEST_PROJECT, TEST_DIAGRAM };
+
 /**
- * Mock all API endpoints needed for auth + dashboard, navigate to '/',
- * then click into the test project so the editor (canvas) is visible.
+ * Mock every API endpoint a signed-in session uses (auth, dashboard, the
+ * test project and its diagram). Routes added afterwards take precedence,
+ * so a test can override one endpoint (e.g. make saves fail).
  */
-export async function mockAuthAndOpenEditor(page: Page) {
+export async function mockSignedIn(page: Page) {
   // Auth endpoints
   await page.route('**/api/auth/refresh', (route) =>
     route.fulfill({ status: 200, json: { accessToken: 'fake-token' } }),
@@ -119,7 +122,14 @@ export async function mockAuthAndOpenEditor(page: Page) {
       json: { diagram: { ...TEST_DIAGRAM, ...body, elements: [] } },
     });
   });
+}
 
+/**
+ * Mock all API endpoints needed for auth + dashboard, navigate to '/',
+ * then click into the test project so the editor (canvas) is visible.
+ */
+export async function mockAuthAndOpenEditor(page: Page) {
+  await mockSignedIn(page);
   await page.goto('/');
 
   // Click the project card to enter the editor
