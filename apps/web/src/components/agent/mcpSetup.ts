@@ -8,13 +8,20 @@ export interface McpSetup {
   json: string;
 }
 
-export function mcpSetup(url: string, token: string): McpSetup {
+/**
+ * Without a token, the agent signs in through the browser the first time it
+ * connects (OAuth): nothing secret to paste.
+ */
+export function mcpSetup(url: string, token?: string): McpSetup {
+  const header = token ? ` --header "Authorization: Bearer ${token}"` : '';
   return {
-    claudeCode: `claude mcp add --transport http mavisdraw ${url} --header "Authorization: Bearer ${token}"`,
+    claudeCode: `claude mcp add --transport http mavisdraw ${url}${header}`,
     json: JSON.stringify(
       {
         mcpServers: {
-          mavisdraw: { type: 'http', url, headers: { Authorization: `Bearer ${token}` } },
+          mavisdraw: token
+            ? { type: 'http', url, headers: { Authorization: `Bearer ${token}` } }
+            : { type: 'http', url },
         },
       },
       null,

@@ -48,6 +48,7 @@ import { useDiagramStore } from './stores/diagramStore';
 import LoginPage from './routes/login';
 import VerifyEmailPage from './routes/verifyEmail';
 import ResetPasswordPage from './routes/resetPassword';
+import ConnectAgentPage from './routes/connectAgent';
 import Dashboard from './routes/dashboard';
 import {
   apiAcceptInvite,
@@ -763,6 +764,9 @@ export default function App() {
       />
     );
   }
+
+  // A coding agent signing in through the browser (after signing in here, if need be)
+  if (route.name === 'connectAgent') return <ConnectAgentPage />;
 
   if (route.name === 'project' && openedProjectId === route.projectId) {
     return <EditorView onBackToDashboard={handleBackToDashboard} />;

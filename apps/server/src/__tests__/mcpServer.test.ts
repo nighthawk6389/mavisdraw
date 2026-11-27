@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildProjectModel } from '@mavisdraw/llm';
-import { buildMcpServer, type McpDeps, type McpProject } from '../services/mcpServer.js';
+import {
+  buildMcpServer,
+  type McpCaller,
+  type McpDeps,
+  type McpProject,
+} from '../services/mcpServer.js';
 import type { BuiltProposal } from '../services/proposalInput.js';
 import { shopScene } from './fixtures/scene.js';
 
@@ -45,16 +50,23 @@ function deps(): McpDeps {
   };
 }
 
-async function connect() {
-  const server = buildMcpServer({ userId: 'u1', tokenName: 'Claude Code (laptop)' }, deps());
+async function connect(scope: Partial<McpCaller> = {}) {
+  const server = buildMcpServer(
+    { userId: 'u1', tokenName: 'Claude Code (laptop)', ...scope },
+    deps(),
+  );
   const client = new Client({ name: 'test-agent', version: '1.0.0' });
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(serverSide), client.connect(clientSide)]);
   return client;
 }
 
-async function call(name: string, args: Record<string, unknown> = {}) {
-  const client = await connect();
+async function call(
+  name: string,
+  args: Record<string, unknown> = {},
+  scope: Partial<McpCaller> = {},
+) {
+  const client = await connect(scope);
   const result = (await client.callTool({ name, arguments: args })) as {
     content: Array<{ type: string; text: string }>;
     isError?: boolean;
@@ -296,5 +308,58 @@ describe('MCP server', () => {
     const { text, isError } = await call('read_architecture', { project: 'Secret' });
     expect(isError).toBe(true);
     expect(text).toContain('No project "Secret" that you can open. Your projects: "Shop".');
+  });
+
+  describe('with a limited token', () => {
+    it('a read-only one is not offered propose_update, and is told it is read-only', async () => {
+      const client = await connect({ access: 'read' });
+      const { tools } = await client.listTools();
+      expect(tools.map((t) => t.name)).not.toContain('propose_update');
+      expect(tools.map((t) => t.name)).toContain('read_architecture');
+      const instructions = client.getInstructions() ?? '';
+      expect(instructions).toContain('This connection is read-only');
+      expect(instructions).not.toContain('call propose_update');
+
+      const result = await client
+        .callTool({ name: 'propose_update', arguments: { project: 'Shop', description: 'x' } })
+        .catch((err: Error) => ({ isError: true, content: [{ type: 'text', text: err.message }] }));
+      expect((result as { isError?: boolean }).isError).toBe(true);
+      expect(created).toHaveLength(0);
+    });
+
+    it('one limited to some projects sees only those, in every tool', async () => {
+      projects.push({ id: 'p2', name: 'Payments', role: 'owner', repo: null });
+      const scope = { projectIds: ['p2'] };
+
+      const listed = await call('list_projects', {}, scope);
+      expect(listed.text).toContain('Payments');
+      expect(listed.text).not.toContain('Shop');
+
+      const read = await call('read_architecture', { project: 'Shop' }, scope);
+      expect(read.isError).toBe(true);
+      expect(read.text).toContain(
+        'No project "Shop" that you can open. Your projects: "Payments".',
+      );
+
+      const byId = await call('read_architecture', { project: 'p1' }, scope);
+      expect(byId.isError).toBe(true);
+
+      const found = await call('find_component', { query: 'orders' }, scope);
+      expect(found.text).toContain('(id p2)');
+      expect(found.text).not.toContain('(id p1)');
+
+      const proposed = await call(
+        'propose_update',
+        { project: 'p1', description: 'x', add: [{ name: 'Cache' }] },
+        scope,
+      );
+      expect(proposed.isError).toBe(true);
+      expect(created).toHaveLength(0);
+    });
+
+    it('a project it names that its owner can no longer open stays out of reach', async () => {
+      const listed = await call('list_projects', {}, { projectIds: ['gone'] });
+      expect(listed.text).toContain("You don't have access to any MavisDraw projects yet.");
+    });
   });
 });

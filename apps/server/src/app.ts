@@ -20,6 +20,7 @@ import { tourRoutes } from './routes/tours.js';
 import { workspaceRoutes } from './routes/workspaces.js';
 import { mcpRoutes } from './routes/mcp.js';
 import { tokenRoutes } from './routes/tokens.js';
+import { oauthRoutes } from './routes/oauth.js';
 import { proposalRoutes } from './routes/proposals.js';
 import { embedRoutes } from './routes/embeds.js';
 import { githubAppRoutes } from './routes/githubApp.js';
@@ -193,6 +194,7 @@ export async function buildApp() {
   await app.register(tourRoutes);
   await app.register(workspaceRoutes);
   await app.register(tokenRoutes);
+  await app.register(oauthRoutes);
   await app.register(proposalRoutes);
   await app.register(mcpRoutes);
   await app.register(embedRoutes);

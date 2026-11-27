@@ -4,9 +4,10 @@
 {$DOMAIN} {
 	encode zstd gzip
 
-	# The API and its live socket go straight to the API server (one proxy
-	# hop, so TRUST_PROXY=1 still holds); everything else is the web app
-	@api path /api/* /collaboration*
+	# The API, its live socket and the coding-agent sign-in metadata go
+	# straight to the API server (one proxy hop, so TRUST_PROXY=1 still
+	# holds); everything else is the web app
+	@api path /api/* /collaboration* /.well-known/oauth-*
 	reverse_proxy @api api:3001
 	reverse_proxy web:3000
 }

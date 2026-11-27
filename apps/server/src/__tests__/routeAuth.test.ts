@@ -71,6 +71,11 @@ const PUBLIC = new Set([
   'POST /api/mcp',
   'GET /api/mcp',
   'DELETE /api/mcp',
+  // Agents signing in (OAuth): public clients with PKCE; the consent routes need a session
+  'POST /api/oauth/register',
+  'GET /api/oauth/authorize',
+  'POST /api/oauth/token',
+  'POST /api/oauth/revoke',
 ]);
 
 const appPromise = buildApp();

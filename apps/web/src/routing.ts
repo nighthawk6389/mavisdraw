@@ -9,6 +9,7 @@ import { useSyncExternalStore } from 'react';
  *   /invite/:token             accept an email invite (project or workspace)
  *   /verify-email?token=…      confirm the account's email address
  *   /reset-password?token=…    choose a new password (from the emailed link)
+ *   /connect-agent?request=…   approve a coding agent signing in through the browser
  */
 export type Route =
   | { name: 'dashboard' }
@@ -16,7 +17,8 @@ export type Route =
   | { name: 'share'; token: string }
   | { name: 'invite'; token: string }
   | { name: 'verifyEmail' }
-  | { name: 'resetPassword' };
+  | { name: 'resetPassword' }
+  | { name: 'connectAgent' };
 
 export function parseRoute(pathname: string): Route {
   const parts = pathname.split('/').filter(Boolean).map(decodeURIComponent);
@@ -31,6 +33,7 @@ export function parseRoute(pathname: string): Route {
   if (parts[0] === 'invite' && parts[1]) return { name: 'invite', token: parts[1] };
   if (parts[0] === 'verify-email') return { name: 'verifyEmail' };
   if (parts[0] === 'reset-password') return { name: 'resetPassword' };
+  if (parts[0] === 'connect-agent') return { name: 'connectAgent' };
   return { name: 'dashboard' };
 }
 

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mcpSetup, timeAgo } from '../components/agent/mcpSetup';
+import { describeScope, scopeIsComplete } from '../components/agent/TokenScopeFields';
 import { useProposalsStore } from '../stores/proposalsStore';
 import { useToastStore } from '../stores/toastStore';
 import { ApiError, apiListProposals, apiResolveProposal, type ProposalData } from '../services/api';
@@ -65,6 +66,26 @@ describe('connecting a coding agent', () => {
         },
       },
     });
+  });
+
+  it('without a token, the agent signs in through the browser: nothing secret to paste', () => {
+    const setup = mcpSetup('https://api.example/api/mcp');
+    expect(setup.claudeCode).toBe(
+      'claude mcp add --transport http mavisdraw https://api.example/api/mcp',
+    );
+    expect(JSON.parse(setup.json)).toEqual({
+      mcpServers: { mavisdraw: { type: 'http', url: 'https://api.example/api/mcp' } },
+    });
+  });
+
+  it('says what a limited token may do, and only submits a limited one with a map', () => {
+    expect(describeScope('propose', null)).toBeNull();
+    expect(describeScope('read', null)).toBe('Read only');
+    expect(describeScope('propose', [{ name: 'Shop' }])).toBe('only “Shop”');
+    expect(describeScope('read', [{ name: 'A' }, { name: 'B' }])).toBe('Read only · 2 maps');
+    expect(scopeIsComplete({ access: 'read', projectIds: null })).toBe(true);
+    expect(scopeIsComplete({ access: 'read', projectIds: [] })).toBe(false);
+    expect(scopeIsComplete({ access: 'read', projectIds: ['p1'] })).toBe(true);
   });
 
   it('describes times the way people say them', () => {

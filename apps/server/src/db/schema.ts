@@ -464,13 +464,66 @@ export const apiTokens = pgTable(
     tokenHash: text('token_hash').notNull(),
     /** Its first characters, so people can tell tokens apart. */
     prefix: varchar('prefix', { length: 16 }).notNull(),
+    /** Created by the person ("personal"), or by an agent signing in through the browser. */
+    kind: varchar('kind', { length: 16 }).notNull().default('personal').$type<TokenKind>(),
+    /** "read": the agent reads maps; "propose": it can also propose updates. */
+    access: varchar('access', { length: 16 }).notNull().default('propose').$type<TokenAccess>(),
+    /** The only projects the token reaches; null means every project its owner can open. */
+    projectIds: jsonb('project_ids').$type<string[] | null>(),
+    /** For "oauth": the agent app that signed in. */
+    clientId: text('client_id').references(() => oauthClients.id, { onDelete: 'cascade' }),
+    /** For "oauth": access tokens are short-lived, renewed with the refresh token. */
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    refreshHash: text('refresh_hash'),
+    refreshExpiresAt: timestamp('refresh_expires_at', { withTimezone: true }),
     lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index('api_tokens_user_id_idx').on(table.userId),
     uniqueIndex('api_tokens_token_hash_idx').on(table.tokenHash),
+    uniqueIndex('api_tokens_refresh_hash_idx').on(table.refreshHash),
   ],
+);
+
+export type TokenKind = 'personal' | 'oauth';
+export type TokenAccess = 'read' | 'propose';
+
+// ── Agent sign-in (OAuth 2.1 for MCP clients) ───────────────
+
+/** Coding-agent apps registered themselves (dynamic client registration); all public clients. */
+export const oauthClients = pgTable('oauth_clients', {
+  id: text('id').primaryKey(),
+  name: varchar('name', { length: 100 }).notNull(),
+  redirectUris: jsonb('redirect_uris').notNull().$type<string[]>(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * A sign-in in progress: created when the agent opens the browser, approved
+ * (or not) by the person on the consent page, then exchanged once for tokens.
+ */
+export const oauthRequests = pgTable(
+  'oauth_requests',
+  {
+    id: text('id').primaryKey(),
+    clientId: text('client_id')
+      .notNull()
+      .references(() => oauthClients.id, { onDelete: 'cascade' }),
+    redirectUri: text('redirect_uri').notNull(),
+    codeChallenge: text('code_challenge').notNull(),
+    state: text('state'),
+    /** What the agent asked for; the person may grant less. */
+    requestedAccess: varchar('requested_access', { length: 16 }).notNull().$type<TokenAccess>(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    /** Set on approval. */
+    userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }),
+    grantedAccess: varchar('granted_access', { length: 16 }).$type<TokenAccess>(),
+    grantedProjectIds: jsonb('granted_project_ids').$type<string[] | null>(),
+    codeHash: text('code_hash'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex('oauth_requests_code_hash_idx').on(table.codeHash)],
 );
 
 // ── Proposed map updates (from coding agents and PR checks) ─

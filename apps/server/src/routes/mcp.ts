@@ -12,6 +12,7 @@ import { createProposal } from '../services/proposalService.js';
 import { getDiagramIds } from '../services/diagramService.js';
 import { signalDocument } from '../ws/hocuspocus.js';
 import { mcpRateLimit } from '../middleware/rateLimit.js';
+import { resourceMetadataUrl } from './oauth.js';
 import type { RepoSource } from '../db/schema.js';
 
 const repoOf = (source: RepoSource | null) =>
@@ -74,21 +75,35 @@ export async function mcpRoutes(app: FastifyInstance): Promise<void> {
   app.post('/api/mcp', { preHandler: [mcpRateLimit] }, async (request, reply) => {
     const identity = await authenticateToken(request.headers.authorization);
     if (!identity) {
+      // RFC 9728: agents that sign in through the browser start from the metadata
+      const challenge = [
+        'Bearer realm="MavisDraw"',
+        `resource_metadata="${resourceMetadataUrl(request)}"`,
+        ...(request.headers.authorization ? ['error="invalid_token"'] : []),
+      ].join(', ');
       return reply
         .code(401)
-        .header('WWW-Authenticate', 'Bearer realm="MavisDraw"')
+        .header('WWW-Authenticate', challenge)
         .send({
           jsonrpc: '2.0',
           error: {
             code: -32001,
             message:
-              'A valid MavisDraw access token is required (Authorization: Bearer mdw_…). Create one in MavisDraw under "Connect a coding agent".',
+              'Sign in to MavisDraw: your agent can open the browser to connect, or use an access token (Authorization: Bearer mdw_…) from "Connect a coding agent".',
           },
           id: null,
         });
     }
 
-    const server = buildMcpServer({ userId: identity.userId, tokenName: identity.tokenName }, deps);
+    const server = buildMcpServer(
+      {
+        userId: identity.userId,
+        tokenName: identity.tokenName,
+        access: identity.access,
+        projectIds: identity.projectIds,
+      },
+      deps,
+    );
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,

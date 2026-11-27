@@ -59,6 +59,8 @@ export function createRateLimiter(
 
 export const generalRateLimit = createRateLimiter(MAX_REQUESTS, WINDOW_MS);
 export const authRateLimit = createRateLimiter(AUTH_MAX_REQUESTS, WINDOW_MS);
+/** Agents registering and signing in (counted apart from people's sign-ins). */
+export const oauthRateLimit = createRateLimiter(AUTH_MAX_REQUESTS, WINDOW_MS, 'oauth');
 /** Coding agents over MCP: a few calls per task, in bursts. */
 export const mcpRateLimit = createRateLimiter(120, WINDOW_MS, 'mcp');
 /** Public embeds: viewers drilling around, and image proxies fetching README SVGs. */

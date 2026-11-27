@@ -797,10 +797,23 @@ export function apiGetRepoSnapshot(
 /** Absolute: it's pasted into coding agents' settings. */
 export const MCP_URL = `${absoluteApiBase()}/api/mcp`;
 
+/** "read": the agent reads maps; "propose": it can also propose updates. */
+export type TokenAccess = 'read' | 'propose';
+
+export interface TokenScope {
+  access: TokenAccess;
+  /** null: every project you can open. */
+  projectIds: string[] | null;
+}
+
 export interface AccessTokenSummary {
   id: string;
   name: string;
   prefix: string;
+  /** "oauth": an agent that signed in through the browser. */
+  kind: 'personal' | 'oauth';
+  access: TokenAccess;
+  projects: Array<{ id: string; name: string }> | null;
   lastUsedAt: string | null;
   createdAt: string;
 }
@@ -811,8 +824,36 @@ export function apiListTokens(): Promise<{ tokens: AccessTokenSummary[] }> {
 
 export function apiCreateToken(
   name: string,
+  scope: TokenScope = { access: 'propose', projectIds: null },
 ): Promise<{ token: string; summary: AccessTokenSummary }> {
-  return apiFetch('/api/tokens', { method: 'POST', body: JSON.stringify({ name }) });
+  return apiFetch('/api/tokens', { method: 'POST', body: JSON.stringify({ name, ...scope }) });
+}
+
+/** An agent asking to sign in, as the consent page shows it. */
+export interface AgentSignInRequest {
+  client: { name: string };
+  /** Where approving sends the browser: back to this computer, a website, or an app. */
+  redirect: { kind: 'local' | 'web' | 'app'; host: string };
+  requestedAccess: TokenAccess;
+  projects: Array<{ id: string; name: string; role: string }>;
+}
+
+export function apiGetAgentSignIn(id: string): Promise<AgentSignInRequest> {
+  return apiFetch(`/api/oauth/requests/${encodeURIComponent(id)}`);
+}
+
+export function apiApproveAgentSignIn(
+  id: string,
+  scope: TokenScope,
+): Promise<{ redirectTo: string }> {
+  return apiFetch(`/api/oauth/requests/${encodeURIComponent(id)}/approve`, {
+    method: 'POST',
+    body: JSON.stringify(scope),
+  });
+}
+
+export function apiDenyAgentSignIn(id: string): Promise<{ redirectTo: string }> {
+  return apiFetch(`/api/oauth/requests/${encodeURIComponent(id)}/deny`, { method: 'POST' });
 }
 
 export function apiRevokeToken(id: string): Promise<void> {

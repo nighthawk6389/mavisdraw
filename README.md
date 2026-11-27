@@ -244,8 +244,9 @@ proposed map update waiting under **Proposals** for one-click review. See
 **Connect a coding agent** (dashboard, or ⌘K) gives Claude Code, Cursor and other MCP clients
 read access to your maps: they look up which component owns the file they're changing
 (`find_component`), read the architecture, and **propose** updates when a change alters it. Proposals
-show up live under **Proposals** in the editor for someone to apply or dismiss. See
-[docs/mcp.md](docs/mcp.md).
+show up live under **Proposals** in the editor for someone to apply or dismiss. Agents sign in
+through the browser (OAuth), or use an access token; either can be read-only or limited to chosen
+maps. See [docs/mcp.md](docs/mcp.md).
 
 ### Embeds
 

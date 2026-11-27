@@ -748,6 +748,69 @@ test.describe('Authorization (API)', () => {
     ).toHaveLength(1);
   });
 
+  test('a token or an agent sign-in can only be limited to maps the person can open', async ({
+    request,
+  }) => {
+    const team = await makeTeam(request);
+    // The outsider can't make a token for the team's map…
+    const forOthers = await as(request, team.outsider).post('/api/tokens', {
+      name: 'sneaky',
+      access: 'read',
+      projectIds: [team.project.id],
+    });
+    expect(forOthers.status()).toBe(400);
+    // …but can for their own
+    const own = await createProject(request, team.outsider, `Own map ${uniq()}`);
+    const { token } = await expectJson<{ token: string }>(
+      as(request, team.outsider).post('/api/tokens', {
+        name: 'mine',
+        access: 'read',
+        projectIds: [own.id],
+      }),
+      201,
+    );
+    const listed = await request.post(`${API_URL}/api/mcp`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json, text/event-stream' },
+      data: {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'read_architecture', arguments: { project: team.project.id } },
+      },
+    });
+    expect(JSON.stringify(await listed.json())).toContain('that you can open');
+
+    // Approving an agent's sign-in: same rule
+    const registered = await request.post(`${API_URL}/api/oauth/register`, {
+      data: { client_name: 'Agent', redirect_uris: ['http://127.0.0.1:9/cb'] },
+    });
+    const { client_id: clientId } = (await registered.json()) as { client_id: string };
+    const started = await request.get(
+      `${API_URL}/api/oauth/authorize?${new URLSearchParams({
+        response_type: 'code',
+        client_id: clientId,
+        redirect_uri: 'http://127.0.0.1:9/cb',
+        code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+        code_challenge_method: 'S256',
+      })}`,
+      { maxRedirects: 0 },
+    );
+    const requestId = new URL(started.headers()['location']).searchParams.get('request')!;
+    expect(
+      (await request.get(`${API_URL}/api/oauth/requests/${requestId}`)).status(),
+      'the consent details need a signed-in person',
+    ).toBe(401);
+    const approve = (who: Person, projectIds: string[] | null) =>
+      as(request, who).post(`/api/oauth/requests/${requestId}/approve`, {
+        access: 'read',
+        projectIds,
+      });
+    expect((await approve(team.outsider, [team.project.id])).status()).toBe(400);
+    expect((await approve(team.outsider, [own.id])).status()).toBe(200);
+    // Answered once: nobody can approve it again
+    expect((await approve(team.owner, null)).status()).toBe(404);
+  });
+
   test('an invite stops working once whoever sent it can no longer invite', async ({ request }) => {
     const owner = await signUp(request, 'Owner');
     const admin = await signUp(request, 'Admin');
