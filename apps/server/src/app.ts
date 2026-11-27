@@ -30,6 +30,7 @@ import {
   persistOpenDocuments,
   type SocketGate,
 } from './ws/hocuspocus.js';
+import { admitWaiting, releaseWaiting } from './ws/preAuthLimit.js';
 
 /** Largest single WebSocket message (a big pasted image is a few MB). */
 const WS_MAX_PAYLOAD = 16 * 1024 * 1024;
@@ -102,7 +103,19 @@ export async function buildApp() {
   app.get('/collaboration', { websocket: true }, (socket, request) => {
     // Until a document on this socket authenticates, only a little data is
     // allowed, and only for a little while
-    const gate: SocketGate = { authenticated: false };
+    // and only so many such sockets at once from one address
+    const address = request.ip;
+    if (!admitWaiting(address)) {
+      socket.close(1008, 'Too many connections waiting to authenticate');
+      return;
+    }
+    let waiting = true;
+    const stopWaiting = () => {
+      if (!waiting) return;
+      waiting = false;
+      releaseWaiting(address);
+    };
+    const gate: SocketGate = { authenticated: false, onAuthenticated: stopWaiting };
     let preAuthBytes = 0;
     const authTimer = setTimeout(() => {
       if (!gate.authenticated) socket.close(4401, 'Authentication timeout');
@@ -114,7 +127,10 @@ export async function buildApp() {
         : data.byteLength;
       if (preAuthBytes > WS_PRE_AUTH_LIMIT) socket.close(1009, 'Too much data before authentication');
     });
-    socket.on('close', () => clearTimeout(authTimer));
+    socket.on('close', () => {
+      clearTimeout(authTimer);
+      stopWaiting();
+    });
     hocuspocus.handleConnection(socket, request.raw, { gate });
   });
 

@@ -14,6 +14,7 @@ import {
 import { config } from '../config.js';
 import { addedEmail, inviteEmail, isMailEnabled, sendMail } from './mailer.js';
 import { allowEmail } from './emailLimits.js';
+import { checkProjectAccess } from './diagramService.js';
 
 const PROJECT_RANK: Record<PermissionRole, number> = { viewer: 0, editor: 1, admin: 2 };
 const WORKSPACE_RANK: Record<WorkspaceRole, number> = { member: 0, admin: 1, owner: 2 };
@@ -277,18 +278,44 @@ export async function revokeInvite(id: string, kind: InviteKind, targetId: strin
 }
 
 /** Grant every pending invite for this email (once an account has confirmed it). */
+/**
+ * Could whoever sent an invite still send it now? They may have been
+ * removed or demoted since, and an invite can't hand out more than they hold.
+ */
+async function inviterStillCan(invite: {
+  kind: InviteKind;
+  targetId: string;
+  invitedBy: string | null;
+  role: string;
+}): Promise<boolean> {
+  if (!invite.invitedBy) return false;
+  if (invite.kind === 'workspace') {
+    const role = await getWorkspaceRole(invite.targetId, invite.invitedBy);
+    return role === 'owner' || role === 'admin';
+  }
+  const access = await checkProjectAccess(invite.targetId, invite.invitedBy);
+  // As when inviting: admins invite, and only the owner hands out admin
+  return access === 'owner' || (access === 'admin' && invite.role !== 'admin');
+}
+
 export async function claimInvitesForEmail(userId: string, email: string): Promise<number> {
   const pending = await db.query.invites.findMany({
     where: and(eq(invites.email, normalizeEmail(email)), isNull(invites.acceptedAt)),
   });
+  let claimed = 0;
   for (const invite of pending) {
+    if (!(await inviterStillCan(invite))) {
+      await db.delete(invites).where(eq(invites.id, invite.id));
+      continue;
+    }
     await grant(invite.kind, invite.targetId, userId, invite.role);
     await db
       .update(invites)
       .set({ acceptedAt: new Date(), acceptedBy: userId })
       .where(eq(invites.id, invite.id));
+    claimed++;
   }
-  return pending.length;
+  return claimed;
 }
 
 /** What an invite link is for (shown before signing in). */
@@ -336,6 +363,13 @@ export async function acceptInvite(token: string, userId: string, userEmail: str
     );
   }
   if (!invite.acceptedAt) {
+    if (!(await inviterStillCan(invite))) {
+      await db.delete(invites).where(eq(invites.id, invite.id));
+      throw new WorkspaceError(
+        'This invite is no longer valid: whoever sent it can’t invite people any more. Ask for a new one.',
+        410,
+      );
+    }
     await grant(invite.kind, invite.targetId, userId, invite.role);
     await db
       .update(invites)

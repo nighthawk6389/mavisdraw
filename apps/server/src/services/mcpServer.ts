@@ -143,6 +143,37 @@ const withRepo = (components: ComponentInfo[], repo: string | null) =>
     ? components.map((c) => (c.code && !c.code.repo ? { ...c, code: { ...c.code, repo } } : c))
     : components;
 
+/**
+ * Searching every project is the costly part of find_component (each one's
+ * whole map is loaded), and agents search several times in a row: each
+ * project's components are reused for a few seconds. Kept per set of deps,
+ * so separate servers (and tests) don't share them; access is still checked
+ * on every call, since only the caller's own projects are searched.
+ */
+const SEARCH_CACHE_MS = 20_000;
+const SEARCH_CACHE_MAX = 500;
+const searchCaches = new WeakMap<
+  McpDeps,
+  Map<string, { at: number; components: ComponentInfo[] }>
+>();
+
+async function searchableComponents(deps: McpDeps, p: McpProject): Promise<ComponentInfo[]> {
+  let cache = searchCaches.get(deps);
+  if (!cache) {
+    cache = new Map();
+    searchCaches.set(deps, cache);
+  }
+  const key = `${p.id}\n${p.repo ?? ''}`;
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < SEARCH_CACHE_MS) return hit.components;
+  const components = withRepo(indexComponents(await deps.loadScene(p.id)), p.repo);
+  cache.delete(key);
+  cache.set(key, { at: Date.now(), components });
+  // Oldest first out
+  if (cache.size > SEARCH_CACHE_MAX) cache.delete(cache.keys().next().value!);
+  return components;
+}
+
 /** A component of the model by id, or by (unique, case-insensitive) name. */
 export function resolveComponent(model: ProjectModel, ref: string): ModelComponent {
   const byId = componentById(model, ref.trim());
@@ -339,7 +370,7 @@ export function buildMcpServer(caller: McpCaller, deps: McpDeps): McpServer {
           componentId?: string;
         }> = [];
         for (const p of projects) {
-          const components = withRepo(indexComponents(await deps.loadScene(p.id)), p.repo);
+          const components = await searchableComponents(deps, p);
           const found = searchComponents(components, query, 10);
           if (found.length === 0) continue;
           // Which model component each shape shows (the same one can be drawn on several levels)

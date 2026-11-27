@@ -139,4 +139,40 @@ test.describe('Embeds', () => {
     await ctxA.close();
     await ctxB.close();
   });
+  test('trying again after a failed load doesn’t pile up refreshes', async ({ browser }) => {
+    const ctx = await browser.newContext();
+    const user = await registerUser(ctx, 'Embed Retry');
+    const project = await apiCreateProject(ctx.request, user, `Retry ${Date.now()}`);
+    const published = await ctx.request.post(`${API_URL}/api/projects/${project.id}/embed`, {
+      headers: { Authorization: `Bearer ${user.accessToken}` },
+      data: {},
+    });
+    const { embed } = (await published.json()) as { embed: { token: string } };
+
+    const viewer = await browser.newContext();
+    const page = await viewer.newPage();
+    await page.clock.install();
+    // The diagram fails to load twice, so the reader tries again twice
+    let failures = 2;
+    let diagramRequests = 0;
+    await page.route(`**/api/embed/${embed.token}/diagrams/**`, (route) => {
+      diagramRequests++;
+      return failures-- > 0 ? route.fulfill({ status: 503, body: 'busy' }) : route.fallback();
+    });
+    await page.goto(`/embed.html?t=${embed.token}`);
+    for (let i = 0; i < 2; i++) {
+      await page.getByRole('button', { name: 'Try again' }).click();
+    }
+    await expect(page.getByRole('button', { name: 'Fit to view' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(0);
+
+    // One refresh a minute, not one per attempt
+    const loaded = diagramRequests;
+    await page.clock.runFor(61_000);
+    await expect.poll(() => diagramRequests - loaded).toBe(1);
+    await page.clock.runFor(61_000);
+    await expect.poll(() => diagramRequests - loaded).toBe(2);
+    await ctx.close();
+    await viewer.close();
+  });
 });

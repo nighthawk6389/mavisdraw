@@ -12,7 +12,7 @@ import {
   uniq,
   type Person,
 } from './api';
-import { API_URL } from './helpers';
+import { API_URL, confirmEmail } from './helpers';
 
 /**
  * Who may do what, checked against the real API and database. Every route
@@ -730,6 +730,50 @@ test.describe('Authorization (API)', () => {
       (await expectJson<{ tokens: unknown[] }>(as(request, team.owner).get('/api/tokens'), 200))
         .tokens,
     ).toHaveLength(1);
+  });
+
+  test('an invite stops working once whoever sent it can no longer invite', async ({ request }) => {
+    const owner = await signUp(request, 'Owner');
+    const admin = await signUp(request, 'Admin');
+    const project = await createProject(request, owner, `Stale invites ${uniq()}`);
+    await addToProject(request, owner, project.id, admin, 'admin');
+    const invite = async (email: string) =>
+      (
+        await expectJson<{ inviteUrl: string }>(
+          as(request, admin).post(`/api/projects/${project.id}/invites`, { email, role: 'editor' }),
+          201,
+        )
+      ).inviteUrl;
+    const viaSignUp = `newcomer-${uniq()}@e2e.mavisdraw.dev`;
+    const viaLink = `linked-${uniq()}@e2e.mavisdraw.dev`;
+    await invite(viaSignUp);
+    const link = await invite(viaLink);
+
+    // The admin is made an editor: they couldn't send those invites now
+    const perm = (await permissionsOf(request, owner, project.id)).find((p) => p.role === 'admin')!;
+    await expectJson(
+      as(request, owner).put(`/api/permissions/${perm.id}`, { role: 'editor' }),
+      200,
+    );
+
+    const register = async (email: string, name: string) => {
+      const res = await request.post(`${API_URL}/api/auth/register`, {
+        data: { email, password: 'correct-horse-battery', name },
+      });
+      expect(res.status(), await res.text()).toBe(201);
+      const body = (await res.json()) as { user: { id: string }; accessToken: string };
+      return { id: body.user.id, name, email, token: body.accessToken };
+    };
+    // Signing up and confirming the address doesn't claim it…
+    const newcomer = await register(viaSignUp, 'Newcomer');
+    await confirmEmail(request, viaSignUp);
+    expect(await roleIn(request, newcomer, project.id)).toBe(403);
+    // …and the link says it's no longer valid
+    const linked = await register(viaLink, 'Linked');
+    const token = new URL(link, API_URL).pathname.split('/').pop()!;
+    const accepted = await as(request, linked).post(`/api/invites/${token}/accept`);
+    expect(accepted.status()).toBe(410);
+    expect(await roleIn(request, linked, project.id)).toBe(403);
   });
 
   test('a public project is readable by anyone signed in, writable only by its people', async ({

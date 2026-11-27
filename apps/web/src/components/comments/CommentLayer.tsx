@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useCommentsStore } from '../../stores/commentsStore';
 import { usePresentStore } from '../../stores/presentStore';
 import { useElementsStore } from '../../stores/elementsStore';
@@ -8,7 +8,15 @@ import { useAuthStore } from '../../stores/authStore';
 import { usePermissionStore } from '../../stores/permissionStore';
 import type { CommentData, CommentThreadData, Member } from '../../services/api';
 import MentionTextarea from './MentionTextarea';
-import { bodySegments, initials, mentionsInBody, relativeTime, threadAnchor } from './commentUtils';
+import {
+  anchorAt,
+  bodySegments,
+  initials,
+  mentionsInBody,
+  pinPositionsKey,
+  readPinPositions,
+  relativeTime,
+} from './commentUtils';
 
 const POPOVER_WIDTH = 300;
 
@@ -22,7 +30,6 @@ export default function CommentLayer() {
   const activeThreadId = useCommentsStore((s) => s.activeThreadId);
   const pendingThreadId = useCommentsStore((s) => s.pendingThreadId);
   const showResolved = useCommentsStore((s) => s.showResolved);
-  const elements = useElementsStore((s) => s.elements);
   const diagramId = useDiagramStore((s) => s.activeDiagramId);
   const zoom = useViewportStore((s) => s.zoom);
   const scrollX = useViewportStore((s) => s.scrollX);
@@ -50,6 +57,26 @@ export default function CommentLayer() {
       ),
     [threads, diagramId, showResolved, activeThreadId],
   );
+  const active = activeThreadId ? threads.get(activeThreadId) : undefined;
+
+  // Only the shapes pins sit on: a drag changes the elements on every frame,
+  // and this layer needn't re-render unless one of those moved
+  const pinnedTo = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          [...visible, ...(active ? [active] : [])]
+            .map((t) => t.elementId)
+            .filter((id): id is string => !!id),
+        ),
+      ),
+    [visible, active],
+  );
+  const positionsKey = useElementsStore((s) => pinPositionsKey(s.elements, pinnedTo));
+  const positions = useMemo(
+    () => readPinPositions(positionsKey, pinnedTo),
+    [positionsKey, pinnedTo],
+  );
 
   // Deep links / notifications: open the thread once it's loaded
   useEffect(() => {
@@ -71,7 +98,6 @@ export default function CommentLayer() {
     y: p.y * zoom + scrollY,
   });
 
-  const active = activeThreadId ? threads.get(activeThreadId) : undefined;
   const popoverLeft = (sx: number) =>
     sx + 20 + POPOVER_WIDTH > width ? Math.max(8, sx - POPOVER_WIDTH - 12) : sx + 20;
 
@@ -81,7 +107,7 @@ export default function CommentLayer() {
       className={`pointer-events-none absolute inset-0 z-20 overflow-hidden ${presenting ? 'hidden' : ''}`}
     >
       {visible.map((thread) => {
-        const p = toScreen(threadAnchor(thread, elements));
+        const p = toScreen(anchorAt(thread, positions));
         return (
           <CommentPin
             key={thread.id}
@@ -104,15 +130,15 @@ export default function CommentLayer() {
       {active && active.diagramId === diagramId && (
         <ThreadPopover
           thread={active}
-          top={toScreen(threadAnchor(active, elements)).y - 16}
-          left={popoverLeft(toScreen(threadAnchor(active, elements)).x)}
+          top={toScreen(anchorAt(active, positions)).y - 16}
+          left={popoverLeft(toScreen(anchorAt(active, positions)).x)}
         />
       )}
     </div>
   );
 }
 
-function CommentPin({
+const CommentPin = memo(function CommentPin({
   thread,
   x,
   y,
@@ -145,7 +171,7 @@ function CommentPin({
       {replies > 0 && <span className="pr-1">{replies + 1}</span>}
     </button>
   );
-}
+});
 
 function DraftComposer({ x, y, left }: { x: number; y: number; left: number }) {
   const members = useCommentsStore((s) => s.members);
@@ -209,7 +235,7 @@ function DraftComposer({ x, y, left }: { x: number; y: number; left: number }) {
   );
 }
 
-function ThreadPopover({
+const ThreadPopover = memo(function ThreadPopover({
   thread,
   top,
   left,
@@ -311,7 +337,7 @@ function ThreadPopover({
       </div>
     </div>
   );
-}
+});
 
 function CommentItem({
   comment,

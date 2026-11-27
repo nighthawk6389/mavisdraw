@@ -15,6 +15,41 @@ export function threadAnchor(
   return { x: thread.x, y: thread.y };
 }
 
+/**
+ * Where these elements are, as one string. A selector that returns it
+ * changes only when one of them moves (not on every edit of the canvas).
+ */
+export function pinPositionsKey(elements: Map<string, MavisElement>, ids: string[]): string {
+  return ids
+    .map((id) => {
+      const el = elements.get(id);
+      return el && !el.isDeleted ? `${el.x},${el.y}` : '-';
+    })
+    .join('|');
+}
+
+/** The positions in a `pinPositionsKey` (deleted or missing elements left out). */
+export function readPinPositions(key: string, ids: string[]): Map<string, Point> {
+  const parts = key.split('|');
+  const out = new Map<string, Point>();
+  ids.forEach((id, i) => {
+    const part = parts[i];
+    if (!part || part === '-') return;
+    const [x, y] = part.split(',').map(Number);
+    out.set(id, { x, y });
+  });
+  return out;
+}
+
+/** A thread's anchor, from the positions of the elements pins sit on. */
+export function anchorAt(
+  thread: Pick<CommentThreadData, 'elementId' | 'x' | 'y' | 'offsetX' | 'offsetY'>,
+  positions: Map<string, Point>,
+): Point {
+  const p = thread.elementId ? positions.get(thread.elementId) : undefined;
+  return p ? { x: p.x + thread.offsetX, y: p.y + thread.offsetY } : { x: thread.x, y: thread.y };
+}
+
 // ── @mentions ──────────────────────────────────────────────────────────
 
 export interface MentionQuery {

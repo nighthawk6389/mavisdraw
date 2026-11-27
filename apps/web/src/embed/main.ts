@@ -73,7 +73,15 @@ async function getJson<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** What the current run set up on the window; a retry starts a new run. */
+let running: AbortController | null = null;
+
 async function start() {
+  // A retry starts over: the last run's timer and listeners go with it
+  running?.abort();
+  const run = new AbortController();
+  running = run;
+  const { signal } = run;
   if (!options) {
     showMessage('This embed link is incomplete.');
     return;
@@ -136,7 +144,7 @@ async function start() {
   zoomIn.addEventListener('click', () => zoomBy(1.25));
   zoomOut.addEventListener('click', () => zoomBy(0.8));
   fit.addEventListener('click', fitToView);
-  window.addEventListener('resize', fitToView);
+  window.addEventListener('resize', fitToView, { signal });
 
   canvas.addEventListener(
     'wheel',
@@ -285,12 +293,17 @@ async function start() {
       // Keep showing what we have
     }
   };
-  window.setInterval(() => {
+  const timer = window.setInterval(() => {
     if (document.visibilityState === 'visible') void refresh();
   }, REFRESH_MS);
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') void refresh();
-  });
+  signal.addEventListener('abort', () => window.clearInterval(timer));
+  document.addEventListener(
+    'visibilitychange',
+    () => {
+      if (document.visibilityState === 'visible') void refresh();
+    },
+    { signal },
+  );
 
   await go(path);
 }

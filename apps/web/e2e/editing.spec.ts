@@ -145,6 +145,19 @@ test.describe('Phase 1 editing', () => {
     await expect(page.locator('button[title^="Select"]')).toHaveAttribute('aria-pressed', 'true');
   });
 
+  test('Enter on something without a label doesn’t swallow the next keys', async ({ page }) => {
+    // A freehand stroke has no label to edit
+    await page.keyboard.press('p');
+    await dragFrom(page, 200, 200, 320, 260);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press(`${mod}+a`);
+    await expect.poll(async () => (await hooks.selected(page)).length).toBe(1);
+    await page.keyboard.press('Enter');
+    // Straight after, a tool shortcut still works
+    await page.keyboard.press('e');
+    await expect(page.locator('button[title^="Ellipse"]')).toHaveAttribute('aria-pressed', 'true');
+  });
+
   test('a drag is a single undo step', async ({ page }) => {
     await drawRect(page, 200, 200, 320, 280);
     const [rect] = await hooks.elements(page);

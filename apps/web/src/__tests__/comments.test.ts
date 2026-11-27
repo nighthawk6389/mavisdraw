@@ -2,11 +2,14 @@ import { describe, it, expect } from 'vitest';
 import type { MavisElement } from '@mavisdraw/types';
 import {
   activeMentionQuery,
+  anchorAt,
   bodySegments,
   initials,
   insertMention,
   matchMembers,
   mentionsInBody,
+  pinPositionsKey,
+  readPinPositions,
   relativeTime,
   threadAnchor,
 } from '../components/comments/commentUtils';
@@ -30,6 +33,30 @@ describe('comment pin anchoring', () => {
     const els = new Map([['box', { id: 'box', x: 300, y: 400, isDeleted: true } as MavisElement]]);
     expect(threadAnchor(thread, els)).toEqual({ x: 10, y: 20 });
     expect(threadAnchor({ ...thread, elementId: null }, new Map())).toEqual({ x: 10, y: 20 });
+  });
+});
+
+describe('what the comment layer re-renders for', () => {
+  const el = (id: string, x: number, y: number, isDeleted = false) =>
+    [id, { id, x, y, isDeleted } as MavisElement] as const;
+
+  it('changes only when a shape a pin sits on moves', () => {
+    const before = new Map([el('pinned', 10, 20), el('other', 0, 0)]);
+    const key = pinPositionsKey(before, ['pinned']);
+    // Another shape dragged: same value, so no re-render
+    expect(pinPositionsKey(new Map([...before, el('other', 500, 500)]), ['pinned'])).toBe(key);
+    expect(pinPositionsKey(new Map([...before, el('pinned', 11, 20)]), ['pinned'])).not.toBe(key);
+  });
+
+  it('gives back where each one is, leaving out deleted or missing ones', () => {
+    const els = new Map([el('a', 1, 2), el('b', 3, 4, true)]);
+    const ids = ['a', 'b', 'gone'];
+    const positions = readPinPositions(pinPositionsKey(els, ids), ids);
+    expect(Array.from(positions)).toEqual([['a', { x: 1, y: 2 }]]);
+    const thread = { elementId: 'a', x: 50, y: 60, offsetX: 5, offsetY: 7 };
+    expect(anchorAt(thread, positions)).toEqual({ x: 6, y: 9 });
+    expect(anchorAt({ ...thread, elementId: 'b' }, positions)).toEqual({ x: 50, y: 60 });
+    expect(readPinPositions(pinPositionsKey(els, []), [])).toEqual(new Map());
   });
 });
 

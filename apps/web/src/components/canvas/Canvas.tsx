@@ -52,6 +52,9 @@ interface CanvasProps {
 
 const DRILL_DOWN_DURATION = 300; // ms
 
+/** Shapes that take a text label inside them. */
+const LABELLED_SHAPES = new Set<string>(['rectangle', 'ellipse', 'diamond', 'triangle']);
+
 export default function Canvas({ interactionManagerRef }: CanvasProps) {
   const staticCanvasRef = useRef<HTMLCanvasElement>(null);
   const interactiveCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -272,8 +275,27 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
   const startTextEditing = useCallback(
     (element: MavisElement, isNew: boolean) => {
+      // Only text, shapes and connectors have a label edited here: anything
+      // else would hold back the next keys for an editor that never opens
+      if (
+        element.type !== 'text' &&
+        element.type !== 'arrow' &&
+        element.type !== 'line' &&
+        !LABELLED_SHAPES.has(element.type)
+      ) {
+        return;
+      }
       textEditStartTimeRef.current = Date.now();
-      typeaheadRef.current = { text: '', since: Date.now() };
+      const capture = { text: '', since: Date.now() };
+      typeaheadRef.current = capture;
+      // And if no editor shows up after all, stop holding keys back at once
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (typeaheadRef.current === capture && !textEditorRef.current?.isConnected) {
+            typeaheadRef.current = null;
+          }
+        }),
+      );
       editorOpenedByPressRef.current = true;
 
       // Connectors: edit the existing label or start a new one at the midpoint
@@ -298,8 +320,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
       }
 
       // If element is a shape (not text), we need to create bound text
-      const shapeTypes = new Set(['rectangle', 'ellipse', 'diamond', 'triangle']);
-      if (shapeTypes.has(element.type)) {
+      if (LABELLED_SHAPES.has(element.type)) {
         // Create a bound text element
         const textEl = createBoundText(element.id, '');
         setTextEditState({

@@ -115,6 +115,31 @@ describe('MCP server', () => {
     expect(text).toContain('open: https://app.example/p/p1/d/api-d');
   });
 
+  it('reuses each project’s components for searches in a row, but only the caller’s', async () => {
+    const shared = deps();
+    const loads: string[] = [];
+    shared.loadScene = async (id) => {
+      loads.push(id);
+      return shopScene();
+    };
+    const search = async (userId: string, query: string) => {
+      const server = buildMcpServer({ userId, tokenName: 'agent' }, shared);
+      const client = new Client({ name: 'test-agent', version: '1.0.0' });
+      const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+      await Promise.all([server.connect(serverSide), client.connect(clientSide)]);
+      const result = (await client.callTool({ name: 'find_component', arguments: { query } })) as {
+        content: Array<{ text: string }>;
+      };
+      return result.content.map((c) => c.text).join('\n');
+    };
+    expect(await search('u1', 'auth')).toContain('### Auth Service');
+    expect(await search('u1', 'orders')).toContain('### Orders');
+    expect(loads).toEqual(['p1']);
+    // Someone without the project gets nothing from it, cached or not
+    projects = [];
+    expect(await search('u2', 'auth')).toContain('No component matches');
+  });
+
   it('says so when nothing matches', async () => {
     const { text } = await call('find_component', { query: 'kafka' });
     expect(text).toContain('No component matches "kafka"');

@@ -69,7 +69,19 @@ Still open:
 - ~~**M8 — the offline journal is per project, not per user or tab**~~: fixed (`services/offlineJournal.ts`). Each tab keeps its own journal per account and project; a tab opening the project takes over the journals of tabs that are gone (Web Locks, or a BroadcastChannel ping where locks aren't available, e.g. plain-http self-hosts). Signing out asks if there are unsaved edits on the device, then discards that account's journals. Edits for a level that doesn't load are kept until it does. Also fixed on the way: joining a room overwrote a restored edit of an existing shape with the room's older copy (the initial sync now goes through the version-aware merge only).
   - Still open: signing out while offline can't clear the session cookie (the server never gets the logout), so reloading signs the same account back in. A client-side "signed out" marker checked before the silent refresh would close that.
 - ~~**M10 — proposal claim/apply gaps**~~: fixed. The editor applies a proposal first (all or nothing: a failure part-way puts the canvas back), only onto a diagram that loaded, then marks it applied with a key, so a retry after a lost answer is "done" rather than "taken". If someone else marked it applied a moment earlier, this editor's copy is undone. Settled proposals can't be reopened (`status: 'pending'` is refused).
-- **L4–L13** (see the review report): the app is frameable; secrets are only enforced when `NODE_ENV=production` (the server Dockerfile doesn't set it); the refresh cookie is `SameSite=Lax` across Render's two sites; `CommentLayer` re-renders on every drag frame; the embed viewer's retry stacks timers; per-process state (single instance only); the pre-auth WebSocket cap is per socket; typeahead capture can swallow keys for 1s; pending invites outlive their inviter's access; MCP `find_component` loads up to 25 scenes per call.
+- **L4–L13** (from the review report), status:
+  - Fixed:
+    - **secrets only enforced with `NODE_ENV=production`:** the server image sets it.
+    - **`CommentLayer` re-rendered on every drag frame:** it now follows only the shapes pins sit on (`pinPositionsKey`), and pins and threads are memoised.
+    - **The embed viewer's retry stacked timers:** each try now replaces the last one's timer and listeners.
+    - **The pre-auth WebSocket cap was per socket:** at most 50 sockets per address may wait to authenticate (`ws/preAuthLimit.ts`).
+    - **Typeahead capture could swallow keys for 1s:** Enter on something without a label (a freehand stroke, an image) no longer starts it, and it stops if no editor opens within two frames.
+    - **Pending invites outlived their inviter's access:** an invite only works while whoever sent it could still send it.
+  - Improved: **MCP `find_component` loads up to 25 scenes per call.** Each project's components are reused for 20 s, so searches in a row are cheap. A cold search still loads them all.
+  - Still open:
+    - **The app is frameable on Render:** a static site's header rules apply to every path, so `X-Frame-Options` would block the embed viewer too. The self-hosted image is fixed (nginx).
+    - **The refresh cookie is `SameSite=Lax` across Render's two sites,** so it isn't sent cross-site. The fix is to serve the API from the app's origin on Render too (a rewrite of `/api`), as the self-hosted image does. `SameSite=None` would expose sign-out and refresh to CSRF, and Safari blocks it anyway.
+    - **Per-process state** (single instance only) is by design for now; see Architecture.
 
 ### Roadmap Phase 3 items not done yet
 

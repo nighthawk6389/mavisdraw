@@ -20,6 +20,8 @@ export function documentNameFor(diagramId: string): string {
 /** Per-socket state shared with onAuthenticate through the connection context. */
 export interface SocketGate {
   authenticated: boolean;
+  /** Called once, when a document on the socket first authenticates. */
+  onAuthenticated?: () => void;
 }
 
 type ProjectRole = 'owner' | 'admin' | 'editor' | 'viewer';
@@ -152,7 +154,10 @@ export function createHocuspocusServer(): Hocuspocus {
       connection.readOnly = access === 'viewer';
       // The socket may now send document data freely (see the pre-auth cap)
       const gate = (context as { gate?: SocketGate }).gate;
-      if (gate) gate.authenticated = true;
+      if (gate && !gate.authenticated) {
+        gate.authenticated = true;
+        gate.onAuthenticated?.();
+      }
 
       return {
         user: {
