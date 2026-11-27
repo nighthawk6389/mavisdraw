@@ -139,3 +139,12 @@ Items noticed during PR #9 review (arrow improvements) that weren't fixed immedi
 ## Testing
 
 - ~~No e2e tests for multi-element resize~~ — covered in `e2e/interactions.spec.ts` (Resizing).
+- **Fixed sleeps left in e2e** — the pointer-driven mocked specs still sleep (`e2e/arrow-improvements` 42 `waitForTimeout`s, `zoom-pan` 22, `element-creation` 11, `navigation` 6); they belong with the canvas interaction work. In the real-backend suite, `sync-integrity.spec.ts` and `offline.spec.ts` still sleep 0.6–2.5s to "let autosave run"; they need a condition to wait on (e.g. a test hook exposing the autosave status / pending journal count). For "a write must NOT arrive" checks use `liveBarrier` (`e2e-real/helpers.ts`) instead of sleeping.
+- **Store logic without unit tests** — `commentsStore`, `presentStore`, `versionStore`, `githubStore` and `proposalsStore` (optimistic updates, follow/present state, compare) are only covered through e2e. `pnpm --filter @mavisdraw/web run test:coverage` lists them.
+- **API-level tests live in the real-backend lane** — `e2e-real/authorization.spec.ts` and `diagrams-api.spec.ts` use no browser; if the unit lane ever gets a Postgres service, they could move to vitest + `app.inject` and run on every push.
+
+## Data integrity (found while testing, not fixed)
+
+- **Deleting a nested diagram orphans its children** (`routes/diagrams.ts` DELETE): `diagrams.parent_diagram_id` has no foreign key, so the children (and their contents) stay in the database with a parent that no longer exists, and the portal that pointed at it is left dangling. The UI never deletes diagrams today (only the API can); decide whether a delete cascades to the subtree or is refused while it has children.
+- **Project admins can demote or remove other admins** (`PUT/DELETE /api/permissions/:id`): only the owner may *grant* admin now, but any admin can still take it away from another. Decide the policy (owner-only for admin rows?) and add it to `e2e-real/authorization.spec.ts`.
+- **Importing ignores the file's diagram settings** (`ImportHandler.tsx`): the file's top level merges into the diagram on screen, so its background/grid/render mode and layers are dropped; nested diagrams keep theirs.
