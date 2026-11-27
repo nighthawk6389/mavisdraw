@@ -116,9 +116,11 @@ test.describe('Rendering performance', () => {
     await expect.poll(() => h.drawn()).toBeGreaterThan(1500);
     const median = await measureDragMoveCost(page);
     console.log(`median cost per pointer move, dragging among 2,000 shapes: ${median.toFixed(1)}ms`);
-    // One batched store update and no editor-wide re-render per move
-    // (was ~12ms in a dev build, mostly re-rendering the whole editor)
-    expect(median).toBeLessThan(30);
+    // One batched store update and no editor-wide re-render per move: ~7ms
+    // in a dev build on an idle machine (~12ms before), up to ~20ms with
+    // the whole suite running in parallel. Generous bound, like the pan test:
+    // it catches per-element store updates or render cascades coming back.
+    expect(median).toBeLessThan(40);
   });
 
   test('sketchy mode reuses cached hand-drawn shapes while panning', async ({ page }) => {
