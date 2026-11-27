@@ -13,6 +13,7 @@ import {
 } from '../db/schema.js';
 import { config } from '../config.js';
 import { addedEmail, inviteEmail, isMailEnabled, sendMail } from './mailer.js';
+import { allowEmail } from './emailLimits.js';
 
 const PROJECT_RANK: Record<PermissionRole, number> = { viewer: 0, editor: 1, admin: 2 };
 const WORKSPACE_RANK: Record<WorkspaceRole, number> = { member: 0, admin: 1, owner: 2 };
@@ -232,6 +233,8 @@ async function emailAbout(
   token: string | null,
 ): Promise<boolean> {
   if (!isMailEnabled()) return false;
+  // Over the caps the inviter is shown the link to send themselves
+  if (!allowEmail('invite', input.invitedBy, to)) return false;
   const inviter = await db.query.users.findFirst({
     where: eq(users.id, input.invitedBy),
     columns: { name: true },

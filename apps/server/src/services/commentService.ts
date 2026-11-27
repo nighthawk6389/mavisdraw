@@ -14,6 +14,7 @@ import {
 } from '../db/schema.js';
 import { config } from '../config.js';
 import { isMailEnabled, mentionEmail, sendMail } from './mailer.js';
+import { allowEmail } from './emailLimits.js';
 
 export const MAX_COMMENT_LENGTH = 5000;
 
@@ -189,13 +190,16 @@ async function notify(
   );
   const recipients = notificationRecipients({ authorId, mentions, participants, memberIds });
   if (recipients.length === 0) return;
-  // Mentions also go out by email (replies stay in the app: less noise)
-  void emailMentions(
-    thread,
-    commentId,
-    authorId,
-    recipients.filter((r) => r.type === 'mention').map((r) => r.userId),
-  );
+  // Mentions also go out by email (replies stay in the app: less noise), but
+  // only from the project's own people: anyone can comment on a public one
+  if (memberIds.has(authorId)) {
+    void emailMentions(
+      thread,
+      commentId,
+      authorId,
+      recipients.filter((r) => r.type === 'mention').map((r) => r.userId),
+    );
+  }
   const now = new Date();
   await db.insert(notifications).values(
     recipients.map((r) => ({
@@ -235,6 +239,8 @@ async function emailMentions(
   const body = comment?.body ?? '';
   const link = `${config.appUrl}/p/${thread.projectId}/d/${thread.diagramId}?thread=${encodeURIComponent(thread.id)}`;
   for (const person of people) {
+    // Over the caps, the in-app notification is all they get
+    if (!allowEmail('mention', authorId, person.email)) continue;
     await sendMail(
       mentionEmail({
         to: person.email,

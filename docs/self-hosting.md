@@ -73,6 +73,12 @@ MAIL_FROM=MavisDraw <mavisdraw@example.com>
 
 `resend` (`RESEND_API_KEY`) and `postmark` (`POSTMARK_SERVER_TOKEN`) work too.
 
+So that nobody can use your server to send mail in bulk, email that people trigger for others is
+capped. An account can send 50 invites and 60 @mention emails an hour. An address gets at most 5
+invitations a day and 30 mention emails an hour. Past a cap, the inviter is shown the link to send
+themselves, and mentions still notify in the app. Mentions by people who aren't on a project
+(someone viewing a public one) don't send email.
+
 **Without email**, MavisDraw still works. Inviting someone shows a link to send them yourself (chat,
 your own email). Opening it confirms their address and adds them. Invites only reach accounts that
 have confirmed their address, so that nobody can collect invites by signing up with someone else's.
