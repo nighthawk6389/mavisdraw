@@ -5,6 +5,8 @@ import { useElementsStore, applyRemoteChanges } from './elementsStore';
 import { docVersion, readElement, writeElement } from '../collab/ydocElements';
 import { useCommentsStore } from './commentsStore';
 import { useProposalsStore } from './proposalsStore';
+import { useModelStore } from './modelStore';
+import { refreshDiagramTitles } from '../services/modelSync';
 import { usePresentStore } from './presentStore';
 import { useDiagramStore } from './diagramStore';
 import { refreshDiagramList } from '../services/diagramSync';
@@ -411,6 +413,9 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
       if (event.keysChanged.has('presentation')) void usePresentStore.getState().refreshRemote();
       // Someone's access to the project changed (maybe ours)
       if (event.keysChanged.has('permissions')) void refreshProjectRole();
+      // The architecture model changed (details, a rename that retitled a level)
+      if (event.keysChanged.has('model')) void useModelStore.getState().refresh();
+      if (event.keysChanged.has('diagrams')) void refreshDiagramTitles();
     });
 
     // Store → Y.js: write only the elements (and properties) that changed

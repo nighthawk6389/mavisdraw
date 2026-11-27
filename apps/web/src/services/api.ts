@@ -796,6 +796,35 @@ export interface ProposalData {
   createdAt: string;
 }
 
+// ── Architecture model (docs/model-layer.md) ────────────────
+
+export function apiGetModel(
+  projectId: string,
+): Promise<{ model: import('@mavisdraw/types').ProjectModel }> {
+  return apiFetch(`/api/projects/${projectId}/model`);
+}
+
+export function apiUpdateComponent(
+  projectId: string,
+  componentId: string,
+  patch: Partial<import('@mavisdraw/types').ComponentDetails> & { name?: string },
+): Promise<{ component: import('@mavisdraw/types').ModelComponent }> {
+  return apiFetch(
+    `/api/projects/${projectId}/model/components/${encodeURIComponent(componentId)}`,
+    { method: 'PUT', body: JSON.stringify(patch) },
+  );
+}
+
+export function apiSaveRelationship(
+  projectId: string,
+  relationship: import('@mavisdraw/types').StoredRelationship,
+): Promise<{ relationship: import('@mavisdraw/types').ModelRelationship }> {
+  return apiFetch(`/api/projects/${projectId}/model/relationships`, {
+    method: 'PUT',
+    body: JSON.stringify(relationship),
+  });
+}
+
 export function apiListProposals(projectId: string): Promise<{ proposals: ProposalData[] }> {
   return apiFetch(`/api/projects/${projectId}/proposals`);
 }

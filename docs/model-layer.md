@@ -50,14 +50,28 @@ like any edit, so offline copies and REST saves resolve against it normally.
 
 ### Identity rules in the editor
 
-- A shape gets a component when it gets a label (unlabelled shapes and free text stay plain drawing).
-- Copying a shape to **another** diagram shows the same component there; duplicating it **within**
-  a diagram (paste, duplicate) creates a new component. In other words: a component appears at most
-  once per diagram, and a second copy on the same diagram becomes its own component.
-- “Link to an existing component” turns a shape into an appearance of a component from elsewhere;
-  “Unlink” makes it its own component again.
-- Existing maps: shapes get ids the first time an editor opens their diagram. Same-named components
-  on different diagrams are *offered* for linking, never merged automatically.
+- A shape is a component once it has a label (unlabelled shapes and free text stay plain drawing).
+  A labelled shape without a `componentId` is the component with its own element id, so existing
+  maps need no backfill write: their shapes already have stable ids.
+- Copying a shape to **another** diagram shows the same component there (the copy gets the source's
+  component id; a portal copy opens into the same diagram); duplicating it **within** a diagram
+  (paste, duplicate, Alt-drag) creates a new component, and a new portal starts empty. In other
+  words: a component appears at most once per diagram. Cut and paste is a move, so it keeps its
+  component.
+- “Link to…” turns a shape into an appearance of a component from elsewhere (it takes that
+  component's name); “Unlink” makes it its own component again.
+- Same-named components on different diagrams are *offered* for linking (“Same thing? Link”),
+  never merged automatically.
+
+### In the editor
+
+Selecting a component shows its panel at the top of the style column (its own column for viewers):
+kind, name, where it appears (with a jump to each), description, technology, owner, links, code,
+what it depends on and what uses it — rolled up through what's inside it — and known connections
+not drawn on this diagram, with “Draw”. Editing a label on the canvas or in the portal panel renames
+the component everywhere when it's drawn elsewhere or opens into a diagram. The panel refreshes from
+the server when it opens (the model is computed from live rooms, so it's current), and on the
+`model` signal.
 
 ## API
 

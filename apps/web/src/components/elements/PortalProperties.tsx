@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { registerNewDiagram } from '../../services/diagramSync';
+import { renameEverywhere } from '../../services/modelSync';
 import { useElementsStore } from '../../stores/elementsStore';
 import { useSelectionStore } from '../../stores/selectionStore';
 import { useDiagramStore } from '../../stores/diagramStore';
@@ -122,9 +123,7 @@ export default function PortalProperties() {
   if (!selectedPortal) return null;
 
   const hasTarget = selectedPortal.targetDiagramId !== '';
-  const targetDiagram = hasTarget
-    ? diagrams.get(selectedPortal.targetDiagramId)
-    : null;
+  const targetDiagram = hasTarget ? diagrams.get(selectedPortal.targetDiagramId) : null;
 
   return (
     <div
@@ -144,6 +143,9 @@ export default function PortalProperties() {
             focus:outline-none focus:border-blue-400"
           value={selectedPortal.label}
           onChange={handleLabelChange}
+          // Renamed everywhere it appears once you're done typing
+          onBlur={() => renameEverywhere(selectedPortal.id)}
+          onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
           placeholder="Portal label"
         />
       </div>

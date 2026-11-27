@@ -64,7 +64,7 @@ export async function mockAuthAndOpenEditor(page: Page) {
     route.fulfill({ status: 200, json: { project: TEST_PROJECT } }),
   );
 
-  // Workspaces (none), comments, proposals, members and notifications (empty by default)
+  // Workspaces (none), comments, proposals, model, members and notifications (empty by default)
   await page.route('**/api/workspaces', (route) =>
     route.fulfill({ status: 200, json: { workspaces: [] } }),
   );
@@ -73,6 +73,10 @@ export async function mockAuthAndOpenEditor(page: Page) {
   );
   await page.route(`**/api/projects/${TEST_PROJECT.id}/proposals`, (route) =>
     route.fulfill({ status: 200, json: { proposals: [] } }),
+  );
+  // The architecture model (the mocked suite has no server to compute it)
+  await page.route(`**/api/projects/${TEST_PROJECT.id}/model`, (route) =>
+    route.fulfill({ status: 200, json: { model: { components: [], relationships: [] } } }),
   );
   await page.route(`**/api/projects/${TEST_PROJECT.id}/members`, (route) =>
     route.fulfill({

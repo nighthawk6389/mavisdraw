@@ -1,4 +1,5 @@
 export { serializeScene } from './serialize.js';
+export { getBoundText, getElementLabel, getGivenLabel } from './labels.js';
 export { deserializeScene } from './deserialize.js';
 export {
   indexComponents,

@@ -15,6 +15,8 @@ import type {
   Point,
 } from '@mavisdraw/types';
 import { useLayerStore } from './layerStore';
+import { useDiagramStore } from './diagramStore';
+import { componentKeyOf } from '@mavisdraw/llm';
 import {
   BOUND_TEXT_PADDING,
   boundTextBox,
@@ -1090,12 +1092,36 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
         el.containerId = idMap.get(el.containerId) ?? null;
       }
 
-      if (el.type === 'portal') {
-        // A pasted portal is a new door; it doesn't share the original's child diagram
-        el.targetDiagramId = '';
-      }
-
       return el;
+    });
+
+    // Identity (docs/model-layer.md): a copy on another diagram shows the same
+    // component; a second copy on the same diagram is a new one. A cut and
+    // paste is a move, so it keeps its component.
+    const clipById = new Map(clipData.elements.map((e) => [e.id, e]));
+    const onTarget = new Set<string>();
+    for (const el of state.elements.values()) {
+      if (el.diagramId !== diagramId || el.isDeleted) continue;
+      const key = componentKeyOf(el, state.elements);
+      if (key) onTarget.add(key);
+    }
+    clipData.elements.forEach((original, i) => {
+      const copy = newElements[i];
+      const key = componentKeyOf({ ...original, isDeleted: false } as MavisElement, clipById);
+      const same = !!key && !onTarget.has(key);
+      if (same) {
+        copy.componentId = key;
+        onTarget.add(key);
+      } else {
+        delete copy.componentId;
+      }
+      if (copy.type === 'portal') {
+        // The same component opens into the same diagram (if it's in this
+        // project); a new one is a new, empty door
+        const target = (original as PortalElement).targetDiagramId;
+        copy.targetDiagramId =
+          same && target && useDiagramStore.getState().diagrams.has(target) ? target : '';
+      }
     });
 
     state.pushHistory();

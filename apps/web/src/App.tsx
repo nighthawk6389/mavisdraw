@@ -3,6 +3,7 @@ import Canvas from './components/canvas/Canvas';
 
 // Heavy, rarely-open panels load on first use
 const ExportDialog = lazy(() => import('./components/export/ExportDialog'));
+const ComponentPanel = lazy(() => import('./components/model/ComponentPanel'));
 const AgentPanel = lazy(() => import('./components/agent/AgentPanel'));
 const VersionHistoryPanel = lazy(() => import('./components/version/VersionHistoryPanel'));
 const TourPanel = lazy(() => import('./components/present/TourPanel'));
@@ -57,6 +58,7 @@ import {
 import { navigate, projectPath, reflectPath, useRoute } from './routing';
 import { useCommentsStore } from './stores/commentsStore';
 import { useProposalsStore } from './stores/proposalsStore';
+import { useModelStore } from './stores/modelStore';
 import EmptyCanvasHint from './components/templates/EmptyCanvasHint';
 import { captureStartupAction, runStartupAction, takeStartupAction } from './templates/startup';
 import {
@@ -147,6 +149,7 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
   const projectId = diagrams.get(activeDiagramId)?.projectId ?? null;
   const rootDiagramId = useDiagramStore((s) => s.diagramPath[0]);
   const canEditProject = usePermissionStore((s) => s.canEdit);
+  const showStylePanel = useUIStore((s) => s.showStylePanel);
   const role = usePermissionStore((s) => s.role);
   const showVersionHistory = useUIStore((s) => s.showVersionHistory);
   // Presenting (or following someone who is): the map, and nothing else
@@ -383,7 +386,24 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
 
         {!inPresentation && (
           <>
-            {canEditProject && <StylePanel />}
+            {/* The component the selected shape shows: atop the style column,
+                or its own column when there's no style panel (viewers) */}
+            {settledSingleId && !(canEditProject && showStylePanel) && (
+              <Suspense fallback={null}>
+                <ComponentPanel elementId={settledSingleId} canEdit={canEditProject} />
+              </Suspense>
+            )}
+            {canEditProject && (
+              <StylePanel
+                header={
+                  settledSingleId ? (
+                    <Suspense fallback={null}>
+                      <ComponentPanel elementId={settledSingleId} canEdit embedded />
+                    </Suspense>
+                  ) : null
+                }
+              />
+            )}
             {canEditProject && <LayerPanel />}
             {showVersionHistory && (
               <Suspense fallback={null}>
@@ -582,6 +602,8 @@ async function loadProject(projectId: string, diagramId: string | null): Promise
   void useCommentsStore.getState().load(projectId);
   useProposalsStore.getState().reset();
   void useProposalsStore.getState().load(projectId);
+  // The architecture model (component panel, renames everywhere)
+  void useModelStore.getState().load(projectId);
   // ?proposals=open (from a pull request comment) shows what's waiting for review
   if (new URLSearchParams(window.location.search).has('proposals')) {
     useProposalsStore.getState().setPanelOpen(true);

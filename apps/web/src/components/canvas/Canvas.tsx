@@ -3,6 +3,7 @@ import { CanvasRenderer } from './CanvasRenderer';
 import type { RenderState, RemoteSelectionInfo } from './CanvasRenderer';
 import { InteractionManager } from './InteractionManager';
 import { useElementsStore } from '../../stores/elementsStore';
+import { renameEverywhere } from '../../services/modelSync';
 import { useToolStore } from '../../stores/toolStore';
 import { useSelectionStore } from '../../stores/selectionStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -368,6 +369,13 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         }
         updateElement(textEditState.elementId, updates as Partial<MavisElement>);
       });
+      // A shape's label is its component's name: if that component is drawn
+      // elsewhere (or opens into a diagram), it's renamed there too
+      const edited = useElementsStore.getState().getElementById(textEditState.elementId);
+      const shapeId =
+        (edited?.type === 'text' ? (edited as TextElement).containerId : null) ??
+        textEditState.shapeId;
+      if (shapeId) renameEverywhere(shapeId);
     }
 
     setTextEditState(null);

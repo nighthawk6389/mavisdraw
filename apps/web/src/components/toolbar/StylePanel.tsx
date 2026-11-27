@@ -71,7 +71,11 @@ const ARROWHEAD_OPTIONS: { value: Arrowhead; label: string; icon: string }[] = [
   { value: 'bar', label: 'Bar', icon: '|' },
 ];
 
-export default function StylePanel() {
+/**
+ * `header`: shown above the style controls (the component the selected shape
+ * shows), so one column describes the selection.
+ */
+export default function StylePanel({ header }: { header?: React.ReactNode } = {}) {
   const showStylePanel = useUIStore((s) => s.showStylePanel);
   const selectedIds = useSelectionStore((s) => s.selectedIds);
   const settledSelectedIds = useSelectionStore((s) => s.settledSelectedIds);
@@ -176,6 +180,7 @@ export default function StylePanel() {
 
   return (
     <aside data-testid="style-panel" className="w-56 bg-white border-l border-gray-200 overflow-y-auto p-3 flex flex-col gap-3 z-10">
+      {header}
       <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Style</h3>
 
       {/* Stroke Color */}
