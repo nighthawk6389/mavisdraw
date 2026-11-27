@@ -20,7 +20,8 @@ export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 const DEBOUNCE_MS = 1500;
 
-async function saveDiagram(diagram: Diagram, elements: MavisElement[]): Promise<void> {
+/** Save one diagram (exported for tests). */
+export async function saveDiagram(diagram: Diagram, elements: MavisElement[]): Promise<void> {
   // A live collaboration room persists the elements itself (and merges
   // everyone's edits); writing them over REST too would just race it.
   if (isLiveSynced(diagram.id)) {
@@ -69,9 +70,56 @@ async function saveDiagram(diagram: Diagram, elements: MavisElement[]): Promise<
   const serverElements = (response.diagram?.elements ?? elements) as MavisElement[];
   const conflicts = response.conflicts ?? [];
   if (conflicts.length > 0) adoptServerVersions(conflicts, serverElements);
-  // What the server now has is the base for the next save
-  recordSaved(diagram.id, serverElements, diagram.updatedAt);
+  // The next save is checked against this base, so the base must describe
+  // exactly what this tab holds: take in everything the server has that this
+  // tab hasn't touched since sending (a teammate's edits and new shapes),
+  // and keep the old base for anything edited while the save was in flight
+  const nextBase = adoptServerState(diagram.id, elements, serverElements, base);
+  recordSaved(diagram.id, nextBase, diagram.updatedAt);
   acknowledge(diagram.id, serverElements);
+}
+
+/**
+ * After a REST save: bring the store in line with the server's merged copy
+ * of the diagram, and return the element list to record as the base for the
+ * next save. Exported for tests.
+ */
+export function adoptServerState(
+  diagramId: string,
+  sent: MavisElement[],
+  server: MavisElement[],
+  previousBase: ReadonlyMap<string, number> | undefined,
+): MavisElement[] {
+  const sentById = new Map(sent.map((el) => [el.id, el]));
+  const base: MavisElement[] = [];
+  const adopt: MavisElement[] = [];
+  const store = useElementsStore.getState().elements;
+  for (const theirs of server) {
+    if (theirs.diagramId !== diagramId) continue;
+    const mine = store.get(theirs.id);
+    const sentCopy = sentById.get(theirs.id);
+    const untouched = mine === undefined ? sentCopy === undefined : mine === sentCopy;
+    if (untouched) {
+      // A teammate's new shape, or our own write as the server merged it
+      if (mine !== theirs) adopt.push(theirs);
+      base.push(theirs);
+    } else {
+      // Edited here mid-save: the next save goes out against what this edit
+      // was based on, so a teammate's change in between is caught as a conflict
+      const before = previousBase?.get(theirs.id);
+      if (before !== undefined) base.push({ ...theirs, version: before } as MavisElement);
+    }
+  }
+  if (adopt.length > 0) {
+    applyRemoteChanges(() =>
+      useElementsStore.setState((prev) => {
+        const next = new Map(prev.elements);
+        for (const el of adopt) next.set(el.id, el);
+        return { elements: next };
+      }),
+    );
+  }
+  return base;
 }
 
 /**

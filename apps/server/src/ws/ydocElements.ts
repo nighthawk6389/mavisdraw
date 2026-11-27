@@ -90,6 +90,9 @@ export function decideWrite(
 ): Decision {
   if (base !== undefined) {
     if (incomingVersion === base) return 'unchanged';
+    // A copy older than the base it claims can't be an edit of that base:
+    // the client is out of step, and writing would revert someone's work
+    if (incomingVersion < base) return 'conflict';
     return current !== undefined && Number(current.version ?? 0) === base ? 'apply' : 'conflict';
   }
   if (current === undefined) return 'apply';

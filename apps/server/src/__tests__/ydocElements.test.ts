@@ -102,6 +102,25 @@ describe('ydoc element helpers', () => {
     expect(byId(doc).a.width).toBe(300);
   });
 
+  it('a copy older than the base it claims is a conflict, not an overwrite', () => {
+    // The base says "I last saw v6" but the copy is v2: the tab never took in
+    // the teammate's v6 (the C1 bug); writing it would revert their work
+    const doc = new Y.Doc();
+    seedElements(doc, [el('a', { x: 999, version: 6 })]);
+    const out = mergeElements(doc, {
+      elements: [el('a', { x: 0, version: 2 })],
+      baseVersions: { a: 6 },
+    });
+    expect(out.conflicts).toEqual(['a']);
+    expect(byId(doc).a.x).toBe(999);
+    const list = mergeElementList([el('a', { x: 999, version: 6 })], {
+      elements: [el('a', { x: 0, version: 2 })],
+      baseVersions: { a: 6 },
+    });
+    expect(list.conflicts).toEqual(['a']);
+    expect(list.elements[0].x).toBe(999);
+  });
+
   it('unchanged elements are skipped (no version churn)', () => {
     const doc = new Y.Doc();
     seedElements(doc, [el('a', { version: 7 })]);
