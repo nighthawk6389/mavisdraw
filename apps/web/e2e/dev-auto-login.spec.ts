@@ -54,10 +54,10 @@ test.describe('Dev Auto-Login', () => {
     );
 
     await page.goto('/');
-    await page.waitForTimeout(2000);
 
-    // Should see login form
+    // Should see login form (once auto-login has given up)
     const emailInput = page.locator('input[type="email"], input[name="email"]');
-    await expect(emailInput).toBeVisible();
+    await expect(emailInput).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: 'Projects' })).toHaveCount(0);
   });
 });
