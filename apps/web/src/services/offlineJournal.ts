@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { MavisElement } from '@mavisdraw/types';
 import { useElementsStore, isApplyingUnrecorded, withoutHistory } from '../stores/elementsStore';
-import { sameElementContent } from '../stores/history';
+import { diffElementMaps, sameElementContent } from '../stores/history';
 import { toast } from '../stores/toastStore';
 import { savedVersions } from './saveTracker';
 import { kvDelete, kvGet, kvKeys, kvSet } from './localStore';
@@ -334,18 +334,14 @@ export function startJournal(
 
   unsubscribe = useElementsStore.subscribe((state, prev) => {
     if (state.elements === prev.elements || isApplyingUnrecorded()) return;
-    let changed = false;
-    for (const [elId, el] of state.elements) {
-      if (prev.elements.get(elId) === el) continue;
-      record(el);
-      changed = true;
+    // Worked out once per update for every subscriber (history.ts)
+    const ids = diffElementMaps(prev.elements, state.elements);
+    for (const elId of ids) {
+      const el = state.elements.get(elId);
+      if (el) record(el);
+      else record({ ...prev.elements.get(elId)!, isDeleted: true } as MavisElement);
     }
-    for (const [elId, el] of prev.elements) {
-      if (state.elements.has(elId)) continue;
-      record({ ...el, isDeleted: true } as MavisElement);
-      changed = true;
-    }
-    if (changed) {
+    if (ids.length > 0) {
       publish();
       backupSoon();
       persistSoon();

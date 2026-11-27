@@ -724,6 +724,9 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         );
       },
       getDrawnCount: () => renderer.lastDrawnCount,
+      getLastStaticMs: () => renderer.lastStaticMs,
+      getLastStaticPath: () => renderer.lastStaticPath,
+      redrawStatic: () => renderer.invalidateStatic(true),
       getConnectionStatus: () => useCollaborationStore.getState().connectionStatus,
     });
 
@@ -734,7 +737,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     };
 
     // Repaint once the bundled hand-drawn font has loaded
-    whenFontsReady().then(() => renderer.invalidateStatic());
+    whenFontsReady().then(() => renderer.invalidateStatic(true));
 
     renderer.startRenderLoop(
       () => computeElementList(false),

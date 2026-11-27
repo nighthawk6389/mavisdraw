@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import * as Y from 'yjs';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { useElementsStore, applyRemoteChanges } from './elementsStore';
+import { diffElementMaps } from './history';
 import { docVersion, readElement, writeElement } from '../collab/ydocElements';
 import { useCommentsStore } from './commentsStore';
 import { useProposalsStore } from './proposalsStore';
@@ -431,19 +432,24 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
       const currentDiagramId = get().currentDiagramId;
       const yElements = doc.getMap('elements');
       const prevElements = prevState.elements;
+      // Worked out once per update for every subscriber (history.ts)
+      const ids = diffElementMaps(prevElements, newState.elements);
+      if (ids.length === 0) return;
       doc.transact(() => {
-        for (const [id, el] of newState.elements) {
-          if (el.diagramId !== currentDiagramId || prevElements.get(id) === el) continue;
-          writeElement(yElements, el);
-        }
-        // An element that vanished locally becomes a tombstone, never a
-        // missing key: otherwise a teammate's stale copy brings it back
-        for (const [id, el] of prevElements) {
-          if (el.diagramId !== currentDiagramId || newState.elements.has(id)) continue;
+        for (const id of ids) {
+          const el = newState.elements.get(id);
+          if (el) {
+            if (el.diagramId === currentDiagramId) writeElement(yElements, el);
+            continue;
+          }
+          // An element that vanished locally becomes a tombstone, never a
+          // missing key: otherwise a teammate's stale copy brings it back
+          const gone = prevElements.get(id)!;
+          if (gone.diagramId !== currentDiagramId) continue;
           const entry = yElements.get(id);
           if (!(entry instanceof Y.Map) || entry.get('isDeleted') === true) continue;
           entry.set('isDeleted', true);
-          entry.set('version', Math.max(Number(entry.get('version') ?? 0), el.version) + 1);
+          entry.set('version', Math.max(Number(entry.get('version') ?? 0), gone.version) + 1);
           entry.set('updatedAt', Date.now());
         }
       });

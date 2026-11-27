@@ -75,16 +75,44 @@ const ARROWHEAD_OPTIONS: { value: Arrowhead; label: string; icon: string }[] = [
  * `header`: shown above the style controls (the component the selected shape
  * shows), so one column describes the selection.
  */
+/** Fields that change while shapes move or resize: nothing in the panel shows them. */
+const GEOMETRY = new Set(['x', 'y', 'width', 'height', 'points', 'angle', 'version', 'updatedAt']);
+
+/**
+ * What the panel shows of the selection (and the labels inside it), as one
+ * string: everything but geometry. A selector that returns it changes only
+ * when the panel has something new to show.
+ */
+export function selectionStyleKey(
+  elements: Map<string, MavisElement>,
+  selectedIds: Set<string>,
+): string {
+  const omitGeometry = (key: string, value: unknown) => (GEOMETRY.has(key) ? undefined : value);
+  const parts: string[] = [];
+  for (const id of selectedIds) {
+    const el = elements.get(id);
+    if (!el) continue;
+    parts.push(JSON.stringify(el, omitGeometry));
+    for (const b of el.boundElements) {
+      if (b.type === 'text') parts.push(JSON.stringify(elements.get(b.id) ?? null, omitGeometry));
+    }
+  }
+  return parts.join('\n');
+}
+
 export default function StylePanel({ header }: { header?: React.ReactNode } = {}) {
   const showStylePanel = useUIStore((s) => s.showStylePanel);
   const selectedIds = useSelectionStore((s) => s.selectedIds);
   const settledSelectedIds = useSelectionStore((s) => s.settledSelectedIds);
-  const elements = useElementsStore((s) => s.elements);
+  // Not the whole elements map: a drag changes it every frame, and the panel
+  // shows nothing of where shapes are, only how they look
+  const styleKey = useElementsStore((s) => selectionStyleKey(s.elements, selectedIds));
   const alignElements = useElementsStore((s) => s.alignElements);
   const distributeElements = useElementsStore((s) => s.distributeElements);
 
-  // Get selected elements
+  // Get selected elements (read again whenever what the panel shows changes)
   const selectedElements = useMemo(() => {
+    const elements = useElementsStore.getState().elements;
     const result: MavisElement[] = [];
     for (const id of selectedIds) {
       const el = elements.get(id);
@@ -93,7 +121,8 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
       }
     }
     return result;
-  }, [selectedIds, elements]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- styleKey: what the panel shows changed
+  }, [selectedIds, styleKey]);
 
   // Get common property values from selection
   const getCommonValue = useCallback(
@@ -133,6 +162,7 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
 
   // Text styling applies to selected text and to labels inside selected shapes
   const textTargets = useMemo(() => {
+    const elements = useElementsStore.getState().elements;
     const result: TextElement[] = [];
     const seen = new Set<string>();
     for (const el of selectedElements) {
@@ -148,7 +178,8 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
       }
     }
     return result;
-  }, [selectedElements, elements]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- styleKey covers the labels too
+  }, [selectedElements, styleKey]);
 
   const applyToText = useCallback(
     (updates: Partial<TextElement>, coalesce?: string) => {

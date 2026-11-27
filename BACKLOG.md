@@ -118,14 +118,14 @@ Still open:
 Ranked by user impact; the parity pass itself (smart guides with equal spacing, Shift/Alt modifiers, Alt-drag duplicate, drag threshold, auto-pan, live marquee, rotation, Escape-to-cancel) is in `apps/web/src/components/canvas/gestures/` and `InteractionManager.ts`.
 
 - **Connector points don't snap to guides** — dragging an arrow endpoint, waypoint or elbow segment only snaps by binding to shapes; Excalidraw/tldraw also align points with other shapes' edges/centres. `InteractionManager.ts` (rebinding/waypoint modes) can reuse `snapValues`.
-- **Static layer redraws every frame of a drag** — with ~2,000 shapes on screen that's most of the remaining per-move cost (~3ms dev build). Cache the non-moving elements as a bitmap for the gesture and draw only elements whose object changed since it started on the overlay (`CanvasRenderer.ts` render loop).
-- **StylePanel subscribes to the whole elements Map** (`components/toolbar/StylePanel.tsx`) — it re-renders on every move while the dragged shape is selected (~0.8ms/move in dev). Select only the style-relevant fields of the selection.
+- ~~**Static layer redraws every frame of a drag**~~: fixed. While only a few shapes change between frames, the shapes below and above them in stacking order are kept as two bitmaps and only the span between is drawn (`canvas/staticLayerPlan.ts`): 0.3ms instead of 4ms a frame dragging among 2,000 shapes, pixel-identical to a full redraw (`e2e/performance.spec.ts`). Any change of view, size, mode or stacking draws everything.
+- ~~**StylePanel subscribes to the whole elements Map**~~: fixed. It follows the selection minus its geometry (`selectionStyleKey`), so it no longer re-renders while shapes move.
 - **Text resizing doesn't scale the font** — Excalidraw scales the font from corner handles and rewraps from side handles; MavisDraw stretches the box only.
 - **No lasso selection** (Excalidraw: Alt while box-selecting; tldraw: lasso tool) and **no Ctrl/Cmd+click deep-select** into groups (double-click to enter a group works).
 - **Multi-selections containing rotated shapes** resize them as if unrotated; a multi-selection's frame is axis-aligned again after a rotation (Excalidraw keeps the turned frame until deselect). Remote users' selection borders ignore rotation (`renderRemoteSelectionBorder`).
 - **Snapping is always on at any speed** — tldraw skips snapping while the pointer moves fast, which feels less sticky; worth trying once there's a way to test it.
-- **Toolbar subscribes to whole stores** (`Toolbar.tsx` destructures `useToolStore()` / `useUIStore()`), so any UI-store change re-renders every tool button.
-- **Offline journal runs on every element change** (`services/offlineJournal.ts` subscriber, ~0.25ms per move in a 2,000-shape drag).
+- ~~**Toolbar subscribes to whole stores**~~: fixed (one field per selector).
+- ~~**Offline journal runs on every element change**~~: improved. The journal, the live room and undo history now share one diff per store update (`diffElementMaps` is memoised, and skips the removal scan when nothing was removed). Per pointer move in a 2,000-shape drag: ~5ms, from ~9–12ms.
 
 ### Testing / CI
 

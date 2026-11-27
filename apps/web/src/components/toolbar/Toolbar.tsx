@@ -26,24 +26,26 @@ const TOOLS: ToolConfig[] = [
 ];
 
 export default function Toolbar() {
-  const { activeTool, isToolLocked, setTool, toggleToolLock } = useToolStore();
+  // One field each: the whole stores change for things the toolbar doesn't show
+  const activeTool = useToolStore((s) => s.activeTool);
+  const isToolLocked = useToolStore((s) => s.isToolLocked);
+  const setTool = useToolStore((s) => s.setTool);
+  const toggleToolLock = useToolStore((s) => s.toggleToolLock);
   const canEdit = usePermissionStore((s) => s.canEdit);
   // Viewers navigate and comment; they don't get drawing tools
   const tools = canEdit
     ? TOOLS
     : TOOLS.filter((t) => t.tool === 'select' || t.tool === 'hand' || t.tool === 'comment');
-  const {
-    renderMode,
-    setRenderMode,
-    showGrid,
-    toggleGrid,
-    showStylePanel,
-    toggleStylePanel,
-    showLayerPanel,
-    toggleLayerPanel,
-    showDiagramTree,
-    toggleDiagramTree,
-  } = useUIStore();
+  const renderMode = useUIStore((s) => s.renderMode);
+  const setRenderMode = useUIStore((s) => s.setRenderMode);
+  const showGrid = useUIStore((s) => s.showGrid);
+  const toggleGrid = useUIStore((s) => s.toggleGrid);
+  const showStylePanel = useUIStore((s) => s.showStylePanel);
+  const toggleStylePanel = useUIStore((s) => s.toggleStylePanel);
+  const showLayerPanel = useUIStore((s) => s.showLayerPanel);
+  const toggleLayerPanel = useUIStore((s) => s.toggleLayerPanel);
+  const showDiagramTree = useUIStore((s) => s.showDiagramTree);
+  const toggleDiagramTree = useUIStore((s) => s.toggleDiagramTree);
 
   return (
     <aside data-testid="toolbar" className="w-12 bg-white border-r border-gray-200 flex flex-col items-center py-2 gap-1 z-10">

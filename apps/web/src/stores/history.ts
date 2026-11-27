@@ -27,17 +27,38 @@ export function createEntry(key?: string, time = Date.now()): HistoryEntry {
 }
 
 /** Ids whose element reference differs between two element maps. */
+const diffs = new WeakMap<
+  Map<string, MavisElement>,
+  { prev: Map<string, MavisElement>; changed: readonly string[] }
+>();
+
+/**
+ * Ids added, changed or removed between two element maps. Several
+ * subscribers (undo history, the live room, the offline journal) need it
+ * for the same update: it's worked out once per pair of maps (don't mutate
+ * the result).
+ */
 export function diffElementMaps(
   prev: Map<string, MavisElement>,
   next: Map<string, MavisElement>,
-): string[] {
+): readonly string[] {
+  const hit = diffs.get(next);
+  if (hit && hit.prev === prev) return hit.changed;
   const changed: string[] = [];
+  let added = 0;
   for (const [id, el] of next) {
-    if (prev.get(id) !== el) changed.push(id);
+    const before = prev.get(id);
+    if (before === el) continue;
+    changed.push(id);
+    if (before === undefined && !prev.has(id)) added++;
   }
-  for (const id of prev.keys()) {
-    if (!next.has(id)) changed.push(id);
+  // Something was removed only if next has fewer of prev's ids than prev
+  if (next.size - added < prev.size) {
+    for (const id of prev.keys()) {
+      if (!next.has(id)) changed.push(id);
+    }
   }
+  diffs.set(next, { prev, changed });
   return changed;
 }
 

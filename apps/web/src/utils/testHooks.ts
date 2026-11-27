@@ -14,6 +14,12 @@ export interface MavisDrawTestHooks {
   seedRectangles: (count: number) => void;
   /** Elements drawn in the last static pass (after viewport culling). */
   getDrawnCount: () => number;
+  /** How long the last static canvas pass took, in ms. */
+  getLastStaticMs: () => number;
+  /** 'full', 'build' (cached bitmaps made) or 'cached' (only changed shapes drawn). */
+  getLastStaticPath: () => string;
+  /** Redraw every shape on the static canvas next frame (no cached bitmaps). */
+  redrawStatic: () => void;
   /** Live-collaboration connection state. */
   getConnectionStatus: () => string;
 }

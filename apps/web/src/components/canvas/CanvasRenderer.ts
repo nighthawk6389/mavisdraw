@@ -24,6 +24,7 @@ import {
 import type { SnapGuide } from './gestures/snapping';
 import { cssFont } from '../../utils/fonts';
 import type { Drawable } from 'roughjs/bin/core';
+import { changedSince, liveSpan, type LivePlan } from './staticLayerPlan';
 import type { Viewport } from '@mavisdraw/types';
 import { getCubicControlPoints, calculateElbowRoute, getConnectionSide } from '@mavisdraw/math';
 
@@ -42,6 +43,20 @@ export interface RemoteSelectionInfo {
   userName: string;
   color: string;
   elementIds: string[];
+}
+
+function portalUsersKey(users: Map<string, number> | undefined): string {
+  if (!users || users.size === 0) return '';
+  return Array.from(users, ([id, n]) => `${id}:${n}`)
+    .sort()
+    .join(',');
+}
+
+/** An offscreen copy of part of the static layer. */
+interface LayerBitmap {
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+  rough: RoughCanvas;
 }
 
 export interface RenderState {
@@ -86,6 +101,22 @@ export class CanvasRenderer {
   private gridRenderer: GridRenderer;
   private animationFrameId: number | null = null;
   private needsStaticRedraw = true;
+  /** Redraw every shape next frame, even if only a few changed (an image loaded, a resize). */
+  private needsFullStaticRedraw = true;
+  /** What the static layer was last drawn from, to tell which shapes changed since. */
+  private lastStaticFrame: { signature: unknown[]; elements: MavisElement[] } | null = null;
+  /**
+   * While a few shapes change frame after frame (a drag, typing a label),
+   * everything below and above them in stacking order, kept as bitmaps.
+   */
+  private layerCache: {
+    hot: Set<string>;
+    span: LivePlan;
+    drawnOutside: number;
+  } | null = null;
+  private layerBitmaps: { below: LayerBitmap; above: LayerBitmap } | null = null;
+  /** The rough.js canvas that draws into each context (bitmaps have their own). */
+  private roughByCtx = new Map<CanvasRenderingContext2D, RoughCanvas>();
   private needsInteractiveRedraw = true;
   private lastInteractiveSignature: unknown[] = [];
   private lastPublishedViewport: Viewport | null = null;
@@ -103,6 +134,10 @@ export class CanvasRenderer {
 
   /** Number of elements drawn in the last static pass (for perf tests). */
   lastDrawnCount = 0;
+  /** How long the last static pass took, in ms (for perf tests). */
+  lastStaticMs = 0;
+  /** Which way the last static pass went: 'full', 'build' or 'cached' (for tests). */
+  lastStaticPath: 'full' | 'build' | 'cached' = 'full';
 
   // Image cache to prevent re-decoding
   private imageCache: Map<string, HTMLImageElement> = new Map();
@@ -150,9 +185,14 @@ export class CanvasRenderer {
     return this.roughCanvas;
   }
 
-  /** Flag the static layer for a full redraw on the next frame. */
-  invalidateStatic(): void {
+  /**
+   * Redraw the static layer on the next frame. Only the shapes that changed
+   * since the last frame are drawn again where possible; `full` redraws them
+   * all (for changes the elements don't show, like a font that finished loading).
+   */
+  invalidateStatic(full = false): void {
     this.needsStaticRedraw = true;
+    if (full) this.needsFullStaticRedraw = true;
   }
 
   /** Force the overlay layer (selection, handles, previews) to repaint. */
@@ -183,7 +223,9 @@ export class CanvasRenderer {
 
       let staticRedrawn = false;
       if (this.needsStaticRedraw) {
+        const t0 = performance.now();
         this.renderStaticLayer(elements, state);
+        this.lastStaticMs = performance.now() - t0;
         this.needsStaticRedraw = false;
         staticRedrawn = true;
       }
@@ -249,6 +291,7 @@ export class CanvasRenderer {
     this.roughCanvas = rough.canvas(this.staticCanvas);
 
     this.needsStaticRedraw = true;
+    this.needsFullStaticRedraw = true;
     this.needsInteractiveRedraw = true;
   }
 
@@ -256,6 +299,9 @@ export class CanvasRenderer {
   destroy(): void {
     this.stopRenderLoop();
     this.imageCache.clear();
+    this.layerCache = null;
+    this.layerBitmaps = null;
+    this.roughByCtx.clear();
   }
 
   // ---------------------------------------------------------------------------
@@ -266,11 +312,8 @@ export class CanvasRenderer {
     elements: MavisElement[],
     state: RenderState,
   ): void {
-    const ctx = this.staticCtx;
     const { width, height } = this.getLogicalSize(this.staticCanvas);
     const vp = this.viewport.getViewport();
-
-    ctx.clearRect(0, 0, width, height);
 
     // Build elements map for elbow routing lookups
     this.elementsMap.clear();
@@ -278,13 +321,90 @@ export class CanvasRenderer {
       this.elementsMap.set(el.id, el);
     }
 
+    // When only a few shapes changed since last frame (a drag, typing a
+    // label) and nothing else did, draw just them: the shapes below and
+    // above them in stacking order come from bitmaps (staticLayerPlan.ts)
+    const signature: unknown[] = [
+      vp.zoom,
+      vp.scrollX,
+      vp.scrollY,
+      this.staticCanvas.width,
+      this.staticCanvas.height,
+      state.renderMode,
+      state.showGrid,
+      state.gridSize,
+      // Rebuilt on every render of the canvas: compared by what's in it
+      portalUsersKey(state.portalActiveUsers),
+      state.boundTextElements,
+    ];
+    const last = this.lastStaticFrame;
+    const sameScene =
+      !this.needsFullStaticRedraw &&
+      !!last &&
+      last.signature.length === signature.length &&
+      signature.every((v, i) => v === last.signature[i]);
+    const changed = sameScene ? changedSince(last.elements, elements) : null;
+    this.lastStaticFrame = { signature, elements };
+    this.needsFullStaticRedraw = false;
+
+    if (changed && changed.size > 0) {
+      const cache = this.layerCache;
+      const ids = Array.from(changed);
+      const reusable = !!cache && ids.every((id) => cache.hot.has(id));
+      // Still the same edit: keep its shapes live; a new one elsewhere starts afresh
+      const continues = !!cache && ids.some((id) => cache.hot.has(id));
+      const hot = reusable ? cache.hot : new Set([...(continues ? cache.hot : []), ...ids]);
+      const span = reusable ? cache.span : liveSpan(elements, hot);
+      if (span) {
+        if (!reusable) this.buildLayerCache(elements, state, hot, span, width, height);
+        this.drawWithLayerCache(elements, state, width, height);
+        this.lastStaticPath = reusable ? 'cached' : 'build';
+        return;
+      }
+    }
+
+    // Everything
+    this.layerCache = null;
+    this.lastStaticPath = 'full';
+    this.lastDrawnCount = this.drawStaticRange(
+      this.staticCtx,
+      elements,
+      state,
+      0,
+      elements.length - 1,
+      width,
+      height,
+      true,
+    );
+  }
+
+  /**
+   * Draw elements[from..to] that are on screen into `ctx`, under the
+   * viewport transform. `background`: clear first and draw the grid.
+   * Returns how many were drawn.
+   */
+  private drawStaticRange(
+    ctx: CanvasRenderingContext2D,
+    elements: MavisElement[],
+    state: RenderState,
+    from: number,
+    to: number,
+    width: number,
+    height: number,
+    background: boolean,
+  ): number {
+    const vp = this.viewport.getViewport();
+    if (background) ctx.clearRect(0, 0, width, height);
+
     // Apply viewport transform
     ctx.save();
     ctx.translate(vp.scrollX, vp.scrollY);
     ctx.scale(vp.zoom, vp.zoom);
 
     // Draw grid
-    this.gridRenderer.render(ctx, vp, width, height, state.gridSize, state.showGrid);
+    if (background) {
+      this.gridRenderer.render(ctx, vp, width, height, state.gridSize, state.showGrid);
+    }
 
     // Draw each committed element that intersects the visible area
     const margin = 64 / vp.zoom;
@@ -294,7 +414,8 @@ export class CanvasRenderer {
     const viewBottom = viewTop + height / vp.zoom + margin * 2;
     let drawn = 0;
 
-    for (const element of elements) {
+    for (let i = Math.max(0, from); i <= to && i < elements.length; i++) {
+      const element = elements[i];
       const b = elementWorldBounds(element);
       if (b.maxX < viewLeft || b.minX > viewRight || b.maxY < viewTop || b.minY > viewBottom) {
         continue;
@@ -315,8 +436,97 @@ export class CanvasRenderer {
       }
     }
 
-    this.lastDrawnCount = drawn;
     ctx.restore();
+    return drawn;
+  }
+
+  /** The two bitmaps, sized like the static canvas (made on first use). */
+  private bitmaps(): { below: LayerBitmap; above: LayerBitmap } {
+    const make = (): LayerBitmap => {
+      const canvas = document.createElement('canvas');
+      return { canvas, ctx: canvas.getContext('2d')!, rough: rough.canvas(canvas) };
+    };
+    this.layerBitmaps ??= { below: make(), above: make() };
+    const dpr = window.devicePixelRatio || 1;
+    for (const bitmap of [this.layerBitmaps.below, this.layerBitmaps.above]) {
+      if (
+        bitmap.canvas.width !== this.staticCanvas.width ||
+        bitmap.canvas.height !== this.staticCanvas.height
+      ) {
+        bitmap.canvas.width = this.staticCanvas.width;
+        bitmap.canvas.height = this.staticCanvas.height;
+        bitmap.rough = rough.canvas(bitmap.canvas);
+      }
+      bitmap.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      this.roughByCtx.set(bitmap.ctx, bitmap.rough);
+    }
+    return this.layerBitmaps;
+  }
+
+  /** Draw what's below and above the span of changing shapes into the bitmaps. */
+  private buildLayerCache(
+    elements: MavisElement[],
+    state: RenderState,
+    hot: Set<string>,
+    span: LivePlan,
+    width: number,
+    height: number,
+  ): void {
+    const { below, above } = this.bitmaps();
+    const drawnBelow = this.drawStaticRange(
+      below.ctx,
+      elements,
+      state,
+      0,
+      span.from - 1,
+      width,
+      height,
+      true,
+    );
+    above.ctx.clearRect(0, 0, width, height);
+    const drawnAbove = this.drawStaticRange(
+      above.ctx,
+      elements,
+      state,
+      span.to + 1,
+      elements.length - 1,
+      width,
+      height,
+      false,
+    );
+    this.layerCache = { hot, span, drawnOutside: drawnBelow + drawnAbove };
+  }
+
+  /** Below bitmap, the changing span drawn live, above bitmap. */
+  private drawWithLayerCache(
+    elements: MavisElement[],
+    state: RenderState,
+    width: number,
+    height: number,
+  ): void {
+    const cache = this.layerCache!;
+    const { below, above } = this.layerBitmaps!;
+    const ctx = this.staticCtx;
+    const blit = (bitmap: LayerBitmap) => {
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.drawImage(bitmap.canvas, 0, 0);
+      ctx.restore();
+    };
+    ctx.clearRect(0, 0, width, height);
+    blit(below);
+    const live = this.drawStaticRange(
+      ctx,
+      elements,
+      state,
+      cache.span.from,
+      cache.span.to,
+      width,
+      height,
+      false,
+    );
+    blit(above);
+    this.lastDrawnCount = cache.drawnOutside + live;
   }
 
   private renderInteractiveLayer(
@@ -1289,6 +1499,8 @@ export class CanvasRenderer {
       // Trigger redraw when image loads
       img.onload = () => {
         this.needsStaticRedraw = true;
+        // It may be in a cached bitmap: draw everything again
+        this.needsFullStaticRedraw = true;
       };
     }
 
@@ -1454,10 +1666,11 @@ export class CanvasRenderer {
       drawable = createDrawable();
     }
 
-    // If we're drawing on the static canvas context, we can use the
-    // RoughCanvas.draw() method directly for best quality.
-    if (ctx === this.staticCtx) {
-      this.roughCanvas.draw(drawable);
+    // On the static canvas (or one of its bitmaps), RoughCanvas.draw()
+    // gives the best quality
+    const roughCanvas = ctx === this.staticCtx ? this.roughCanvas : this.roughByCtx.get(ctx);
+    if (roughCanvas) {
+      roughCanvas.draw(drawable);
       return;
     }
 
