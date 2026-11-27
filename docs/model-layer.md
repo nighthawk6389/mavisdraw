@@ -69,7 +69,9 @@ Selecting a component shows its panel at the top of the style column (its own co
 kind, name, where it appears (with a jump to each), description, technology, owner, links, code,
 what it depends on and what uses it — rolled up through what's inside it — and known connections
 not drawn on this diagram, with “Draw”. Editing a label on the canvas or in the portal panel renames
-the component everywhere when it's drawn elsewhere or opens into a diagram. The panel refreshes from
+the component everywhere when it's drawn elsewhere or opens into a diagram. Undo and redo do the
+same, so undoing a rename undoes it everywhere. A rename typed in the panel can be undone from its
+toast. Tags are edited in the panel as chips. The panel refreshes from
 the server when it opens (the model is computed from live rooms, so it's current), and on the
 `model` signal.
 

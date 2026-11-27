@@ -47,8 +47,8 @@ Still open:
 
 - ~~**Proposals and PR checks on component ids**~~: done. Adding a component drawn elsewhere shows the same one; connections to other levels are recorded in the model; PR checks see dependencies known anywhere.
 - ~~**Inspector column hides shapes on the right**~~: fixed. When the column narrows the canvas, the view scrolls so the selection stays visible (`components/canvas/keepInView.ts`).
-- **Component panel actions are separate undo steps from server renames**: renaming everywhere is a server edit (other appearances, titles). Undoing the local label edit doesn't undo the rename elsewhere.
-- **Tags have no editor yet** (the API takes them; the panel shows none).
+- ~~**Component panel actions are separate undo steps from server renames**~~: fixed. Undo and redo of a label rename the component everywhere, like typing it would; a rename from the panel offers Undo in its toast.
+- ~~**Tags have no editor yet**~~: done. Tags appear as chips in the component panel (Enter or a comma adds one, × removes it) and are exported to Structurizr.
 
 ### Second independent review (2026-11, `308bc3c..730bf7e`) — status
 

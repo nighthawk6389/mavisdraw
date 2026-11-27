@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MavisElement, ModelComponent, ModelComponentKind, ModelLink } from '@mavisdraw/types';
 import {
   componentById,
@@ -142,11 +142,23 @@ function ComponentDetails({
   const [linking, setLinking] = useState(false);
   const [linkQuery, setLinkQuery] = useState('');
 
-  const save = async (patch: Record<string, unknown>, done?: string) => {
+  const save = async (
+    patch: Record<string, unknown>,
+    done?: string,
+    undo?: Record<string, unknown>,
+  ) => {
     try {
       await apiUpdateComponent(projectId, component.id, patch);
       await useModelStore.getState().refresh();
-      if (done) toast(done, 'success');
+      if (done) {
+        toast(
+          done,
+          'success',
+          undo
+            ? { label: 'Undo', run: () => void save(undo, 'Rename undone everywhere') }
+            : undefined,
+        );
+      }
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Couldn’t save', 'error');
     }
@@ -193,7 +205,11 @@ function ComponentDetails({
     discard('name');
     if (!next || next === component.name) return;
     const reach = elsewhere.length + (component.detailDiagramId ? 1 : 0);
-    void save({ name: next }, reach > 0 ? `Renamed everywhere it appears` : undefined);
+    // A rename from here is a server edit (every appearance), so it's undone
+    // from its toast rather than with Ctrl+Z
+    void save({ name: next }, reach > 0 ? 'Renamed everywhere it appears' : 'Renamed', {
+      name: component.name,
+    });
   };
 
   const field =
@@ -373,6 +389,10 @@ function ComponentDetails({
         </Section>
       </div>
 
+      <Section title="Tags">
+        <TagEditor tags={component.tags} canEdit={canEdit} onChange={(tags) => save({ tags })} />
+      </Section>
+
       <Section title="Links">
         <ul className="space-y-0.5">
           {component.links.map((l, i) => (
@@ -527,5 +547,87 @@ function DependencyList({
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * Tags as chips: × removes one, Enter (or a comma) adds what's typed. Quick
+ * edits are shown at once and saved one after another, each with the whole
+ * list, so none is lost while an earlier save is still on its way.
+ */
+function TagEditor({
+  tags,
+  canEdit,
+  onChange,
+}: {
+  tags: string[];
+  canEdit: boolean;
+  onChange: (tags: string[]) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState('');
+  // Edits the model hasn't confirmed yet (null: show the model's tags)
+  const [local, setLocal] = useState<string[] | null>(null);
+  const shown = local ?? tags;
+  const queue = useRef<Promise<void>>(Promise.resolve());
+  const pending = useRef(0);
+  const commit = (next: string[]) => {
+    setLocal(next);
+    pending.current += 1;
+    queue.current = queue.current
+      .then(() => onChange(next))
+      .finally(() => {
+        pending.current -= 1;
+        if (pending.current === 0) setLocal(null);
+      });
+  };
+  const add = () => {
+    const tag = draft.trim().replace(/,+$/, '').trim().slice(0, 50);
+    setDraft('');
+    if (!tag || shown.some((t) => t.toLowerCase() === tag.toLowerCase()) || shown.length >= 20) {
+      return;
+    }
+    commit([...shown, tag]);
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-1" data-testid="component-tags">
+      {shown.map((tag) => (
+        <span
+          key={tag}
+          className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700"
+        >
+          {tag}
+          {canEdit && (
+            <button
+              type="button"
+              aria-label={`Remove tag ${tag}`}
+              className="text-gray-400 hover:text-red-600"
+              onClick={() => commit(shown.filter((t) => t !== tag))}
+            >
+              ×
+            </button>
+          )}
+        </span>
+      ))}
+      {shown.length === 0 && !canEdit && <span className="text-xs text-gray-400">No tags</span>}
+      {canEdit && shown.length < 20 && (
+        <input
+          aria-label="Add a tag"
+          className="min-w-[6rem] flex-1 rounded border border-transparent px-1 py-0.5 text-xs focus:border-blue-400 focus:outline-none"
+          placeholder="Add a tag"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ',') {
+              e.preventDefault();
+              add();
+            }
+            if (e.key === 'Backspace' && !draft && shown.length > 0) {
+              commit(shown.slice(0, -1));
+            }
+          }}
+          onBlur={() => draft.trim() && add()}
+        />
+      )}
+    </div>
   );
 }

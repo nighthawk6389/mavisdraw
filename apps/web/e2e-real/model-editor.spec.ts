@@ -116,6 +116,32 @@ test.describe('The model in the editor', () => {
     };
     expect(model.components.find((c) => c.name === 'Storefront')?.appearances).toHaveLength(2);
     expect(model.components.some((c) => c.name === 'Web App')).toBe(false);
+
+    // Undo takes the rename back everywhere, not just where it was typed
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await page.keyboard.press('Escape');
+    await page.keyboard.press(`${mod}+z`);
+    await expect
+      .poll(async () => (await shape(page, 'Web App').catch(() => null)) !== null, {
+        timeout: 15_000,
+      })
+      .toBe(true);
+    await expect
+      .poll(
+        async () => {
+          const r = await context.request.get(`${API_URL}/api/projects/${project.id}/model`, {
+            headers: { Authorization: `Bearer ${user.accessToken}` },
+          });
+          const m = (await r.json()) as {
+            model: { components: Array<{ name: string; appearances: unknown[] }> };
+          };
+          return m.model.components
+            .filter((c) => c.name === 'Web App' || c.name === 'Storefront')
+            .map((c) => `${c.name}:${c.appearances.length}`);
+        },
+        { timeout: 15_000 },
+      )
+      .toEqual(['Web App:2']);
   });
 
   test('details are recorded, and a same-named shape elsewhere can be linked', async ({
@@ -148,12 +174,26 @@ test.describe('The model in the editor', () => {
       'href',
       'https://wiki.example.com/api',
     );
+    // Tags: Enter (or a comma) adds one, × removes it
+    const tagInput = panel.getByLabel('Add a tag');
+    await tagInput.fill('public');
+    await tagInput.press('Enter');
+    await expect(panel.getByTestId('component-tags')).toContainText('public');
+    await tagInput.fill('pci');
+    await tagInput.press('Enter');
+    await tagInput.fill('legacy');
+    await tagInput.press('Enter');
+    await expect(panel.getByTestId('component-tags')).toContainText('legacy');
+    await panel.getByRole('button', { name: 'Remove tag legacy' }).click();
+    await expect(panel.getByTestId('component-tags')).not.toContainText('legacy');
     // They're the model's, not this tab's: a reload shows them
     await page.reload();
     await expect(page.locator('canvas').first()).toBeVisible();
     await click(page, 'API');
     await expect(panel.getByLabel('Description')).toHaveValue('Public REST API');
     await expect(panel.getByLabel('Technology')).toHaveValue('Node.js');
+    await expect(panel.getByTestId('component-tags')).toContainText('public');
+    await expect(panel.getByTestId('component-tags')).toContainText('pci');
 
     // The two Redis boxes are separate components: offered for linking
     await click(page, 'Redis');
@@ -188,5 +228,6 @@ test.describe('The model in the editor', () => {
     expect(dsl.match(/= \w+ "Redis"/g)).toHaveLength(1);
     expect(dsl).toContain('jobs.worker -> redis');
     expect(dsl).toContain('api = softwareSystem "API" "Public REST API"');
+    expect(dsl).toContain('tags "public" "pci"');
   });
 });

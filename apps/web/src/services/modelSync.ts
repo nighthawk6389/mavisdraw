@@ -8,7 +8,7 @@ import type {
   TextElement,
 } from '@mavisdraw/types';
 import { canShowComponent, componentById, getGivenLabel } from '@mavisdraw/llm';
-import { useElementsStore } from '../stores/elementsStore';
+import { onHistoryApplied, useElementsStore } from '../stores/elementsStore';
 import { useDiagramStore } from '../stores/diagramStore';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useModelStore } from '../stores/modelStore';
@@ -196,3 +196,29 @@ export async function refreshDiagramTitles() {
     console.warn('[model] diagram titles refresh failed:', err);
   }
 }
+
+/**
+ * Undo and redo change labels too: a component's name follows its label
+ * whichever way it changed, so undoing a rename undoes it everywhere.
+ */
+export function shapesWhoseLabelChanged(
+  changedIds: string[],
+  elements: Map<string, MavisElement>,
+): string[] {
+  const shapes = new Set<string>();
+  for (const id of changedIds) {
+    const el = elements.get(id);
+    if (!el || el.isDeleted) continue;
+    if (el.type === 'text' && (el as TextElement).containerId) {
+      shapes.add((el as TextElement).containerId!);
+    } else if (el.type === 'portal') {
+      shapes.add(el.id);
+    }
+  }
+  return Array.from(shapes);
+}
+
+onHistoryApplied((changedIds) => {
+  const elements = useElementsStore.getState().elements;
+  for (const shapeId of shapesWhoseLabelChanged(changedIds, elements)) renameEverywhere(shapeId);
+});

@@ -322,6 +322,18 @@ export function withoutHistory<T>(fn: () => T): T {
 /** Alias used by the collaboration layer for readability. */
 export const applyRemoteChanges = withoutHistory;
 
+/** Told which elements an undo or redo just changed (e.g. to rename a component everywhere). */
+const historyListeners = new Set<(changedIds: string[]) => void>();
+
+export function onHistoryApplied(listener: (changedIds: string[]) => void): () => void {
+  historyListeners.add(listener);
+  return () => historyListeners.delete(listener);
+}
+
+function notifyHistoryApplied(changedIds: string[]) {
+  for (const listener of historyListeners) listener(changedIds);
+}
+
 /** True while applying changes that aren't the local user's edits (remote, loads). */
 export function isApplyingUnrecorded(): boolean {
   return unrecordedDepth > 0;
@@ -595,6 +607,7 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
       applyValues(next, entry.before, entry.after);
       return { elements: next, historyIndex: idx - 1 };
     });
+    notifyHistoryApplied(Array.from(entry.before.keys()));
   },
 
   redo: () => {
@@ -608,6 +621,7 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
       applyValues(next, entry.after, entry.before);
       return { elements: next, historyIndex: idx };
     });
+    notifyHistoryApplied(Array.from(entry.after.keys()));
   },
 
   canUndo: () => {
