@@ -640,6 +640,22 @@ test.describe('Authorization (API)', () => {
     expect(projects.map((p) => p.id)).not.toContain(project.id);
   });
 
+  test('only owners and admins switch pull request checks for a map', async ({ request }) => {
+    const team = await makeTeam(request);
+    const toggle = (who: Person, on: boolean) =>
+      as(request, who).put(`/api/projects/${team.project.id}`, { prChecks: on });
+    for (const who of [team.editor, team.viewer, team.outsider]) {
+      expect((await toggle(who, false)).status(), who.name).toBe(403);
+    }
+    expect((await toggle(team.admin, false)).status()).toBe(200);
+    const { project } = await expectJson<{ project: { prChecksEnabled: boolean } }>(
+      as(request, team.owner).get(`/api/projects/${team.project.id}`),
+      200,
+    );
+    expect(project.prChecksEnabled).toBe(false);
+    expect((await toggle(team.owner, true)).status()).toBe(200);
+  });
+
   test('applying a proposed map update needs edit access, and happens once', async ({
     request,
   }) => {

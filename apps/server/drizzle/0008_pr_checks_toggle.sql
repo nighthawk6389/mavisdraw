@@ -1,0 +1,1 @@
+ALTER TABLE "projects" ADD COLUMN "pr_checks_enabled" boolean DEFAULT true NOT NULL;

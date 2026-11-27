@@ -124,7 +124,13 @@ export async function githubAppRoutes(app: FastifyInstance): Promise<void> {
       hook_attributes: { url: `${origin}/api/github-app/webhook`, active: true },
       redirect_url: `${origin}/api/github-app/created`,
       public: false,
-      default_permissions: { contents: 'read', metadata: 'read', pull_requests: 'write' },
+      default_permissions: {
+        contents: 'read',
+        metadata: 'read',
+        pull_requests: 'write',
+        // A check on each PR's commit: green when the map is up to date
+        checks: 'write',
+      },
       default_events: ['pull_request'],
     };
     const github = 'https://github.com';

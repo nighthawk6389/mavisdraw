@@ -75,6 +75,20 @@ async function deliver(
   });
 }
 
+interface CheckRunSeen {
+  name: string;
+  head_sha: string;
+  conclusion: string;
+  details_url: string;
+  output: { title: string; summary: string };
+}
+const checkRunsOn = async (request: APIRequestContext, repo: string, sha: string) =>
+  (
+    (await (
+      await request.get(`${GITHUB_URL}/__test/check-runs?repo=${repo}&sha=${sha}`)
+    ).json()) as { runs: CheckRunSeen[] }
+  ).runs;
+
 const commentsOn = async (request: APIRequestContext, repo: string, n: number) =>
   (
     (await (await request.get(`${GITHUB_URL}/__test/comments?repo=${repo}&n=${n}`)).json()) as {
@@ -198,6 +212,15 @@ test('a pull request is checked against the map, commented on, and its update ap
   const reviewLink = /\(([^)]+\?proposals=open)\)/.exec(comment.body)![1];
   expect(reviewLink).toBe(`${WEB_URL}/p/${project.id}?proposals=open`);
 
+  // And a check on the commit: neutral (the map is behind; it's not a gate)
+  await expect
+    .poll(async () => (await checkRunsOn(context.request, fullName, 'head1')).length)
+    .toBe(1);
+  const [check] = await checkRunsOn(context.request, fullName, 'head1');
+  expect(check).toMatchObject({ name: 'MavisDraw architecture map', conclusion: 'neutral' });
+  expect(check.output.title).toMatch(/^\d+ architecture changes aren’t on the map yet$/);
+  expect(check.details_url).toBe(`${WEB_URL}/p/${project.id}?proposals=open`);
+
   // The open editor hears about the proposal at once
   await expect(page.getByRole('button', { name: 'Proposals · 1' })).toBeVisible({
     timeout: 10_000,
@@ -253,4 +276,38 @@ test('a pull request is checked against the map, commented on, and its update ap
   expect(after[0].edits).toBeGreaterThanOrEqual(1);
   expect(after[0].body).not.toContain('not on the map yet');
   expect(after[0].body).not.toContain('Review the proposed map update');
+  // …and its check is green
+  await expect
+    .poll(async () => (await checkRunsOn(context.request, fullName, 'head2'))[0]?.conclusion)
+    .toBe('success');
+  expect((await checkRunsOn(context.request, fullName, 'head2'))[0].output.title).toBe(
+    'The map is up to date',
+  );
+
+  // The owner turns pull request checks off for this map: a new PR gets nothing
+  await page.goto(`/p/${project.id}`);
+  await page.getByRole('button', { name: /^Code/ }).click();
+  const toggle = page.getByTestId('pr-checks-toggle');
+  await expect(toggle).toBeChecked();
+  await toggle.uncheck();
+  await expect(page.getByTestId('pr-checks')).toContainText('Off for this map');
+  await expect
+    .poll(async () => {
+      const res = await context.request.get(`${API_URL}/api/projects/${project.id}`, {
+        headers: { Authorization: `Bearer ${user.accessToken}` },
+      });
+      return ((await res.json()) as { project: { prChecksEnabled: boolean } }).project
+        .prChecksEnabled;
+    })
+    .toBe(false);
+  const another = {
+    ...pr,
+    pull_request: { ...pr.pull_request, number: 8, head: { sha: 'head3' } },
+  };
+  expect((await deliver(context.request, 'pull_request', another)).status()).toBe(202);
+  // Deliveries are handled in the background (the webhook answers 202 at
+  // once) and nothing will arrive to wait for: give it a moment
+  await page.waitForTimeout(1500);
+  expect(await commentsOn(context.request, fullName, 8)).toEqual([]);
+  expect(await checkRunsOn(context.request, fullName, 'head3')).toEqual([]);
 });

@@ -176,12 +176,19 @@ const server = http.createServer(async (req, res) => {
     // ── Test controls ─────────────────────────────────────────
     if (path === '/__test/repo' && req.method === 'POST') {
       const { repo, trees, contents, pulls, push = true } = await readBody(req);
-      repos.set(repo.toLowerCase(), { trees, contents, pulls, push, comments: {} });
+      repos.set(repo.toLowerCase(), { trees, contents, pulls, push, comments: {}, checkRuns: [] });
       return send(res, 200, { ok: true });
     }
     if (path === '/__test/comments' && req.method === 'GET') {
       const r = repos.get(url.searchParams.get('repo').toLowerCase());
       return send(res, 200, { comments: r?.comments[url.searchParams.get('n')] ?? [] });
+    }
+    if (path === '/__test/check-runs' && req.method === 'GET') {
+      const r = repos.get(url.searchParams.get('repo').toLowerCase());
+      const sha = url.searchParams.get('sha');
+      return send(res, 200, {
+        runs: (r?.checkRuns ?? []).filter((c) => !sha || c.head_sha === sha),
+      });
     }
 
     // ── A person connecting their GitHub account (OAuth) ──────
@@ -259,6 +266,11 @@ const server = http.createServer(async (req, res) => {
       };
       list.push(comment);
       return send(res, 201, comment);
+    }
+    if (rest === 'check-runs' && req.method === 'POST') {
+      const run = await readBody(req);
+      repo.checkRuns.push(run);
+      return send(res, 201, { id: repo.checkRuns.length, ...run });
     }
     if ((m = rest.match(/^issues\/comments\/(\d+)$/)) && req.method === 'PATCH') {
       const { body } = await readBody(req);

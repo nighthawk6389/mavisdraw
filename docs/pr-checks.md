@@ -14,6 +14,14 @@ commits are pushed) with:
 
 Only file lists and manifests are read, never source code.
 
+The result is also a **check** on the PR's latest commit, *MavisDraw architecture map*: green when
+the map already shows what the PR changes, **neutral** when it doesn't yet (with a link to the
+proposed update). It never fails, so it can't block a merge.
+
+Apps registered before checks existed don't have the *Checks* permission: GitHub asks the
+organization (or account) to accept it under **Settings → GitHub Apps**. Until then the comment
+still works, and the server logs once per repository that the check was refused.
+
 ## Set up (once per MavisDraw server)
 
 1. Open `https://<your-api-host>/api/github-app/setup` (add `?org=<your-org>` to have the app owned by
@@ -43,6 +51,11 @@ titles, package names) is escaped: it can't add links, images, HTML or @mentions
 the map's components and links to it; people need MavisDraw access to open it. Maps linked before
 these rules existed are picked up again once an owner/admin re-links them (**Code → Check against
 the code → Mark map as up to date**).
+
+### Turning checks off for a map
+
+Project owners and admins can switch pull request checks off (and on again) for a map in the
+**Code** dialog. A repository whose maps all have checks off gets no comment and no check.
 
 ## Details
 

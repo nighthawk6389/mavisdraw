@@ -6,7 +6,7 @@ import { diagramProposals, projects, type RepoSource } from '../db/schema.js';
 import { checkProjectAccess } from './diagramService.js';
 import { getDecryptedToken, repoAccess } from './githubService.js';
 import { reportError } from '../observability.js';
-import { installationClient, type InstallationClient } from './githubApp.js';
+import { GitHubApiError, installationClient, type InstallationClient } from './githubApp.js';
 import { loadProjectScene } from './projectService.js';
 import { loadStoredModel } from './modelService.js';
 import { buildProjectModel } from '@mavisdraw/llm';
@@ -19,6 +19,7 @@ import {
   impactOnProject,
   manifestsToRead,
   renderPrComment,
+  type ProjectImpact,
 } from './prDrift.js';
 
 /**
@@ -58,6 +59,7 @@ async function projectsForRepo(host: string, owner: string, repo: string) {
     .from(projects)
     .where(
       and(
+        eq(projects.prChecksEnabled, true),
         sql`${projects.repoSource}->>'kind' = 'github'`,
         sql`${projects.repoSource}->>'host' = ${host}`,
         sql`lower(${projects.repoSource}->>'owner') = ${owner.toLowerCase()}`,
@@ -207,6 +209,13 @@ export async function checkPullRequest(
   }
 
   const body = renderPrComment({ impacts, headSha: pr.head.sha, appUrl: config.appUrl, proposals });
+  // The check is extra: if GitHub refuses it, the comment still goes out
+  await reportCheck(gh, { owner, repo, headSha: pr.head.sha, impacts, proposals, body }).catch(
+    (err) => {
+      console.error(`[pr-checks] ${owner}/${repo}#${pr.number}: check run failed:`, err);
+      reportError(err, { route: 'github-app:check-run' });
+    },
+  );
   // Only ever edit our own comment (a marker in someone else's means nothing)
   const ourLogin = deps.cfg.slug ? `${deps.cfg.slug}[bot]` : null;
   const existing = (await gh.comments(owner, repo, pr.number)).find(
@@ -222,6 +231,63 @@ export async function checkPullRequest(
   if (!hasNews(impacts)) return { commented: 'skipped', projects: linked.length };
   await gh.createComment(owner, repo, pr.number, body);
   return { commented: 'created', projects: linked.length };
+}
+
+const CHECK_NAME = 'MavisDraw architecture map';
+/** GitHub's limit on a check run's summary and text. */
+const MAX_CHECK_TEXT = 60_000;
+/** Installations that haven't granted "checks: write" (warned about once). */
+const checksRefused = new Set<string>();
+
+/**
+ * The result as a check on the commit (besides the comment): green when the
+ * map already shows what the PR changes, neutral (never failing: it's not a
+ * gate) when the map is behind, with a link to the proposed update.
+ */
+export async function reportCheck(
+  gh: InstallationClient,
+  input: {
+    owner: string;
+    repo: string;
+    headSha: string;
+    impacts: ProjectImpact[];
+    proposals: Map<string, string>;
+    body: string;
+  },
+): Promise<void> {
+  const behind = input.impacts.flatMap((i) => i.changes.filter((c) => !c.onMap));
+  const withProposal = input.impacts.find((i) => input.proposals.has(i.project.id));
+  const first = withProposal ?? input.impacts[0];
+  const detailsUrl = first
+    ? `${config.appUrl}/p/${encodeURIComponent(first.project.id)}${withProposal ? '?proposals=open' : ''}`
+    : config.appUrl;
+  const title =
+    behind.length === 0
+      ? 'The map is up to date'
+      : `${behind.length} architecture ${behind.length === 1 ? 'change isn’t' : 'changes aren’t'} on the map yet`;
+  try {
+    await gh.createCheckRun(input.owner, input.repo, {
+      name: CHECK_NAME,
+      head_sha: input.headSha,
+      status: 'completed',
+      conclusion: behind.length === 0 ? 'success' : 'neutral',
+      details_url: detailsUrl,
+      output: { title, summary: input.body.slice(0, MAX_CHECK_TEXT) },
+    });
+  } catch (err) {
+    // Installed before checks were asked for: the comment still works
+    if (err instanceof GitHubApiError && err.status === 403) {
+      const key = `${input.owner}/${input.repo}`.toLowerCase();
+      if (!checksRefused.has(key)) {
+        checksRefused.add(key);
+        console.warn(
+          `[pr-checks] ${key}: no permission to add checks; accept the app's new "Checks" permission in GitHub`,
+        );
+      }
+      return;
+    }
+    throw err;
+  }
 }
 
 /** Pushes in quick succession: check each PR one run at a time, in order. */

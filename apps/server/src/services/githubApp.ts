@@ -101,6 +101,15 @@ export interface IssueComment {
   user: { login: string; type: string } | null;
 }
 
+export interface CheckRun {
+  name: string;
+  head_sha: string;
+  status: 'completed';
+  conclusion: 'success' | 'neutral';
+  details_url: string;
+  output: { title: string; summary: string };
+}
+
 /** Files read from pull requests (manifests): bigger ones are skipped. */
 const MAX_FILE_BYTES = 256 * 1024;
 const MAX_FILE_PAGES = 30; // GitHub lists at most 3,000 files per PR
@@ -174,6 +183,11 @@ export function installationClient(cfg: GitHubAppConfig, installationId: number)
 
     updateComment(owner: string, repo: string, id: number, body: string) {
       return as<IssueComment>('PATCH', `${repoPath(owner, repo)}/issues/comments/${id}`, { body });
+    },
+
+    /** A check on a commit (needs the app's "checks: write" permission). */
+    createCheckRun(owner: string, repo: string, run: CheckRun) {
+      return as<{ id: number }>('POST', `${repoPath(owner, repo)}/check-runs`, run);
     },
   };
 }

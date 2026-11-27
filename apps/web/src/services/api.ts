@@ -242,6 +242,8 @@ export interface ProjectResponse {
   workspaceId?: string | null;
   folder?: string | null;
   repoSource?: RepoSourceData | null;
+  /** Pull requests on the linked repository are checked (default on). */
+  prChecksEnabled?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -271,6 +273,8 @@ export async function apiUpdateProject(
     isPublic?: boolean;
     folder?: string | null;
     workspaceId?: string | null;
+    /** Owners and admins: check pull requests on the linked repository. */
+    prChecks?: boolean;
   },
 ): Promise<{ project: ProjectResponse }> {
   return apiFetch(`/api/projects/${id}`, {

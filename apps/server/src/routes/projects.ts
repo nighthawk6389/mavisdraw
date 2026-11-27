@@ -44,6 +44,8 @@ const updateProjectSchema = z.object({
   folder: z.string().trim().max(100).nullable().optional(),
   /** Move into a workspace (null: back to the owner's personal space). */
   workspaceId: z.string().min(1).max(64).nullable().optional(),
+  /** Check pull requests on the linked repository (owners and admins). */
+  prChecks: z.boolean().optional(),
 });
 
 export async function projectRoutes(app: FastifyInstance): Promise<void> {
@@ -164,7 +166,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(404).send({ error: 'Project not found' });
     }
 
-    const { folder, workspaceId, ...ownerFields } = parsed.data;
+    const { folder, workspaceId, prChecks, ...ownerFields } = parsed.data;
     const isOwner = project.ownerId === userId;
     if ((Object.keys(ownerFields).length > 0 || workspaceId !== undefined) && !isOwner) {
       return reply.code(403).send({ error: 'Only the owner can update this project' });
@@ -172,6 +174,12 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     if (folder !== undefined) {
       const access = await checkProjectAccess(id, userId);
       if (!access || access === 'viewer') return reply.code(403).send({ error: 'Access denied' });
+    }
+    if (prChecks !== undefined) {
+      const access = await checkProjectAccess(id, userId);
+      if (access !== 'owner' && access !== 'admin') {
+        return reply.code(403).send({ error: 'Only owners and admins can change PR checks' });
+      }
     }
     if (workspaceId && !(await getWorkspaceRole(workspaceId, userId))) {
       return reply.code(403).send({ error: 'You are not a member of that workspace' });
@@ -183,6 +191,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
         ...ownerFields,
         ...(folder !== undefined ? { folder: folder ? folder : null } : {}),
         ...(workspaceId !== undefined ? { workspaceId } : {}),
+        ...(prChecks !== undefined ? { prChecksEnabled: prChecks } : {}),
         updatedAt: new Date(),
       })
       .where(eq(projects.id, id))

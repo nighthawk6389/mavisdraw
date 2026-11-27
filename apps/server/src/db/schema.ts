@@ -90,6 +90,8 @@ export const projects = pgTable(
      * at that time (drift is measured against it).
      */
     repoSource: jsonb('repo_source').$type<RepoSource | null>(),
+    /** Check pull requests on the linked repository (the GitHub App; docs/pr-checks.md). */
+    prChecksEnabled: boolean('pr_checks_enabled').notNull().default(true),
     thumbnailUrl: text('thumbnail_url'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

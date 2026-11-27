@@ -57,6 +57,13 @@
       "when": 1795798142409,
       "tag": "0007_proposal_resolution_key",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795815847099,
+      "tag": "0008_pr_checks_toggle",
+      "breakpoints": true
     }
   ]
 }
