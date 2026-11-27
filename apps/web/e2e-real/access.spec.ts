@@ -6,6 +6,7 @@ import {
   dragOnCanvas,
   getActiveElements,
   isConnected,
+  liveBarrier,
   openProject,
   registerUser,
   shareLink,
@@ -75,12 +76,33 @@ test.describe('Access changes apply to open tabs', () => {
       const m = await import('/src/stores/collaborationStore.ts');
       const Y = await import('/node_modules/.vite/deps/yjs.js');
       const doc = m.useCollaborationStore.getState().doc!;
+      const diagramId = (
+        window as unknown as { __MAVISDRAW__: { getActiveDiagramId: () => string } }
+      ).__MAVISDRAW__.getActiveDiagramId();
+      // A complete shape on this diagram, so it would show if it got through
       const el = new Y.Map();
-      el.set('id', 'forged');
-      el.set('type', 'rectangle');
+      for (const [k, v] of Object.entries({
+        id: 'forged',
+        type: 'rectangle',
+        diagramId,
+        x: 10,
+        y: 10,
+        width: 80,
+        height: 60,
+        version: 1,
+        isDeleted: false,
+      })) {
+        el.set(k, v);
+      }
       doc.getMap('elements').set('forged', el);
     });
-    await a.waitForTimeout(1500);
+    // Everything Bob sent has been through the server by now
+    await liveBarrier(b, a);
+    const reachedAlice = await a.evaluate(async () => {
+      const m = await import('/src/stores/collaborationStore.ts');
+      return m.useCollaborationStore.getState().doc!.getMap('elements').has('forged');
+    });
+    expect(reachedAlice).toBe(false);
     expect((await getActiveElements(a)).map((e) => e.id)).not.toContain('forged');
 
     await ctxA.close();
