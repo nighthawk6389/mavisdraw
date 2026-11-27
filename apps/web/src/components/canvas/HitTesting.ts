@@ -536,20 +536,53 @@ export function selectionFrameBounds(selected: MavisElement[]): Bounds | null {
   return unionVisualBounds(shapes.length === live.length ? live : shapes);
 }
 
-/** Bounds of what's actually drawn: linear elements are measured by their points. */
+/** A selection frame, turned with the shape when a single rotated shape is selected. */
+export interface SelectionFrame {
+  /** Unrotated box; drawn rotated by `angle` around its centre. */
+  bounds: Bounds;
+  angle: number;
+}
+
+/**
+ * Frame for the selection: a single rotated shape gets a frame turned with
+ * it (Excalidraw, tldraw, Figma); anything else an axis-aligned box.
+ */
+export function selectionFrame(selected: MavisElement[]): SelectionFrame | null {
+  const live = selected.filter((e) => !e.isDeleted);
+  if (live.length === 1 && live[0].angle && !isPointBased(live[0])) {
+    return { bounds: getElementBounds(live[0]), angle: live[0].angle };
+  }
+  const bounds = selectionFrameBounds(live);
+  return bounds ? { bounds, angle: 0 } : null;
+}
+
+function isPointBased(element: MavisElement): boolean {
+  return element.type === 'line' || element.type === 'arrow' || element.type === 'freedraw';
+}
+
+/**
+ * Bounds of what's actually drawn: linear elements are measured by their
+ * points, rotated shapes by their turned corners.
+ */
 export function getVisualBounds(element: MavisElement): Bounds {
-  if (
-    (element.type === 'line' || element.type === 'arrow' || element.type === 'freedraw') &&
-    element.points.length > 0
-  ) {
+  if (isPointBased(element) && (element as LinearElement).points.length > 0) {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const [px, py] of element.points) {
+    for (const [px, py] of (element as LinearElement).points) {
       minX = Math.min(minX, element.x + px);
       minY = Math.min(minY, element.y + py);
       maxX = Math.max(maxX, element.x + px);
       maxY = Math.max(maxY, element.y + py);
     }
     return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+  }
+  if (element.angle) {
+    const cx = element.x + element.width / 2;
+    const cy = element.y + element.height / 2;
+    const cos = Math.abs(Math.cos(element.angle));
+    const sin = Math.abs(Math.sin(element.angle));
+    const halfW = (element.width * cos + element.height * sin) / 2;
+    const halfH = (element.width * sin + element.height * cos) / 2;
+    return { x: cx - halfW, y: cy - halfH, width: halfW * 2, height: halfH * 2 };
   }
   return getElementBounds(element);
 }
@@ -585,6 +618,12 @@ export function getResizeHandles(bounds: Bounds): { handle: ResizeHandle; x: num
 export const SELECTION_PADDING_PX = 4;
 /** Half the clickable size of a resize handle, in screen pixels (generous on purpose). */
 const HANDLE_HIT_HALF_PX = 7;
+/** Fingers and pens get bigger handles to hit (tldraw does the same for coarse pointers). */
+const COARSE_HANDLE_HIT_HALF_PX = 12;
+/** Distance of the rotation handle above the selection outline, in screen pixels. */
+export const ROTATION_HANDLE_OFFSET_PX = 22;
+/** Drawn radius of the rotation handle, in screen pixels. */
+export const ROTATION_HANDLE_RADIUS_PX = 5;
 
 /**
  * Test if a point hits a resize handle. Returns the handle if hit, null otherwise.
@@ -595,9 +634,10 @@ export function hitTestResizeHandle(
   canvasPoint: Point,
   selectionBounds: Bounds,
   zoom = 1,
+  halfPx = HANDLE_HIT_HALF_PX,
 ): ResizeHandle | null {
   const pad = SELECTION_PADDING_PX / zoom;
-  const half = HANDLE_HIT_HALF_PX / zoom;
+  const half = halfPx / zoom;
   const x = selectionBounds.x - pad;
   const y = selectionBounds.y - pad;
   const w = selectionBounds.width + pad * 2;
@@ -618,6 +658,69 @@ export function hitTestResizeHandle(
     }
   }
   return null;
+}
+
+/** Centre of the rotation handle (canvas coordinates), turned with the frame. */
+export function rotationHandleCenter(frame: SelectionFrame, zoom = 1): Point {
+  const b = frame.bounds;
+  const cx = b.x + b.width / 2;
+  const cy = b.y + b.height / 2;
+  const local = { x: cx, y: b.y - (SELECTION_PADDING_PX + ROTATION_HANDLE_OFFSET_PX) / zoom };
+  if (!frame.angle) return local;
+  const cos = Math.cos(frame.angle);
+  const sin = Math.sin(frame.angle);
+  const dx = local.x - cx;
+  const dy = local.y - cy;
+  return { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos };
+}
+
+/**
+ * Which transform handle of a selection frame is under the point: the
+ * rotation handle above the frame, or one of the eight resize handles.
+ * Works on rotated frames; `coarse` (touch, pen) enlarges the targets.
+ */
+export function hitTestTransformHandle(
+  canvasPoint: Point,
+  frame: SelectionFrame,
+  zoom = 1,
+  coarse = false,
+): { kind: 'rotate' } | { kind: 'resize'; handle: ResizeHandle } | null {
+  const halfPx = coarse ? COARSE_HANDLE_HIT_HALF_PX : HANDLE_HIT_HALF_PX;
+  const rotation = rotationHandleCenter(frame, zoom);
+  if (Math.hypot(canvasPoint.x - rotation.x, canvasPoint.y - rotation.y) <= halfPx / zoom) {
+    return { kind: 'rotate' };
+  }
+  let local = canvasPoint;
+  if (frame.angle) {
+    const b = frame.bounds;
+    const cx = b.x + b.width / 2;
+    const cy = b.y + b.height / 2;
+    const cos = Math.cos(-frame.angle);
+    const sin = Math.sin(-frame.angle);
+    const dx = canvasPoint.x - cx;
+    const dy = canvasPoint.y - cy;
+    local = { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos };
+  }
+  const handle = hitTestResizeHandle(local, frame.bounds, zoom, halfPx);
+  return handle ? { kind: 'resize', handle } : null;
+}
+
+/** True if the point is inside the (possibly rotated) selection outline. */
+export function frameContainsPoint(frame: SelectionFrame, point: Point, zoom = 1): boolean {
+  const b = frame.bounds;
+  const pad = SELECTION_PADDING_PX / zoom;
+  let p = point;
+  if (frame.angle) {
+    const cx = b.x + b.width / 2;
+    const cy = b.y + b.height / 2;
+    const cos = Math.cos(-frame.angle);
+    const sin = Math.sin(-frame.angle);
+    p = {
+      x: cx + (point.x - cx) * cos - (point.y - cy) * sin,
+      y: cy + (point.x - cx) * sin + (point.y - cy) * cos,
+    };
+  }
+  return p.x >= b.x - pad && p.x <= b.x + b.width + pad && p.y >= b.y - pad && p.y <= b.y + b.height + pad;
 }
 
 // ─── Binding support ─────────────────────────────────────
@@ -895,12 +998,21 @@ export function getAnchorPoints(element: MavisElement): { position: AnchorPositi
   const cx = element.x + element.width / 2;
   const cy = element.y + element.height / 2;
 
-  return [
+  const anchors: { position: AnchorPosition; x: number; y: number }[] = [
     { position: 'top', x: cx, y: element.y },
     { position: 'right', x: element.x + element.width, y: cy },
     { position: 'bottom', x: cx, y: element.y + element.height },
     { position: 'left', x: element.x, y: cy },
   ];
+  if (!element.angle) return anchors;
+  // Rotated shapes: the anchors sit on the turned edges
+  const cos = Math.cos(element.angle);
+  const sin = Math.sin(element.angle);
+  return anchors.map((a) => ({
+    position: a.position,
+    x: cx + (a.x - cx) * cos - (a.y - cy) * sin,
+    y: cy + (a.x - cx) * sin + (a.y - cy) * cos,
+  }));
 }
 
 /**

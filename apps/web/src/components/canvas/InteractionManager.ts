@@ -4,7 +4,7 @@ import type { ViewportManager } from './ViewportManager';
 import {
   hitTestElements,
   hitTestSelectionBox,
-  hitTestResizeHandle,
+  hitTestTransformHandle,
   findBindingTarget,
   hitTestElementsWithGroups,
   getGroupElementIds,
@@ -17,10 +17,11 @@ import {
   hitTestElbowSegment,
   computeElbowPoints,
   getVisualBounds,
-  selectionFrameBounds,
+  selectionFrame,
+  frameContainsPoint,
   unionVisualBounds,
-  SELECTION_PADDING_PX,
   type ResizeHandle,
+  type SelectionFrame,
 } from './HitTesting';
 import { simplifyTuplePoints, applyElbowSegmentDrag } from '@mavisdraw/math';
 import type { WheelIntent } from './wheel';
@@ -31,8 +32,12 @@ import {
   handleSides,
   lockToAxis,
   placedBox,
+  normalizeAngle,
   resizeBox,
+  resizeRotatedBox,
   resizeSnapCandidates,
+  rotatePoint,
+  rotationDelta,
   scaleElementBox,
   snapVectorAngle,
 } from './gestures/transform';
@@ -54,6 +59,7 @@ export type InteractionMode =
   | 'creating-from-anchor'
   | 'dragging'
   | 'resizing'
+  | 'rotating'
   | 'selecting'
   | 'drawing-freedraw'
   | 'rebinding-endpoint'
@@ -170,16 +176,24 @@ const SHAPE_TOOLS = new Set<Tool>([
 /** Tools that draw a box: a click places one at its default size. */
 const BOX_TOOLS = new Set<Tool>(['rectangle', 'ellipse', 'diamond', 'portal']);
 
-const RESIZE_CURSORS: Record<ResizeHandle, string> = {
-  'top-left': 'nwse-resize',
-  'bottom-right': 'nwse-resize',
-  'top-right': 'nesw-resize',
-  'bottom-left': 'nesw-resize',
-  'top-center': 'ns-resize',
-  'bottom-center': 'ns-resize',
-  'middle-left': 'ew-resize',
-  'middle-right': 'ew-resize',
+/** Direction each handle pulls in, degrees clockwise from "right" (y points down). */
+const HANDLE_DIRECTION_DEG: Record<ResizeHandle, number> = {
+  'middle-right': 0,
+  'bottom-right': 45,
+  'bottom-center': 90,
+  'bottom-left': 135,
+  'middle-left': 180,
+  'top-left': 225,
+  'top-center': 270,
+  'top-right': 315,
 };
+const RESIZE_CURSORS = ['ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize'];
+
+/** Resize cursor for a handle, turned with a rotated frame. */
+function resizeCursor(handle: ResizeHandle, angle: number): string {
+  const degrees = HANDLE_DIRECTION_DEG[handle] + (angle * 180) / Math.PI;
+  return RESIZE_CURSORS[((Math.round(degrees / 45) % 4) + 4) % 4];
+}
 
 function isLinearType(type: string): boolean {
   return type === 'arrow' || type === 'line' || type === 'freedraw';
@@ -206,6 +220,12 @@ export class InteractionManager {
   private dragStartPoints: Map<string, [number, number][]> = new Map();
   private resizeHandle: ResizeHandle | null = null;
   private resizeStartBounds: Bounds | null = null;
+  /** Angle of a single rotated shape being resized (its frame turns with it). */
+  private resizeAngle = 0;
+  /** Pivot of a rotation gesture (centre of the selection frame). */
+  private rotationCentre: Point = { x: 0, y: 0 };
+  /** Angle of a single shape when its rotation started (Shift snaps its result). */
+  private rotationBase = 0;
   private isSpacePressed = false;
   private freedrawPoints: [number, number][] = [];
   private freedrawMinX = Infinity;
@@ -626,16 +646,26 @@ export class InteractionManager {
         return;
       }
 
-      // Resize handles of the selection frame (exactly where they're drawn)
+      // Rotation and resize handles of the selection frame (exactly where they're drawn)
       const frame = this.getSelectionFrame(elements, selectedIds);
       if (frame && !elements.some((e) => selectedIds.has(e.id) && e.isLocked)) {
-        const handle = hitTestResizeHandle(canvasPoint, frame, zoom);
-        if (handle) {
-          this.mode = 'resizing';
-          this.resizeHandle = handle;
-          this.resizeStartBounds = frame;
+        const hit = hitTestTransformHandle(canvasPoint, frame, zoom, this.pointerType !== 'mouse');
+        if (hit?.kind === 'rotate') {
+          this.mode = 'rotating';
+          const b = frame.bounds;
+          this.rotationCentre = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+          this.rotationBase = frame.angle;
           this.captureElementPositions(elements, selectedIds);
-          this.snapContext = this.buildSnapContext(selectedIds);
+          this.callbacks.pushHistory();
+          return;
+        }
+        if (hit?.kind === 'resize') {
+          this.mode = 'resizing';
+          this.resizeHandle = hit.handle;
+          this.resizeStartBounds = frame.bounds;
+          this.resizeAngle = frame.angle;
+          this.captureElementPositions(elements, selectedIds);
+          this.snapContext = frame.angle ? null : this.buildSnapContext(selectedIds);
           this.callbacks.pushHistory();
           return;
         }
@@ -830,6 +860,12 @@ export class InteractionManager {
 
       case 'resizing': {
         this.performResize(canvasPoint);
+        this.callbacks.invalidateStatic();
+        break;
+      }
+
+      case 'rotating': {
+        this.performRotation(canvasPoint);
         this.callbacks.invalidateStatic();
         break;
       }
@@ -1109,6 +1145,12 @@ export class InteractionManager {
       case 'resizing': {
         this.resizeHandle = null;
         this.resizeStartBounds = null;
+        this.resizeAngle = 0;
+        this.endTransformGesture();
+        break;
+      }
+
+      case 'rotating': {
         this.endTransformGesture();
         break;
       }
@@ -1314,7 +1356,10 @@ export class InteractionManager {
    */
   cancelGesture(): void {
     const mode = this.mode;
-    if ((mode === 'dragging' || mode === 'resizing') && this.gestureOriginals.size > 0) {
+    if (
+      (mode === 'dragging' || mode === 'resizing' || mode === 'rotating') &&
+      this.gestureOriginals.size > 0
+    ) {
       this.callbacks.updateElementsSilent(
         Array.from(this.gestureOriginals.values()).map((el) => ({ id: el.id, changes: el })),
       );
@@ -1338,6 +1383,9 @@ export class InteractionManager {
 
     this.mode = 'idle';
     this.dragActive = false;
+    this.resizeHandle = null;
+    this.resizeStartBounds = null;
+    this.resizeAngle = 0;
     this.creatingElement = null;
     this.anchorSourceElement = null;
     this.snapTarget = null;
@@ -1706,20 +1754,14 @@ export class InteractionManager {
 
   // ─── Helpers ───────────────────────────────────────────────
 
-  private getSelectionFrame(elements: MavisElement[], selectedIds: Set<string>): Bounds | null {
+  private getSelectionFrame(elements: MavisElement[], selectedIds: Set<string>): SelectionFrame | null {
     if (selectedIds.size === 0) return null;
-    return selectionFrameBounds(elements.filter((e) => selectedIds.has(e.id)));
+    return selectionFrame(elements.filter((e) => selectedIds.has(e.id)));
   }
 
   /** Inside the drawn selection outline (which sits a few pixels outside the bounds). */
-  private frameContains(frame: Bounds, point: Point, zoom: number): boolean {
-    const pad = SELECTION_PADDING_PX / zoom;
-    return (
-      point.x >= frame.x - pad &&
-      point.x <= frame.x + frame.width + pad &&
-      point.y >= frame.y - pad &&
-      point.y <= frame.y + frame.height + pad
-    );
+  private frameContains(frame: SelectionFrame, point: Point, zoom: number): boolean {
+    return frameContainsPoint(frame, point, zoom);
   }
 
   private computeHoverCursor(
@@ -1733,12 +1775,83 @@ export class InteractionManager {
     const zoom = this.callbacks.getViewport().getViewport().zoom;
     const hasLocked = selectedIds.size > 0 && elements.some((e) => selectedIds.has(e.id) && e.isLocked);
     if (frame && !hasLocked) {
-      const handle = hitTestResizeHandle(canvasPoint, frame, zoom);
-      if (handle) return RESIZE_CURSORS[handle] ?? 'default';
+      const handle = hitTestTransformHandle(canvasPoint, frame, zoom);
+      if (handle?.kind === 'rotate') return 'grab';
+      if (handle) return resizeCursor(handle.handle, frame.angle);
     }
     if (hit) return hit.isLocked ? 'not-allowed' : 'move';
     if (frame && !hasLocked && this.frameContains(frame, canvasPoint, zoom)) return 'move';
     return 'default';
+  }
+
+  // ─── Rotating ──────────────────────────────────────────────
+
+  /**
+   * Turn the selection around the centre of its frame. A single shape gets
+   * a new `angle`; in a multi-selection every shape also orbits the centre.
+   * Connectors and ink have their points turned instead (their hit-testing
+   * and bindings work on points). Shift snaps to 15° steps.
+   */
+  private performRotation(canvasPoint: Point): void {
+    const centre = this.rotationCentre;
+    const delta = rotationDelta(
+      centre,
+      this.startCanvasPoint,
+      canvasPoint,
+      this.rotationBase,
+      this.mods.shiftKey,
+    );
+    const updates: ElementUpdate[] = [];
+    for (const [id, original] of this.gestureOriginals) {
+      if (isLinearType(original.type)) {
+        const points = (original as LinearElement).points.map(([px, py]) =>
+          rotatePoint({ x: original.x + px, y: original.y + py }, centre, delta),
+        );
+        if (points.length === 0) continue;
+        if (original.type === 'freedraw') {
+          // Ink keeps its origin at the top-left of its points
+          const minX = Math.min(...points.map((p) => p.x));
+          const minY = Math.min(...points.map((p) => p.y));
+          const maxX = Math.max(...points.map((p) => p.x));
+          const maxY = Math.max(...points.map((p) => p.y));
+          updates.push({
+            id,
+            changes: {
+              x: minX,
+              y: minY,
+              width: maxX - minX,
+              height: maxY - minY,
+              points: points.map((p) => [p.x - minX, p.y - minY] as [number, number]),
+            } as Partial<MavisElement>,
+          });
+        } else {
+          const origin = points[0];
+          updates.push({
+            id,
+            changes: {
+              x: origin.x,
+              y: origin.y,
+              points: points.map((p) => [p.x - origin.x, p.y - origin.y] as [number, number]),
+            } as Partial<MavisElement>,
+          });
+        }
+        continue;
+      }
+      const ownCentre = rotatePoint(
+        { x: original.x + original.width / 2, y: original.y + original.height / 2 },
+        centre,
+        delta,
+      );
+      updates.push({
+        id,
+        changes: {
+          x: ownCentre.x - original.width / 2,
+          y: ownCentre.y - original.height / 2,
+          angle: normalizeAngle((original.angle ?? 0) + delta),
+        },
+      });
+    }
+    if (updates.length > 0) this.callbacks.updateElementsSilent(updates);
   }
 
   private captureElementPositions(elements: MavisElement[], selectedIds: Set<string>): void {
@@ -1783,6 +1896,19 @@ export class InteractionManager {
     const fromCenter = this.mods.altKey;
 
     this.currentSmartGuides = [];
+    if (this.resizeAngle) {
+      // A single rotated shape: resize in its own frame, opposite handle stays put
+      const [id] = Array.from(this.dragStartPositions.keys());
+      if (!id) return;
+      const box = resizeRotatedBox(sb, this.resizeAngle, handle, delta, {
+        keepAspect,
+        fromCenter,
+        minSize: 1,
+        noFlip: anyImage,
+      });
+      this.callbacks.updateElementsSilent([{ id, changes: box }]);
+      return;
+    }
     const snapping = this.isSnapEnabled() && !keepAspect;
     if (snapping) {
       const candidates = resizeSnapCandidates(sb, handle, delta, fromCenter);

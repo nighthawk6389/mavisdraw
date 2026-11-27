@@ -96,6 +96,24 @@ export function getBindingEdgePoint(
   fromY: number,
   gap: number,
 ): Point {
+  if (element.angle) {
+    // Work in the shape's own frame, then turn the result back with it
+    const cx = element.x + element.width / 2;
+    const cy = element.y + element.height / 2;
+    const cos = Math.cos(element.angle);
+    const sin = Math.sin(element.angle);
+    const dx = fromX - cx;
+    const dy = fromY - cy;
+    const local = getBindingEdgePoint(
+      { ...element, angle: 0 },
+      cx + dx * cos + dy * sin,
+      cy - dx * sin + dy * cos,
+      gap,
+    );
+    const lx = local.x - cx;
+    const ly = local.y - cy;
+    return { x: cx + lx * cos - ly * sin, y: cy + lx * sin + ly * cos };
+  }
   const cx = element.x + element.width / 2;
   const cy = element.y + element.height / 2;
   const angle = Math.atan2(fromY - cy, fromX - cx);
@@ -149,13 +167,16 @@ export function syncBoundElements(next: Map<string, MavisElement>, id: string): 
       const text = el as TextElement;
       if (text.containerId !== id) continue;
       const box = boundTextBox(shape);
+      // The label shares the shape's centre, so turning it by the same angle keeps it inside
+      const angle = shape.angle ?? 0;
       if (
         text.x !== box.x ||
         text.y !== box.y ||
         text.width !== box.width ||
-        text.height !== box.height
+        text.height !== box.height ||
+        (text.angle ?? 0) !== angle
       ) {
-        next.set(text.id, bump(text, box));
+        next.set(text.id, bump(text, { ...box, angle }));
       }
       continue;
     }

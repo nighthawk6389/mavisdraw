@@ -14,7 +14,13 @@ import type {
 import { ViewportManager } from './ViewportManager';
 import { GridRenderer } from './GridRenderer';
 import { renderPortalSketchy, renderPortalClean } from '../elements/PortalRenderer';
-import { SELECTION_PADDING_PX, selectionFrameBounds } from './HitTesting';
+import {
+  ROTATION_HANDLE_RADIUS_PX,
+  SELECTION_PADDING_PX,
+  getAnchorPoints,
+  rotationHandleCenter,
+  selectionFrame,
+} from './HitTesting';
 import type { SnapGuide } from './gestures/snapping';
 import { cssFont } from '../../utils/fonts';
 import type { Drawable } from 'roughjs/bin/core';
@@ -341,14 +347,26 @@ export class CanvasRenderer {
         state.selectedIds.has(e.id),
       );
       // Same frame the InteractionManager hit-tests its handles against
-      const bounds = selectionFrameBounds(selectedElements);
-      if (bounds) {
+      const frame = selectionFrame(selectedElements);
+      if (frame) {
+        const bounds = frame.bounds;
+        ctx.save();
+        if (frame.angle) {
+          // A single rotated shape: the frame and its handles turn with it
+          const cx = bounds.x + bounds.width / 2;
+          const cy = bounds.y + bounds.height / 2;
+          ctx.translate(cx, cy);
+          ctx.rotate(frame.angle);
+          ctx.translate(-cx, -cy);
+        }
         this.renderSelectionBox(ctx, bounds);
         if (selectedElements.some((e) => e.isLocked)) {
           this.renderLockBadge(ctx, bounds);
         } else {
           this.renderResizeHandles(ctx, bounds);
+          this.renderRotationHandle(ctx, bounds);
         }
+        ctx.restore();
       }
     }
 
@@ -1546,6 +1564,32 @@ export class CanvasRenderer {
     ctx.restore();
   }
 
+  /**
+   * Rotation handle: a small circle above the frame's top edge, joined to it
+   * by a short stem (Excalidraw, Figma). Hit-tested by `hitTestTransformHandle`.
+   */
+  renderRotationHandle(ctx: CanvasRenderingContext2D, bounds: Bounds): void {
+    const zoom = this.viewport.getViewport().zoom;
+    const centre = rotationHandleCenter({ bounds, angle: 0 }, zoom);
+    const radius = ROTATION_HANDLE_RADIUS_PX / zoom;
+    const top = bounds.y - SELECTION_PADDING_PX / zoom;
+
+    ctx.save();
+    ctx.strokeStyle = CanvasRenderer.SELECTION_COLOR;
+    ctx.fillStyle = CanvasRenderer.HANDLE_FILL;
+    ctx.lineWidth = 1.5 / zoom;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(centre.x, top);
+    ctx.lineTo(centre.x, centre.y + radius);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(centre.x, centre.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
   /** Small padlock at the selection's top-right corner for locked elements. */
   private renderLockBadge(ctx: CanvasRenderingContext2D, bounds: Bounds): void {
     const zoom = this.viewport.getViewport().zoom;
@@ -1585,6 +1629,14 @@ export class CanvasRenderer {
     const bounds = this.getElementsBounds([element]);
 
     ctx.save();
+    if (element.angle && !('points' in element)) {
+      // Outline a rotated shape along its own edges
+      const cx = bounds.x + bounds.width / 2;
+      const cy = bounds.y + bounds.height / 2;
+      ctx.translate(cx, cy);
+      ctx.rotate(element.angle);
+      ctx.translate(-cx, -cy);
+    }
     ctx.strokeStyle = CanvasRenderer.HOVER_COLOR;
     ctx.lineWidth = 1.5 / zoom;
     ctx.setLineDash([]);
@@ -1686,15 +1738,8 @@ export class CanvasRenderer {
     hoveredAnchor: string | null,
   ): void {
     const zoom = this.viewport.getViewport().zoom;
-    const cx = element.x + element.width / 2;
-    const cy = element.y + element.height / 2;
-
-    const anchors = [
-      { position: 'top', x: cx, y: element.y },
-      { position: 'right', x: element.x + element.width, y: cy },
-      { position: 'bottom', x: cx, y: element.y + element.height },
-      { position: 'left', x: element.x, y: cy },
-    ];
+    // Same anchors the hit-test uses (turned with rotated shapes)
+    const anchors = getAnchorPoints(element);
 
     for (const anchor of anchors) {
       const isHovered = hoveredAnchor === anchor.position;

@@ -338,6 +338,48 @@ test.describe('Resizing', () => {
   });
 });
 
+test.describe('Rotating', () => {
+  test.beforeEach(async ({ page }) => {
+    await mockAuthAndOpenEditor(page);
+  });
+
+  // The rotation handle sits 22px above the selection outline (itself 4px out)
+  test('the handle above the selection turns the shape; one undo step', async ({ page }) => {
+    const rect = await drawRect(page, 200, 200, 400, 300);
+    const cx = rect.x + rect.width / 2;
+    const cy = rect.y + rect.height / 2;
+    const box = await canvasBox(page);
+    await page.mouse.move(box.x + cx, box.y + rect.y - 26);
+    await expect(page.locator('canvas').last()).toHaveCSS('cursor', 'grab');
+
+    // A quarter turn clockwise: from straight above the centre to its right
+    await drag(page, cx, rect.y - 26, cx + 120, cy);
+    await expect
+      .poll(async () => ((await element(page, rect.id)) as El & { angle: number }).angle)
+      .toBeCloseTo(Math.PI / 2, 5);
+    // It turned in place
+    expect(await element(page, rect.id)).toMatchObject({ x: rect.x, y: rect.y, width: rect.width });
+
+    await page.keyboard.press(`${mod}+z`);
+    await expect
+      .poll(async () => ((await element(page, rect.id)) as El & { angle: number }).angle)
+      .toBe(0);
+  });
+
+  test('Shift turns in 15° steps', async ({ page }) => {
+    const rect = await drawRect(page, 200, 200, 400, 300);
+    const cx = rect.x + rect.width / 2;
+    const cy = rect.y + rect.height / 2;
+    await page.keyboard.down('Shift');
+    // atan2(-40, 100) ≈ -21.8° from "up" is +68.2° → snaps to 75°
+    await drag(page, cx, rect.y - 26, cx + 100, cy - 40);
+    await page.keyboard.up('Shift');
+    await expect
+      .poll(async () => ((await element(page, rect.id)) as El & { angle: number }).angle)
+      .toBeCloseTo((75 * Math.PI) / 180, 5);
+  });
+});
+
 test.describe('Selecting', () => {
   test.beforeEach(async ({ page }) => {
     await mockAuthAndOpenEditor(page);

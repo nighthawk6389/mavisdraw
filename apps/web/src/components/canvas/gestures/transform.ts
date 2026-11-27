@@ -61,6 +61,79 @@ export function snapVectorAngle(vector: Point, step = ANGLE_STEP): Point {
   return { x: Math.abs(x) < 1e-9 ? 0 : x, y: Math.abs(y) < 1e-9 ? 0 : y };
 }
 
+/** Rotate `p` around `centre` by `angle` radians (clockwise on screen, y down). */
+export function rotatePoint(p: Point, centre: Point, angle: number): Point {
+  if (angle === 0) return { x: p.x, y: p.y };
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const dx = p.x - centre.x;
+  const dy = p.y - centre.y;
+  return { x: centre.x + dx * cos - dy * sin, y: centre.y + dx * sin + dy * cos };
+}
+
+/** Angle normalised to [0, 2π), with float dust around 0 removed. */
+export function normalizeAngle(angle: number): number {
+  const full = Math.PI * 2;
+  let a = angle % full;
+  if (a < 0) a += full;
+  if (Math.abs(a) < 1e-9 || Math.abs(a - full) < 1e-9) return 0;
+  return a;
+}
+
+/**
+ * Rotation delta for a rotation gesture: how far the pointer has turned
+ * around `centre` since `start`. With `snap` (Shift), the resulting angle of
+ * `baseAngle + delta` lands on a 15° step.
+ */
+export function rotationDelta(
+  centre: Point,
+  start: Point,
+  pointer: Point,
+  baseAngle: number,
+  snap: boolean,
+): number {
+  const delta =
+    Math.atan2(pointer.y - centre.y, pointer.x - centre.x) -
+    Math.atan2(start.y - centre.y, start.x - centre.x);
+  if (!snap) return delta;
+  return snapAngle(baseAngle + delta) - baseAngle;
+}
+
+/**
+ * Resize a box that is drawn rotated by `angle` around its centre. The drag
+ * happens in the box's own (unrotated) frame, and the result is positioned so
+ * the fixed handle stays exactly where it was on screen (Excalidraw, tldraw).
+ * Returns the new unrotated box (to be drawn rotated by the same angle).
+ */
+export function resizeRotatedBox(
+  start: Bounds,
+  angle: number,
+  handle: BoxHandle,
+  worldDelta: Point,
+  options: ResizeOptions,
+): Bounds {
+  const local = rotatePoint(worldDelta, { x: 0, y: 0 }, -angle);
+  const result = resizeBox(start, handle, local, options);
+  const startCentre = { x: start.x + start.width / 2, y: start.y + start.height / 2 };
+  const boxCentre = {
+    x: result.box.x + result.box.width / 2,
+    y: result.box.y + result.box.height / 2,
+  };
+  // The new centre, in world space, is the old one plus the local shift turned by the angle
+  const shift = rotatePoint(
+    { x: boxCentre.x - startCentre.x, y: boxCentre.y - startCentre.y },
+    { x: 0, y: 0 },
+    angle,
+  );
+  const centre = { x: startCentre.x + shift.x, y: startCentre.y + shift.y };
+  return {
+    x: centre.x - result.box.width / 2,
+    y: centre.y - result.box.height / 2,
+    width: result.box.width,
+    height: result.box.height,
+  };
+}
+
 export interface BoxModifiers {
   /** Shift: square / circle while drawing; keep proportions while resizing. */
   keepAspect: boolean;
