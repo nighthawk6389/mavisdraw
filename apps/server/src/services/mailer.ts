@@ -208,6 +208,24 @@ Reply: ${input.link}`;
 }
 
 /** Confirm a new account's email address (needed before invites to it are granted). */
+export function passwordResetEmail(input: { to: string; name: string; link: string }): Email {
+  const subject = 'Reset your MavisDraw password';
+  const text = `Hi ${input.name},
+
+Someone (hopefully you) asked to reset the password of the MavisDraw account for ${input.to}:
+${input.link}
+
+The link works once, for an hour. Resetting signs out every session of this account.
+If you didn't ask, ignore this email: your password stays as it is.`;
+  const html = layout(
+    'Reset your password',
+    `<p>Hi ${escapeHtml(input.name)}, someone (hopefully you) asked to reset the password of the MavisDraw account for <strong>${escapeHtml(input.to)}</strong>.</p><p>The link works once, for an hour. Resetting signs out every session of this account.</p>`,
+    { label: 'Choose a new password', url: input.link },
+    "If you didn't ask, ignore this email: your password stays as it is.",
+  );
+  return { to: input.to, subject, text, html };
+}
+
 export function verifyEmail(input: { to: string; name: string; link: string }): Email {
   const subject = 'Confirm your email for MavisDraw';
   const text = `Hi ${input.name},

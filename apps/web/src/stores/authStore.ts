@@ -8,6 +8,7 @@ import {
   setAccessToken,
   setOnUnauthorized,
   ApiError,
+  type AuthResponse,
 } from '../services/api';
 
 export interface AuthUser {
@@ -29,6 +30,8 @@ interface AuthState {
 
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, name: string) => Promise<void>;
+  /** Signed in some other way (e.g. a password reset): take the session. */
+  signedIn: (response: AuthResponse) => void;
   logout: () => Promise<void>;
   initialize: () => Promise<void>;
   clearError: () => void;
@@ -63,6 +66,11 @@ export const useAuthStore = create<AuthState>((set, _get) => {
         set({ isLoading: false, error: message });
         throw err;
       }
+    },
+
+    signedIn: (response: AuthResponse) => {
+      setAccessToken(response.accessToken);
+      set({ user: response.user, isAuthenticated: true, isLoading: false, error: null });
     },
 
     register: async (email: string, password: string, name: string) => {

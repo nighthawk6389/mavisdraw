@@ -77,6 +77,18 @@ MAIL_FROM=MavisDraw <mavisdraw@example.com>
 your own email). Opening it confirms their address and adds them. Invites only reach accounts that
 have confirmed their address, so that nobody can collect invites by signing up with someone else's.
 
+### Forgotten passwords
+
+With email, "Forgot your password?" on the sign-in page sends a link that works once, for an hour.
+Resetting signs out every session of the account, and confirms the address. That's also how the
+real owner of an address takes back an account someone else registered with it.
+
+Without email, make the link yourself and send it to them:
+
+```sh
+docker compose exec api node apps/server/dist/cli/resetLink.js someone@example.com
+```
+
 ## GitHub
 
 All optional; see `.env.example` for every setting.

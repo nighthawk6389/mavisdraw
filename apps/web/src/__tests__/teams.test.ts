@@ -38,6 +38,7 @@ describe('routing', () => {
     expect(parseRoute('/share/tok123')).toEqual({ name: 'share', token: 'tok123' });
     // The confirmation link (its token is in the query string)
     expect(parseRoute('/verify-email')).toEqual({ name: 'verifyEmail' });
+    expect(parseRoute('/reset-password')).toEqual({ name: 'resetPassword' });
     // Unknown or incomplete paths fall back to the dashboard
     expect(parseRoute('/p')).toEqual({ name: 'dashboard' });
     expect(parseRoute('/nope')).toEqual({ name: 'dashboard' });

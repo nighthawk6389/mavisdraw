@@ -8,13 +8,15 @@ import { useSyncExternalStore } from 'react';
  *   /share/:token              accept a share link, then open the project
  *   /invite/:token             accept an email invite (project or workspace)
  *   /verify-email?token=…      confirm the account's email address
+ *   /reset-password?token=…    choose a new password (from the emailed link)
  */
 export type Route =
   | { name: 'dashboard' }
   | { name: 'project'; projectId: string; diagramId: string | null }
   | { name: 'share'; token: string }
   | { name: 'invite'; token: string }
-  | { name: 'verifyEmail' };
+  | { name: 'verifyEmail' }
+  | { name: 'resetPassword' };
 
 export function parseRoute(pathname: string): Route {
   const parts = pathname.split('/').filter(Boolean).map(decodeURIComponent);
@@ -28,6 +30,7 @@ export function parseRoute(pathname: string): Route {
   if (parts[0] === 'share' && parts[1]) return { name: 'share', token: parts[1] };
   if (parts[0] === 'invite' && parts[1]) return { name: 'invite', token: parts[1] };
   if (parts[0] === 'verify-email') return { name: 'verifyEmail' };
+  if (parts[0] === 'reset-password') return { name: 'resetPassword' };
   return { name: 'dashboard' };
 }
 

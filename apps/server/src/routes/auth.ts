@@ -7,8 +7,14 @@ import {
   refreshTokens,
   logout,
   getUserById,
+  signInUser,
   AuthError,
 } from '../services/authService.js';
+import {
+  PasswordResetError,
+  requestPasswordReset,
+  resetPassword,
+} from '../services/passwordReset.js';
 import { claimInvitesForEmail } from '../services/workspaceService.js';
 import {
   confirmEmail,
@@ -42,7 +48,11 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     }
 
     try {
-      const { user, tokens } = await registerUser(parsed.data.email, parsed.data.password, parsed.data.name);
+      const { user, tokens } = await registerUser(
+        parsed.data.email,
+        parsed.data.password,
+        parsed.data.name,
+      );
       // Invitations to this address wait until it's confirmed as theirs
       // (anyone can type any address into a sign-up form)
       await sendVerificationEmail(user);
@@ -90,6 +100,41 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(err.statusCode).send({ error: err.message });
       }
       request.log.error({ err }, 'Unexpected error during login');
+      throw err;
+    }
+  });
+
+  // Forgot password: email a reset link. The answer never says whether the
+  // address has an account.
+  app.post('/api/auth/forgot-password', { preHandler: [authRateLimit] }, async (request, reply) => {
+    const parsed = z.object({ email: z.string().email().max(255) }).safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'Enter a valid email address' });
+    await requestPasswordReset(parsed.data.email);
+    return reply.send({ ok: true });
+  });
+
+  // Set a new password from the emailed link: every session is signed out,
+  // and this browser is signed in
+  app.post('/api/auth/reset-password', { preHandler: [authRateLimit] }, async (request, reply) => {
+    const parsed = z
+      .object({ token: z.string().min(1).max(2000), password: z.string().min(8).max(128) })
+      .safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'Choose a password of at least 8 characters' });
+    }
+    try {
+      const { userId } = await resetPassword(parsed.data.token, parsed.data.password);
+      const { user, tokens } = await signInUser(userId);
+      reply.setCookie('refreshToken', tokens.refreshToken, {
+        httpOnly: true,
+        secure: config.cookieSecure,
+        sameSite: 'lax',
+        path: '/api/auth',
+        maxAge: 30 * 24 * 60 * 60,
+      });
+      return reply.send({ user, accessToken: tokens.accessToken });
+    } catch (err) {
+      if (err instanceof PasswordResetError) return reply.code(400).send({ error: err.message });
       throw err;
     }
   });

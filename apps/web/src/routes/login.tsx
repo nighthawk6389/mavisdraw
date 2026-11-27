@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import LoginForm from '../components/auth/LoginForm';
 import SignupForm from '../components/auth/SignupForm';
+import ForgotPasswordForm from '../components/auth/ForgotPasswordForm';
 import type { InviteInfo } from '../services/api';
 
 export default function LoginPage({
@@ -12,7 +13,7 @@ export default function LoginPage({
   invite?: InviteInfo | null;
 }) {
   // An invitation usually means a new account
-  const [mode, setMode] = useState<'login' | 'signup'>(invite ? 'signup' : 'login');
+  const [mode, setMode] = useState<'login' | 'signup' | 'forgot'>(invite ? 'signup' : 'login');
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex flex-col items-center justify-center p-4">
@@ -43,7 +44,12 @@ export default function LoginPage({
       )}
 
       {mode === 'login' ? (
-        <LoginForm onSwitchToSignup={() => setMode('signup')} />
+        <LoginForm
+          onSwitchToSignup={() => setMode('signup')}
+          onForgotPassword={() => setMode('forgot')}
+        />
+      ) : mode === 'forgot' ? (
+        <ForgotPasswordForm onBack={() => setMode('login')} />
       ) : (
         <SignupForm onSwitchToLogin={() => setMode('login')} />
       )}

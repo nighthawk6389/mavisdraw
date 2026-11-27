@@ -45,6 +45,7 @@ import { openImportDialog } from './components/export/ImportHandler';
 import { useDiagramStore } from './stores/diagramStore';
 import LoginPage from './routes/login';
 import VerifyEmailPage from './routes/verifyEmail';
+import ResetPasswordPage from './routes/resetPassword';
 import Dashboard from './routes/dashboard';
 import {
   apiAcceptInvite,
@@ -736,8 +737,16 @@ export default function App() {
     );
   }
 
-  // The confirmation link works signed in or out
+  // The confirmation and reset links work signed in or out
   if (route.name === 'verifyEmail') return <VerifyEmailPage />;
+  if (route.name === 'resetPassword') {
+    return (
+      <>
+        <ResetPasswordPage />
+        <Toaster />
+      </>
+    );
+  }
 
   if (!isAuthenticated) {
     // Keyed: once the invite details arrive, open on "sign up" (it usually is a new account)

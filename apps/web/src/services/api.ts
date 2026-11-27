@@ -185,6 +185,19 @@ export function apiGetServerConfig(): Promise<{ mail: boolean }> {
   return apiFetch('/api/config');
 }
 
+/** Email a password reset link (the answer is the same whether or not the account exists). */
+export async function apiForgotPassword(email: string): Promise<void> {
+  await apiFetch('/api/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) });
+}
+
+/** Set a new password from the emailed link; signs this browser in. */
+export function apiResetPassword(token: string, password: string): Promise<AuthResponse> {
+  return apiFetch<AuthResponse>('/api/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ token, password }),
+  });
+}
+
 /** Confirm an email address from the emailed link (no sign-in needed). */
 export async function apiVerifyEmail(
   token: string,

@@ -3,9 +3,11 @@ import { useAuthStore } from '../../stores/authStore';
 
 interface LoginFormProps {
   onSwitchToSignup: () => void;
+  /** "Forgot your password?" */
+  onForgotPassword?: () => void;
 }
 
-export default function LoginForm({ onSwitchToSignup }: LoginFormProps) {
+export default function LoginForm({ onSwitchToSignup, onForgotPassword }: LoginFormProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const { login, isLoading, error, clearError } = useAuthStore();
@@ -62,6 +64,15 @@ export default function LoginForm({ onSwitchToSignup }: LoginFormProps) {
               className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               placeholder="Enter your password"
             />
+            {onForgotPassword && (
+              <button
+                type="button"
+                onClick={onForgotPassword}
+                className="mt-1 text-xs text-blue-600 hover:text-blue-500"
+              >
+                Forgot your password?
+              </button>
+            )}
           </div>
 
           <button

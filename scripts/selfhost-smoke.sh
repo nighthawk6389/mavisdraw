@@ -98,11 +98,26 @@ curl -fsS -D "$work/h" -o "$work/map.svg" "$BASE/api/embed/$embed/svg" || fail "
 grep -qi '^content-type: image/svg+xml' "$work/h" || fail "the embed isn't an SVG"
 ok "public embed renders"
 
+# Without email, whoever runs the server makes reset links from the command line
+link=$(docker compose exec -T api node apps/server/dist/cli/resetLink.js "$email" | tr -d '\r')
+case "$link" in
+  "$BASE/reset-password?token="*) ;;
+  *) fail "the reset-link command printed: $link" ;;
+esac
+reset_token=$(printf '%s' "$link" | sed -E 's/.*token=//' | sed 's/%2E/./g')
+curl -fsS -o /dev/null -H 'Content-Type: application/json' \
+  -d "{\"token\":\"$reset_token\",\"password\":\"new-correct-horse\"}" \
+  "$BASE/api/auth/reset-password" || fail "resetting with the command-line link"
+curl -fsS -o /dev/null -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$email\",\"password\":\"new-correct-horse\"}" \
+  "$BASE/api/auth/login" || fail "signing in with the new password"
+ok "an admin's reset link (no email) works"
+
 # Data survives a full stop and start (migrations rerun and do nothing)
 docker compose down >/dev/null 2>&1
 up
 curl -fsS -o /dev/null -H 'Content-Type: application/json' \
-  -d "{\"email\":\"$email\",\"password\":\"correct-horse-battery\"}" \
+  -d "{\"email\":\"$email\",\"password\":\"new-correct-horse\"}" \
   "$BASE/api/auth/login" || fail "signing in after a restart"
 curl -fsS -H "$auth" "$BASE/api/projects/$project" >/dev/null 2>&1 \
   || curl -fsS -o /dev/null "$BASE/api/embed/$embed/svg" || fail "the project after a restart"

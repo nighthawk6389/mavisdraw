@@ -1,13 +1,7 @@
 import { useEffect, useState } from 'react';
-import { apiGetServerConfig, apiResendVerification } from '../../services/api';
+import { apiResendVerification } from '../../services/api';
+import { serverSendsEmail } from '../../services/serverConfig';
 import { useAuthStore } from '../../stores/authStore';
-
-/** Whether this server sends email (asked once per page load). */
-let mailEnabled: Promise<boolean> | null = null;
-const sendsEmail = () =>
-  (mailEnabled ??= apiGetServerConfig()
-    .then((c) => c.mail)
-    .catch(() => true));
 
 /**
  * Until the account confirms its email, invitations to that address wait —
@@ -22,7 +16,7 @@ export default function ConfirmEmailBanner() {
   useEffect(() => {
     if (!unconfirmed) return;
     let live = true;
-    void sendsEmail().then((m) => live && setMail(m));
+    void serverSendsEmail().then((m) => live && setMail(m));
     return () => {
       live = false;
     };

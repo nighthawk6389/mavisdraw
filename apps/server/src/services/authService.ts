@@ -172,7 +172,10 @@ export function verifyAccessToken(token: string): TokenPayload {
   try {
     return jwt.verify(token, JWT_SECRET) as TokenPayload;
   } catch (err) {
-    console.error('[authService] verifyAccessToken failed:', err instanceof Error ? err.message : err);
+    console.error(
+      '[authService] verifyAccessToken failed:',
+      err instanceof Error ? err.message : err,
+    );
     throw new AuthError('Invalid or expired access token', 401);
   }
 }
@@ -198,6 +201,15 @@ async function createSession(userId: string, email: string): Promise<AuthTokens>
   });
 
   return { accessToken, refreshToken };
+}
+
+/** Start a session for someone already proven to be them (e.g. a password reset). */
+export async function signInUser(
+  userId: string,
+): Promise<{ user: UserResponse; tokens: AuthTokens }> {
+  const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
+  if (!user) throw new AuthError('User not found', 404);
+  return { user: toUserResponse(user), tokens: await createSession(user.id, user.email) };
 }
 
 export class AuthError extends Error {
