@@ -40,6 +40,7 @@ import { useAutoSave, type SaveStatus } from './hooks/useAutoSave';
 import { useSelectionStore } from './stores/selectionStore';
 import { useElementsStore } from './stores/elementsStore';
 import { useAuthStore } from './stores/authStore';
+import { signOut } from './services/signOut';
 import { useUIStore } from './stores/uiStore';
 import { openImportDialog } from './components/export/ImportHandler';
 import { useDiagramStore } from './stores/diagramStore';
@@ -63,6 +64,7 @@ import { useModelStore } from './stores/modelStore';
 import EmptyCanvasHint from './components/templates/EmptyCanvasHint';
 import { captureStartupAction, runStartupAction, takeStartupAction } from './templates/startup';
 import {
+  announceRestore,
   applyJournal,
   readJournal,
   startJournal,
@@ -137,7 +139,7 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
 
   const selectedIds = useSelectionStore((s) => s.selectedIds);
   const activeDiagramId = useDiagramStore((s) => s.activeDiagramId);
-  const { user, logout } = useAuthStore();
+  const user = useAuthStore((s) => s.user);
 
   const { saveStatus, manualSave } = useAutoSave(activeDiagramId);
   const showAgentChat = useUIStore((s) => s.showAgentChat);
@@ -346,7 +348,10 @@ function EditorView({ onBackToDashboard }: { onBackToDashboard: () => void }) {
           )}
           <NotificationBell />
           <span className="text-xs text-gray-500">{user?.name}</span>
-          <button onClick={logout} className="text-xs text-gray-400 hover:text-gray-600">
+          <button
+            onClick={() => void signOut()}
+            className="text-xs text-gray-400 hover:text-gray-600"
+          >
             Sign out
           </button>
         </div>
@@ -569,28 +574,17 @@ async function loadProject(projectId: string, diagramId: string | null): Promise
 
   // Edits a previous session couldn't save (tab closed offline, crash...):
   // bring them back if nobody changed those elements since
-  const saved = (await readJournal(projectId)).filter((e) => newDiagrams.has(e.diagramId));
-  if (saved.length > 0) {
+  const userId = useAuthStore.getState().user?.id;
+  if (userId) {
+    const journal = await readJournal(userId, projectId);
+    const saved = journal.entries.filter((e) => newDiagrams.has(e.diagramId));
     const levels = Array.from(new Set(saved.map((e) => e.diagramId))).filter((d) => d !== rootId);
-    await Promise.all(levels.map((d) => loadDiagramElements(d).catch(() => undefined)));
-    const { pending, result } = applyJournal(saved);
-    startJournal(projectId, pending);
-    if (result.restored > 0) {
-      toast(
-        `Recovered ${result.restored} unsaved ${result.restored === 1 ? 'change' : 'changes'} from your last session.`,
-        'success',
-        undefined,
-        10_000, // worth reading: it's about their work
-      );
-    }
-    if (result.conflicts > 0) {
-      toast(
-        `${result.conflicts} of your unsaved ${result.conflicts === 1 ? 'change was' : 'changes were'} skipped: a teammate changed ${result.conflicts === 1 ? 'that shape' : 'those shapes'} since.`,
-        'info',
-      );
-    }
-  } else {
-    startJournal(projectId);
+    // A level that doesn't load keeps its edits until it does
+    const failed = new Set<string>();
+    await Promise.all(levels.map((d) => loadDiagramElements(d).catch(() => failed.add(d))));
+    const { pending, result } = applyJournal(saved, (d) => !failed.has(d));
+    startJournal(userId, projectId, pending, journal.adopted);
+    announceRestore(result);
   }
 
   // ?template=… / ?start=repo (a project just created from the dashboard)

@@ -9,6 +9,7 @@ import {
 import { useElementsStore, withoutHistory } from '../stores/elementsStore';
 import { useDiagramStore } from '../stores/diagramStore';
 import { recordSaved } from './saveTracker';
+import { applyDeferred } from './offlineJournal';
 
 /**
  * Keeps the diagram hierarchy in sync with the server:
@@ -128,6 +129,8 @@ export function loadDiagramElements(diagramId: string): Promise<void> {
         useDiagramStore.getState().diagrams.get(diagramId)?.updatedAt,
       );
       loaded.add(diagramId);
+      // Unsaved edits kept from a session in which this level didn't load
+      applyDeferred(diagramId);
     } catch (err) {
       // Created locally and not yet on the server: nothing to load
       if (err instanceof ApiError && err.statusCode === 404) {

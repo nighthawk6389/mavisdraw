@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuthStore } from '../stores/authStore';
+import { signOut } from '../services/signOut';
 import ConfirmEmailBanner from '../components/auth/ConfirmEmailBanner';
 import { navigate, projectPath } from '../routing';
 import {
@@ -44,7 +45,7 @@ function initialSpace(): Space {
 }
 
 export default function Dashboard({ onOpenProject }: DashboardProps) {
-  const { user, logout } = useAuthStore();
+  const user = useAuthStore((s) => s.user);
   const [projects, setProjects] = useState<ProjectResponse[]>([]);
   const [workspaces, setWorkspaces] = useState<WorkspaceResponse[]>([]);
   const [space, setSpace] = useState<Space>(initialSpace);
@@ -244,7 +245,7 @@ export default function Dashboard({ onOpenProject }: DashboardProps) {
             <NotificationBell />
             <span className="text-sm text-gray-600">{user?.name}</span>
             <button
-              onClick={logout}
+              onClick={() => void signOut()}
               className="text-sm text-gray-500 transition-colors hover:text-gray-700"
             >
               Sign out

@@ -2,8 +2,9 @@ import { create } from 'zustand';
 import type { MavisElement } from '@mavisdraw/types';
 import { useElementsStore, isApplyingUnrecorded, withoutHistory } from '../stores/elementsStore';
 import { sameElementContent } from '../stores/history';
+import { toast } from '../stores/toastStore';
 import { savedVersions } from './saveTracker';
-import { kvDelete, kvGet, kvSet } from './localStore';
+import { kvDelete, kvGet, kvKeys, kvSet } from './localStore';
 
 /**
  * Unsaved-edit journal: every local edit the server hasn't acknowledged yet
@@ -11,6 +12,13 @@ import { kvDelete, kvGet, kvSet } from './localStore';
  * tab (or lose the network, or crash) and the edits come back the next time
  * the project is opened — and are only re-applied if nobody changed those
  * elements in the meantime.
+ *
+ * Each tab keeps its own journal, per account and project
+ * (`journal:<user>:<project>:<tab>`): two tabs never overwrite each other's,
+ * and another account on the same browser never sees them. A tab opening a
+ * project takes over the journals of tabs that are gone (closed, crashed,
+ * reloaded); one whose tab is still open is left to it. Signing out
+ * discards the account's journals (after asking, see `unsavedOnDevice`).
  */
 
 export interface JournalEntry {
@@ -19,6 +27,8 @@ export interface JournalEntry {
   element: MavisElement;
   /** Server version when this user started editing it (undefined: new element). */
   base?: number;
+  /** Not re-applied yet: its diagram didn't load when the project opened. */
+  deferred?: boolean;
 }
 
 interface StoredJournal {
@@ -28,18 +38,96 @@ interface StoredJournal {
   entries: JournalEntry[];
 }
 
+// ── Which tab ────────────────────────────────────────────────
+
+function randomId(): string {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    // Not a secure context (a self-hosted server on plain http)
+    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+  }
+}
+
+/** This page's id: a reload is a new page, which takes over the old page's journal. */
+const TAB_ID = randomId();
+const TAB_LOCK_PREFIX = 'mavisdraw-tab:';
+const TAB_CHANNEL = 'mavisdraw-tabs';
+
+let announced = false;
+
+/** Let other tabs see this one is open: it holds a lock until the page goes away. */
+function announceTab(): void {
+  if (announced) return;
+  announced = true;
+  try {
+    void navigator.locks?.request(
+      `${TAB_LOCK_PREFIX}${TAB_ID}`,
+      () => new Promise<never>(() => {}),
+    );
+  } catch {
+    // No Web Locks: the channel below answers instead
+  }
+  try {
+    const channel = new BroadcastChannel(TAB_CHANNEL);
+    channel.onmessage = (e: MessageEvent<{ type?: string }>) => {
+      if (e.data?.type === 'who') channel.postMessage({ type: 'here', tab: TAB_ID });
+    };
+  } catch {
+    // Neither: every other tab's journal is taken over
+  }
+}
+
+/** The tabs open now (this one included), or null if this browser can't tell. */
+async function openTabs(): Promise<Set<string> | null> {
+  try {
+    if (navigator.locks?.query) {
+      const { held = [] } = await navigator.locks.query();
+      return new Set(
+        held
+          .map((lock) => lock.name ?? '')
+          .filter((name) => name.startsWith(TAB_LOCK_PREFIX))
+          .map((name) => name.slice(TAB_LOCK_PREFIX.length)),
+      );
+    }
+  } catch {
+    // Fall through to asking over the channel
+  }
+  try {
+    const channel = new BroadcastChannel(TAB_CHANNEL);
+    const tabs = new Set<string>();
+    channel.onmessage = (e: MessageEvent<{ type?: string; tab?: unknown }>) => {
+      if (e.data?.type === 'here' && typeof e.data.tab === 'string') tabs.add(e.data.tab);
+    };
+    channel.postMessage({ type: 'who' });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    channel.close();
+    return tabs;
+  } catch {
+    return null;
+  }
+}
+
+// ── Where journals are kept ──────────────────────────────────
+
+const prefixFor = (userId: string, projectId?: string) =>
+  projectId ? `journal:${userId}:${projectId}:` : `journal:${userId}:`;
+const keyFor = (userId: string, projectId: string) => `${prefixFor(userId, projectId)}${TAB_ID}`;
+const tabOf = (key: string) => key.slice(key.lastIndexOf(':') + 1);
+
 /**
  * Synchronous backup written when the page is hidden or closed: an
  * IndexedDB write still in flight when the tab goes away may never land,
  * a localStorage write does. Skipped if it doesn't fit (images can be big).
  */
-const backupKey = (projectId: string) => `mavisdraw:journal:${projectId}`;
+const backupKey = (key: string) => `mavisdraw:${key}`;
 
-function writeBackup(id: string): void {
+/** Write this journal's backup; whether it now holds every entry. */
+function writeBackup(key: string): boolean {
   try {
     if (entries.size === 0) {
-      localStorage.removeItem(backupKey(id));
-      return;
+      localStorage.removeItem(backupKey(key));
+      return true;
     }
     const payload: StoredJournal = {
       v: 1,
@@ -49,19 +137,96 @@ function writeBackup(id: string): void {
     const json = JSON.stringify(payload);
     // Big journals (inline images) stay in IndexedDB only
     if (json.length > MAX_BACKUP_CHARS) {
-      localStorage.removeItem(backupKey(id));
-      return;
+      localStorage.removeItem(backupKey(key));
+      return false;
     }
-    localStorage.setItem(backupKey(id), json);
+    localStorage.setItem(backupKey(key), json);
+    return true;
   } catch {
     // Quota exceeded or storage blocked: the IndexedDB copy is all we have
+    return false;
   }
 }
+
+function readBackup(key: string): StoredJournal | null {
+  try {
+    const raw = localStorage.getItem(backupKey(key));
+    return raw ? (JSON.parse(raw) as StoredJournal) : null;
+  } catch {
+    return null;
+  }
+}
+
+function backupKeysWith(prefix: string): string[] {
+  const keys: string[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k?.startsWith(backupKey(prefix))) keys.push(k.slice(backupKey('').length));
+    }
+  } catch {
+    // Storage blocked
+  }
+  return keys;
+}
+
+const valid = (j: StoredJournal | null | undefined): j is StoredJournal =>
+  j?.v === 1 && Array.isArray(j.entries);
+
+/** Every journal under a prefix, each from whichever of its two copies was written last. */
+async function readAll(prefix: string): Promise<Map<string, StoredJournal>> {
+  const keys = new Set([...(await kvKeys(prefix)), ...backupKeysWith(prefix)]);
+  const out = new Map<string, StoredJournal>();
+  for (const key of keys) {
+    const newest = [await kvGet<StoredJournal>(key), readBackup(key)]
+      .filter(valid)
+      .sort((a, b) => (b.savedAt ?? 0) - (a.savedAt ?? 0))[0];
+    if (newest) out.set(key, newest);
+  }
+  return out;
+}
+
+async function dropKeys(keys: string[], { backups = true, stored = true } = {}): Promise<void> {
+  if (backups) {
+    for (const key of keys) {
+      try {
+        localStorage.removeItem(backupKey(key));
+      } catch {
+        // Storage blocked
+      }
+    }
+  }
+  if (stored) await Promise.all(keys.map((key) => kvDelete(key)));
+}
+
+/** Journals from before they were per account and tab: whose they were can't be known. */
+function dropOldJournal(projectId: string): void {
+  void kvDelete(`journal:${projectId}`);
+  try {
+    localStorage.removeItem(`mavisdraw:journal:${projectId}`);
+  } catch {
+    // Storage blocked
+  }
+}
+
+// ── This tab's journal ───────────────────────────────────────
 
 const MAX_BACKUP_CHARS = 1_500_000;
 const BACKUP_INTERVAL_MS = 100;
 let lastBackup = 0;
 let backupTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** For the UI: how many edits are only on this device right now. */
+export const useJournalStore = create<{ pending: number }>(() => ({ pending: 0 }));
+
+let journalKey: string | null = null;
+let ownerId: string | null = null;
+let entries = new Map<string, JournalEntry>();
+let unsubscribe: (() => void) | null = null;
+
+function publish(): void {
+  useJournalStore.setState({ pending: entries.size });
+}
 
 /**
  * Keep the synchronous backup current: the first change is written at once
@@ -69,12 +234,12 @@ let backupTimer: ReturnType<typeof setTimeout> | null = null;
  * 100 ms with the latest state.
  */
 function backupSoon(): void {
-  const id = projectId;
-  if (!id) return;
+  const key = journalKey;
+  if (!key) return;
   const wait = BACKUP_INTERVAL_MS - (Date.now() - lastBackup);
   if (wait <= 0 && !backupTimer) {
     lastBackup = Date.now();
-    writeBackup(id);
+    writeBackup(key);
     return;
   }
   if (backupTimer) return;
@@ -82,7 +247,7 @@ function backupSoon(): void {
     () => {
       backupTimer = null;
       lastBackup = Date.now();
-      if (projectId === id) writeBackup(id);
+      if (journalKey === key) writeBackup(key);
     },
     Math.max(0, wait),
   );
@@ -90,33 +255,11 @@ function backupSoon(): void {
 
 /** A gesture ended (drag released, key up): its final state is backed up now. */
 function flushBackup(): void {
-  if (!backupTimer || !projectId) return;
+  if (!backupTimer || !journalKey) return;
   clearTimeout(backupTimer);
   backupTimer = null;
   lastBackup = Date.now();
-  writeBackup(projectId);
-}
-
-function readBackup(id: string): StoredJournal | null {
-  try {
-    const raw = localStorage.getItem(backupKey(id));
-    return raw ? (JSON.parse(raw) as StoredJournal) : null;
-  } catch {
-    return null;
-  }
-}
-
-/** For the UI: how many edits are only on this device right now. */
-export const useJournalStore = create<{ pending: number }>(() => ({ pending: 0 }));
-
-const keyFor = (projectId: string) => `journal:${projectId}`;
-
-let projectId: string | null = null;
-let entries = new Map<string, JournalEntry>();
-let unsubscribe: (() => void) | null = null;
-
-function publish(): void {
-  useJournalStore.setState({ pending: entries.size });
+  writeBackup(journalKey);
 }
 
 /**
@@ -129,50 +272,65 @@ let writing: Promise<void> | null = null;
 let queued = false;
 
 function persistSoon(): void {
-  if (!projectId) return;
+  if (!journalKey) return;
   if (writing) {
     queued = true;
     return;
   }
-  const id = projectId;
-  writing = persistNow(id).finally(() => {
+  const key = journalKey;
+  writing = persistNow(key).finally(() => {
     writing = null;
-    if (queued && projectId === id) {
+    if (queued && journalKey === key) {
       queued = false;
       persistSoon();
     }
   });
 }
 
-async function persistNow(id: string): Promise<void> {
-  if (entries.size === 0) await kvDelete(keyFor(id));
+async function persistNow(key: string): Promise<void> {
+  if (entries.size === 0) await kvDelete(key);
   else
-    await kvSet(keyFor(id), {
+    await kvSet(key, {
       v: 1,
       savedAt: Date.now(),
       entries: Array.from(entries.values()),
     } satisfies StoredJournal);
   // Nothing left to save: the backup goes too
-  if (entries.size === 0) writeBackup(id);
+  if (entries.size === 0) writeBackup(key);
 }
 
 function flushOnHide(event?: Event): void {
-  if (!projectId) return;
+  if (!journalKey) return;
   if (event?.type !== 'pagehide' && document.visibilityState !== 'hidden') return;
-  writeBackup(projectId); // lands even if the tab is gone a moment later
-  void persistNow(projectId);
+  writeBackup(journalKey); // lands even if the tab is gone a moment later
+  void persistNow(journalKey);
 }
 
-/** Start journaling local edits in a project (after its contents have loaded). */
-export function startJournal(id: string, restored: JournalEntry[] = []): void {
+/**
+ * Start journaling local edits in a project (after its contents have
+ * loaded), starting from `restored`. `adopted`: the journals of closed tabs
+ * those came from, deleted once this tab's journal holds them.
+ */
+export function startJournal(
+  userId: string,
+  projectId: string,
+  restored: JournalEntry[] = [],
+  adopted: string[] = [],
+): void {
   stopJournal();
-  projectId = id;
+  announceTab();
+  const key = keyFor(userId, projectId);
+  journalKey = key;
+  ownerId = userId;
   entries = new Map(restored.map((e) => [e.element.id, e]));
   publish();
   // Outside the throttle: the first edit after opening must back up at once
   lastBackup = 0;
-  writeBackup(id);
-  persistSoon();
+  const backedUp = writeBackup(key);
+  const others = adopted.filter((k) => k !== key);
+  // The closed tabs' copies go once this journal holds their edits
+  if (backedUp) void dropKeys(others, { stored: false });
+  void persistNow(key).then(() => dropKeys(others));
 
   unsubscribe = useElementsStore.subscribe((state, prev) => {
     if (state.elements === prev.elements || isApplyingUnrecorded()) return;
@@ -213,15 +371,16 @@ export function stopJournal(): void {
   unsubscribe?.();
   unsubscribe = null;
   flushBackup();
-  if (queued && projectId) {
+  if (queued && journalKey) {
     queued = false;
-    void persistNow(projectId);
+    void persistNow(journalKey);
   }
   window.removeEventListener('visibilitychange', flushOnHide);
   window.removeEventListener('pagehide', flushOnHide);
   window.removeEventListener('pointerup', flushBackup, true);
   window.removeEventListener('keyup', flushBackup, true);
-  projectId = null;
+  journalKey = null;
+  ownerId = null;
   entries = new Map();
   publish();
 }
@@ -234,7 +393,8 @@ export function acknowledge(diagramId: string, serverElements?: MavisElement[]):
   const server = serverElements ? new Map(serverElements.map((el) => [el.id, el])) : null;
   let changed = false;
   for (const [id, entry] of entries) {
-    if (entry.diagramId !== diagramId) continue;
+    // A deferred edit isn't on the canvas yet, so the server can't have it
+    if (entry.diagramId !== diagramId || entry.deferred) continue;
     if (server) {
       const theirs = server.get(id);
       const done = entry.element.isDeleted
@@ -259,6 +419,33 @@ export function acknowledge(diagramId: string, serverElements?: MavisElement[]):
     persistSoon();
   }
 }
+
+// ── Signing out ──────────────────────────────────────────────
+
+/** How many edits this account has on this device that the server doesn't. */
+export async function unsavedOnDevice(userId: string): Promise<number> {
+  const all = await readAll(prefixFor(userId));
+  let count = 0;
+  for (const [key, journal] of all) {
+    if (key !== journalKey) count += journal.entries.length;
+  }
+  return count + (ownerId === userId ? entries.size : 0);
+}
+
+/** Forget this account's unsaved edits on this device (it's signing out). */
+export async function discardJournals(userId: string): Promise<void> {
+  if (ownerId === userId) {
+    entries = new Map();
+    queued = false;
+    stopJournal();
+  }
+  await writing?.catch(() => undefined);
+  const prefix = prefixFor(userId);
+  const keys = new Set([...(await kvKeys(prefix)), ...backupKeysWith(prefix)]);
+  await dropKeys(Array.from(keys));
+}
+
+// ── Bringing edits back ──────────────────────────────────────
 
 export type RestoreDecision = 'apply' | 'already-saved' | 'conflict';
 
@@ -285,44 +472,57 @@ export function decideRestore(
 export interface RestoreResult {
   restored: number;
   conflicts: number;
+  /** Kept for later: their diagram didn't load. */
+  deferred: number;
   /** Diagrams that have restored edits (need loading before applying). */
   diagrams: string[];
 }
 
-/** Read the journal a previous session left for this project. */
-export async function readJournal(id: string): Promise<JournalEntry[]> {
-  const stored = await kvGet<StoredJournal>(keyFor(id));
-  const backup = readBackup(id);
-  const valid = (j: StoredJournal | null | undefined): j is StoredJournal =>
-    j?.v === 1 && Array.isArray(j.entries);
-  // Whichever copy was written last
-  const newest = [stored, backup]
-    .filter(valid)
-    .sort((a, b) => (b.savedAt ?? 0) - (a.savedAt ?? 0))[0];
-  return newest?.entries ?? [];
+export interface SavedJournal {
+  entries: JournalEntry[];
+  /** The closed tabs' journals they came from (for `startJournal`). */
+  adopted: string[];
 }
 
+const newer = (a: MavisElement, b: MavisElement) =>
+  a.version !== b.version ? a.version > b.version : (a.updatedAt ?? 0) > (b.updatedAt ?? 0);
+
 /**
- * Re-apply a previous session's unsaved edits on top of what was just loaded
- * from the server (the diagrams they belong to must be loaded). Returns the
- * entries still pending (to keep journaling) and what happened.
+ * The unsaved edits this account left in a project on this device: from
+ * every tab that's gone (one still open keeps saving its own).
  */
-export function applyJournal(saved: JournalEntry[]): {
-  pending: JournalEntry[];
-  result: RestoreResult;
-} {
-  const pending: JournalEntry[] = [];
-  let restored = 0;
-  let conflicts = 0;
+export async function readJournal(userId: string, projectId: string): Promise<SavedJournal> {
+  dropOldJournal(projectId);
+  announceTab();
+  const [all, open] = await Promise.all([readAll(prefixFor(userId, projectId)), openTabs()]);
+  const byElement = new Map<string, JournalEntry>();
+  const adopted: string[] = [];
+  for (const [key, journal] of all) {
+    const tab = tabOf(key);
+    if (tab !== TAB_ID && open?.has(tab)) continue;
+    adopted.push(key);
+    for (const entry of journal.entries) {
+      const other = byElement.get(entry.element.id);
+      if (!other || newer(entry.element, other.element)) byElement.set(entry.element.id, entry);
+    }
+  }
+  return { entries: Array.from(byElement.values()), adopted };
+}
+
+/** Re-apply entries onto what's loaded; the rest are left out of `apply`. */
+function sortEntries(saved: JournalEntry[], isLoaded: (diagramId: string) => boolean) {
   const elements = useElementsStore.getState().elements;
-  const apply: MavisElement[] = [];
+  const apply: JournalEntry[] = [];
+  const deferred: JournalEntry[] = [];
+  let conflicts = 0;
   for (const entry of saved) {
+    if (!isLoaded(entry.diagramId)) {
+      deferred.push({ ...entry, deferred: true });
+      continue;
+    }
     const decision = decideRestore(entry, elements.get(entry.element.id));
     if (decision === 'conflict') conflicts++;
-    if (decision !== 'apply') continue;
-    apply.push(entry.element);
-    pending.push(entry);
-    restored++;
+    if (decision === 'apply') apply.push({ ...entry, deferred: undefined });
   }
   if (apply.length > 0) {
     // Not undoable (they're last session's edits), but they are unsaved, so
@@ -330,13 +530,71 @@ export function applyJournal(saved: JournalEntry[]): {
     withoutHistory(() =>
       useElementsStore.setState((prev) => {
         const next = new Map(prev.elements);
-        for (const el of apply) next.set(el.id, el);
+        for (const { element } of apply) next.set(element.id, element);
         return { elements: next };
       }),
     );
   }
+  return { apply, deferred, conflicts };
+}
+
+/**
+ * Re-apply a previous session's unsaved edits on top of what was just loaded
+ * from the server. Edits for a diagram that didn't load are kept, and
+ * applied once it does (`applyDeferred`). Returns the entries still pending
+ * (to keep journaling) and what happened.
+ */
+export function applyJournal(
+  saved: JournalEntry[],
+  isLoaded: (diagramId: string) => boolean = () => true,
+): { pending: JournalEntry[]; result: RestoreResult } {
+  const { apply, deferred, conflicts } = sortEntries(saved, isLoaded);
   return {
-    pending,
-    result: { restored, conflicts, diagrams: Array.from(new Set(saved.map((e) => e.diagramId))) },
+    pending: [...apply, ...deferred],
+    result: {
+      restored: apply.length,
+      conflicts,
+      deferred: deferred.length,
+      diagrams: Array.from(new Set(saved.map((e) => e.diagramId))),
+    },
   };
+}
+
+/** A diagram that didn't load when the project opened has now: its kept edits go on. */
+export function applyDeferred(diagramId: string): void {
+  const waiting = Array.from(entries.values()).filter(
+    (e) => e.deferred && e.diagramId === diagramId,
+  );
+  if (waiting.length === 0) return;
+  const { apply, conflicts } = sortEntries(waiting, () => true);
+  for (const entry of waiting) entries.delete(entry.element.id);
+  for (const entry of apply) entries.set(entry.element.id, entry);
+  publish();
+  backupSoon();
+  persistSoon();
+  announceRestore({ restored: apply.length, conflicts, deferred: 0, diagrams: [diagramId] });
+}
+
+/** Tell the person what came back. */
+export function announceRestore(result: RestoreResult): void {
+  if (result.restored > 0) {
+    toast(
+      `Recovered ${result.restored} unsaved ${result.restored === 1 ? 'change' : 'changes'} from your last session.`,
+      'success',
+      undefined,
+      10_000, // worth reading: it's about their work
+    );
+  }
+  if (result.conflicts > 0) {
+    toast(
+      `${result.conflicts} of your unsaved ${result.conflicts === 1 ? 'change was' : 'changes were'} skipped: a teammate changed ${result.conflicts === 1 ? 'that shape' : 'those shapes'} since.`,
+      'info',
+    );
+  }
+  if (result.deferred > 0) {
+    toast(
+      `${result.deferred} unsaved ${result.deferred === 1 ? 'change is' : 'changes are'} kept on this device until ${result.deferred === 1 ? 'its level loads' : 'their level loads'}.`,
+      'info',
+    );
+  }
 }

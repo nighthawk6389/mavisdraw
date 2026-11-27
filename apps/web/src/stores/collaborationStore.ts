@@ -386,6 +386,10 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
           break;
         }
       }
+      // The room's contents arriving on joining: onSynced merges them, newest
+      // version per element, so an unsaved local edit (one brought back from
+      // the offline journal) isn't overwritten by the older copy it replaces
+      if (!initialSyncDone) return;
       applyingRemote = true;
       try {
         applyRemoteChanges(() =>

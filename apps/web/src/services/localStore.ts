@@ -69,3 +69,13 @@ export async function kvDelete(key: string): Promise<void> {
   }
   await run('readwrite', (store) => store.delete(key));
 }
+
+/** Every key that starts with `prefix`. */
+export async function kvKeys(prefix: string): Promise<string[]> {
+  const db = await openDb();
+  if (!db) return Array.from(memory.keys()).filter((k) => k.startsWith(prefix));
+  const keys = await run<IDBValidKey[]>('readonly', (store) =>
+    store.getAllKeys(IDBKeyRange.bound(prefix, `${prefix}￿`)),
+  );
+  return (keys ?? []).filter((k): k is string => typeof k === 'string');
+}
