@@ -163,3 +163,13 @@ jobs:
           postgresql://mavisdraw:mavisdraw_dev@localhost:5432/smoke_standalone 3001
       - name: Smoke-test the web image
         run: scripts/docker-smoke.sh web mavisdraw-web 3000
+      # The self-hosted stack, as an operator runs it (deploy/): migrations,
+      # the app and API through the web container's proxy, a first-party
+      # session over plain http, the live socket, embeds, data across a restart
+      - name: Smoke-test the self-hosted stack (deploy/docker-compose.yml)
+        run: MAVISDRAW_IMAGE=mavisdraw MAVISDRAW_VERSION=latest scripts/selfhost-smoke.sh
+      - name: The bundled Caddyfile is valid
+        run: >-
+          docker run --rm -e DOMAIN=draw.example.com
+          -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro"
+          caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile

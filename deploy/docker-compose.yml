@@ -1,0 +1,120 @@
+# MavisDraw, self-hosted (docs/self-hosting.md)
+#
+#   ./setup.sh https://draw.example.com   # once: writes .env with fresh secrets
+#   docker compose up -d                  # → APP_URL (http://<host>:8080 by default)
+#
+# HTTPS with automatic certificates (Caddy), on your own domain:
+#   docker compose --profile https up -d
+#
+# Upgrading: set MAVISDRAW_VERSION in .env (or keep "latest"), then
+#   docker compose pull && docker compose up -d   # migrations run first, automatically
+#
+# Building from this checkout instead of pulling images:
+#   docker compose up -d --build
+
+name: mavisdraw
+
+x-server-image: &server-image ${MAVISDRAW_IMAGE:-ghcr.io/nighthawk6389/mavisdraw}-server:${MAVISDRAW_VERSION:-latest}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mavisdraw
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run ./setup.sh first (it writes .env)}
+      POSTGRES_DB: mavisdraw
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U mavisdraw']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # Applies database migrations, then exits (before every start of the API)
+  migrate:
+    image: *server-image
+    build:
+      context: ..
+      target: server
+    command: ['node', 'apps/server/dist/db/migrate.js']
+    environment:
+      DATABASE_URL: postgresql://mavisdraw:${POSTGRES_PASSWORD}@postgres:5432/mavisdraw
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+  # The API and the live-collaboration server
+  api:
+    image: *server-image
+    build:
+      context: ..
+      target: server
+    restart: unless-stopped
+    # Every setting in .env reaches the server (mail, GitHub, Sentry…)
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: '3001'
+      HOST: 0.0.0.0
+      DATABASE_URL: postgresql://mavisdraw:${POSTGRES_PASSWORD}@postgres:5432/mavisdraw
+      APP_URL: ${APP_URL:-http://localhost:8080}
+      CORS_ORIGIN: ${APP_URL:-http://localhost:8080}
+      # One proxy in front (the web container, or Caddy): use the address it saw
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3001/api/ready').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  # The app, with /api and /collaboration passed on to the api service
+  web:
+    image: ${MAVISDRAW_IMAGE:-ghcr.io/nighthawk6389/mavisdraw}-web:${MAVISDRAW_VERSION:-latest}
+    build:
+      context: ..
+      target: web
+    restart: unless-stopped
+    environment:
+      API_UPSTREAM: http://api:3001
+    ports:
+      # With the https profile, bind it to localhost: HTTP_PORT=127.0.0.1:8080
+      - '${HTTP_PORT:-8080}:3000'
+    depends_on:
+      - api
+
+  # Optional: HTTPS on DOMAIN with automatic certificates (Let's Encrypt)
+  caddy:
+    image: caddy:2-alpine
+    profiles: [https]
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:-}
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+      - api
+
+volumes:
+  db:
+  caddy_data:
+  caddy_config:

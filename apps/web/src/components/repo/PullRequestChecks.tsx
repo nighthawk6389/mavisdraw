@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiGitHubAppStatus } from '../../services/api';
-import { API_BASE } from '../../services/apiBase';
+import { absoluteApiBase } from '../../services/apiBase';
 
 /**
  * Pull request checks for a map generated from a GitHub repository: once
@@ -57,11 +57,11 @@ export default function PullRequestChecks({ repo, active }: { repo: string; acti
           Not set up on this server yet. An administrator registers the GitHub App once at{' '}
           <a
             className="text-blue-600 hover:underline"
-            href={`${API_BASE}/api/github-app/setup`}
+            href={`${absoluteApiBase()}/api/github-app/setup`}
             target="_blank"
             rel="noreferrer"
           >
-            {API_BASE}/api/github-app/setup
+            {absoluteApiBase()}/api/github-app/setup
           </a>
           .
         </p>

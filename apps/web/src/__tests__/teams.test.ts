@@ -5,6 +5,7 @@ import { parseRoute, projectPath, navigate, reflectPath } from '../routing';
 import { usePermissionStore, canEdit } from '../stores/permissionStore';
 import { useElementsStore, isElementsReadOnly } from '../stores/elementsStore';
 import { collaborationUrl } from '../stores/collaborationStore';
+import { absoluteApiBase, resolveApiBase } from '../services/apiBase';
 import { docVersion, readElement, writeElement } from '../collab/ydocElements';
 import { flushPendingSaves, registerSaveFlusher } from '../services/saveTracker';
 import { useVersionStore } from '../stores/versionStore';
@@ -138,6 +139,29 @@ describe('collaborationUrl', () => {
       'wss://api.example.com/collaboration',
     );
     expect(collaborationUrl('ws://h:1/base/', undefined)).toBe('ws://h:1/base/collaboration');
+  });
+
+  it('with the API on this origin (self-hosted proxy), uses the page’s own host', () => {
+    expect(collaborationUrl(undefined, '', 'https://draw.acme.com')).toBe(
+      'wss://draw.acme.com/collaboration',
+    );
+    expect(collaborationUrl('', '', 'http://10.0.0.5:8080')).toBe(
+      'ws://10.0.0.5:8080/collaboration',
+    );
+    // Unset (local development) still means the API on 3001
+    expect(collaborationUrl(undefined, undefined, 'http://localhost:3000')).toBe(
+      'ws://localhost:3001/collaboration',
+    );
+  });
+});
+
+describe('API address', () => {
+  it('empty means this origin: relative requests, absolute links from the page', () => {
+    expect(resolveApiBase('')).toBe('');
+    expect(resolveApiBase(undefined)).toBe('http://localhost:3001');
+    expect(resolveApiBase('https://api.acme.com/')).toBe('https://api.acme.com');
+    expect(absoluteApiBase('')).toBe(window.location.origin);
+    expect(absoluteApiBase('https://api.acme.com')).toBe('https://api.acme.com');
   });
 });
 

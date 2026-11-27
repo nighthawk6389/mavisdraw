@@ -63,13 +63,16 @@ import type { MavisElement, Viewport, ConnectionStatus } from '@mavisdraw/types'
 /**
  * WebSocket endpoint of the collaboration server. Accepts VITE_WS_URL or
  * VITE_API_URL in any form (http(s)/ws(s), with or without the path) and
- * always returns ws(s)://host/collaboration — the server's route.
+ * always returns ws(s)://host/collaboration — the server's route. Both empty
+ * (the API shares this origin, behind the self-hosted proxy): this page's host.
  */
 export function collaborationUrl(
   wsUrl: string | undefined = import.meta.env.VITE_WS_URL,
   apiUrl: string | undefined = import.meta.env.VITE_API_URL,
+  pageOrigin: string = typeof window === 'undefined' ? '' : window.location.origin,
 ): string {
-  const url = new URL(wsUrl || apiUrl || 'http://localhost:3001');
+  const sameOrigin = (wsUrl ?? '') === '' && apiUrl !== undefined && apiUrl.trim() === '';
+  const url = new URL(sameOrigin ? pageOrigin : wsUrl || apiUrl || 'http://localhost:3001');
   url.protocol = url.protocol === 'https:' || url.protocol === 'wss:' ? 'wss:' : 'ws:';
   if (!url.pathname.replace(/\/+$/, '').endsWith('/collaboration')) {
     url.pathname = `${url.pathname.replace(/\/+$/, '')}/collaboration`;

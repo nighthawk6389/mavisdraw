@@ -109,7 +109,21 @@ cd apps/web && npx playwright test --ui
 
 MavisDraw is a full-stack application with a React frontend and a Fastify API backend. Deployment requires both services plus a PostgreSQL database.
 
-### Render (recommended)
+### Self-hosted (Docker)
+
+Run it on your own server with Docker Compose. One address serves everything, and HTTPS through
+the bundled Caddy is optional:
+
+```bash
+cd deploy
+./setup.sh https://draw.example.com    # once: .env with fresh secrets
+docker compose --profile https up -d
+```
+
+See [docs/self-hosting.md](docs/self-hosting.md) for email (SMTP), GitHub and GitHub Enterprise,
+backups and upgrades. Images are published to GHCR when a `v*` tag is pushed (`release.yml`).
+
+### Render
 
 The included `render.yaml` Blueprint deploys the full stack automatically.
 

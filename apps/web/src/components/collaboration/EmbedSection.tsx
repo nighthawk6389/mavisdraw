@@ -6,7 +6,7 @@ import {
   apiUnpublishEmbed,
   type EmbedInfo,
 } from '../../services/api';
-import { API_BASE } from '../../services/apiBase';
+import { absoluteApiBase } from '../../services/apiBase';
 import { toast } from '../../stores/toastStore';
 import { embedSnippets } from './embedSnippets';
 
@@ -98,7 +98,7 @@ export default function EmbedSection({ projectId }: { projectId: string }) {
     );
   }
 
-  const snippets = embedSnippets(window.location.origin, API_BASE, embed.token, projectName);
+  const snippets = embedSnippets(window.location.origin, absoluteApiBase(), embed.token, projectName);
   const text =
     tab === 'iframe'
       ? snippets.iframe

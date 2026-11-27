@@ -139,7 +139,7 @@ Items noticed during PR #9 review (arrow improvements) that weren't fixed immedi
 
 - **Server build compiles its tests into `dist/`** (`apps/server/tsconfig.json` includes `src/__tests__`), so the Docker images and Render deploy ship `dist/__tests__` (they import vitest, which isn't installed in production). Harmless today since nothing loads them, but a `tsconfig.build.json` excluding `__tests__` (like `packages/llm`) would keep the runtime output clean.
 
-- **The web image's nginx sends no security headers** (`nginx.conf`): no `X-Frame-Options`/`frame-ancestors` (except for `/embed.html`), `X-Content-Type-Options` or CSP — the same gap as the Render static site noted above.
+- ~~**The web image's nginx sends no security headers**~~: fixed: `X-Frame-Options`/`frame-ancestors 'self'` on the app (the embed viewer stays frameable), `nosniff` and a referrer policy (`nginx.conf.template`). A full CSP is still to do, as for the Render static site.
 
 - **`createElement` name is misleading** — It only creates and returns an element object with defaults but does not add it to the store. Renaming to `buildElement` or `createElementTemplate` would clarify the contract.
 

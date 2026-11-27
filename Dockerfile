@@ -2,7 +2,9 @@
 # Build from the repository root, e.g. `docker build --target server .`
 
 # ── Base stage: install dependencies ──────────────────────
-FROM node:22-alpine AS base
+# The build output is plain JavaScript and static files, so these stages run
+# on the build machine's own platform even for a multi-platform image
+FROM --platform=$BUILDPLATFORM node:22-alpine AS base
 RUN corepack enable && corepack prepare pnpm@10.29.3 --activate
 WORKDIR /app
 
@@ -22,8 +24,10 @@ RUN pnpm install --frozen-lockfile
 # ── Build stage ──────────────────────────────────────────
 FROM base AS build
 
-ARG VITE_API_URL=http://localhost:3001
-ARG VITE_WS_URL=ws://localhost:3001
+# Empty: the app calls the API on its own origin (the web image proxies /api
+# and /collaboration). Set both to host the API somewhere else.
+ARG VITE_API_URL=
+ARG VITE_WS_URL=
 ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_WS_URL=$VITE_WS_URL
 
@@ -71,8 +75,12 @@ EXPOSE 3001
 CMD ["node", "apps/server/dist/index.js"]
 
 # ── Frontend image (nginx) ───────────────────────────────
-# Runs nginx as an unprivileged user (nginx.conf listens on 3000)
+# Serves the app and proxies /api and /collaboration to the API server, as
+# an unprivileged user on port 3000 (see nginx.conf.template). API_UPSTREAM is
+# where the API listens; NGINX_RESOLVER the DNS server that resolves it.
 FROM nginxinc/nginx-unprivileged:alpine AS web
+ENV API_UPSTREAM=http://api:3001 \
+    NGINX_RESOLVER=127.0.0.11
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 EXPOSE 3000

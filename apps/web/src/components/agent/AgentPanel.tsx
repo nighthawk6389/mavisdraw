@@ -5,11 +5,10 @@ import { useUIStore } from '../../stores/uiStore';
 import { useElementsStore } from '../../stores/elementsStore';
 import { useDiagramStore } from '../../stores/diagramStore';
 import { getAccessToken } from '../../services/api';
+import { API_BASE } from '../../services/apiBase';
 import { serializeScene } from '@mavisdraw/llm';
 import type { MavisDrawScene, MavisElement, Diagram } from '@mavisdraw/types';
 import ChatMessage from './ChatMessage';
-
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
 
 function buildDiagramMarkdown(): string {
   const elementsState = useElementsStore.getState();

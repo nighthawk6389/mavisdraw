@@ -61,14 +61,12 @@ services:
       - '3001:3001'
     restart: unless-stopped
 
-  # ── Frontend (nginx serving built assets) ───────────────
+  # ── Frontend (nginx: the app, and the API behind it) ────
   web:
+    # Serves the app and proxies /api and /collaboration to the api service
     build:
       context: .
       target: web
-      args:
-        VITE_API_URL: http://localhost:3001
-        VITE_WS_URL: ws://localhost:3001
     container_name: mavisdraw-web
     depends_on:
       - api

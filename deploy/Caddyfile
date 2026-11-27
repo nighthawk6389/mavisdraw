@@ -1,0 +1,12 @@
+# HTTPS for MavisDraw (docker compose --profile https up -d).
+# DOMAIN comes from .env; its DNS must point at this server, with ports 80
+# and 443 open, for Caddy to get a certificate.
+{$DOMAIN} {
+	encode zstd gzip
+
+	# The API and its live socket go straight to the API server (one proxy
+	# hop, so TRUST_PROXY=1 still holds); everything else is the web app
+	@api path /api/* /collaboration*
+	reverse_proxy @api api:3001
+	reverse_proxy web:3000
+}
