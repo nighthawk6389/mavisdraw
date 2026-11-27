@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { config } from '../config.js';
 import { requireAuth } from '../middleware/auth.js';
-import { getDiagramsByProject } from '../services/diagramService.js';
+import { getDiagramIds } from '../services/diagramService.js';
 import { convertManifest, verifyWebhookSignature } from '../services/githubApp.js';
 import {
   CHECKED_ACTIONS,
@@ -39,7 +39,7 @@ const apiOrigin = (request: FastifyRequest) => `${request.protocol}://${request.
  */
 export async function githubAppRoutes(app: FastifyInstance): Promise<void> {
   const signal = (projectId: string) => {
-    void getDiagramsByProject(projectId)
+    void getDiagramIds(projectId)
       .then((list) => list.forEach((d) => signalDocument(app.hocuspocus, d.id, 'proposals')))
       .catch((err) => app.log.error(err, 'Failed to signal proposal change'));
   };

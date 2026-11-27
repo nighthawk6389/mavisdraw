@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
-import { checkProjectAccess, getDiagramsByProject } from '../services/diagramService.js';
+import { checkProjectAccess, getDiagramIds } from '../services/diagramService.js';
 import { getProposal, listPendingProposals, resolveProposal } from '../services/proposalService.js';
 import { signalDocument } from '../ws/hocuspocus.js';
 
@@ -13,7 +13,7 @@ const resolveSchema = z.object({ status: z.enum(['applied', 'dismissed', 'pendin
  */
 export async function proposalRoutes(app: FastifyInstance): Promise<void> {
   const signal = (projectId: string) => {
-    void getDiagramsByProject(projectId)
+    void getDiagramIds(projectId)
       .then((list) => {
         for (const d of list) signalDocument(app.hocuspocus, d.id, 'proposals');
       })

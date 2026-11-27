@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import * as Y from 'yjs';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import type { MavisElement } from '@mavisdraw/types';
@@ -19,6 +20,14 @@ const svgQuerySchema = z.object({
 
 /** README images: the drawing scales down past this, the viewBox keeps every detail. */
 const SVG_MAX_WIDTH = 1600;
+/** Hand-drawn rendering is costly per shape: past this, big maps are drawn clean. */
+export const SKETCHY_MAX_ELEMENTS = 1500;
+/** Rendered SVGs kept in memory (README images are fetched over and over). */
+const SVG_CACHE_BYTES = 32 * 1024 * 1024;
+/** A new server may draw differently: its ETags never match an old one's. */
+const RENDERER_ID = randomUUID();
+
+const sha1 = (value: string | Uint8Array) => createHash('sha1').update(value).digest('base64url');
 
 /**
  * An SVG is a document: if someone opens the URL directly, nothing in it
@@ -84,8 +93,29 @@ export async function embedRoutes(app: FastifyInstance): Promise<void> {
     const diagram = await getDiagram(id);
     if (!diagram || diagram.projectId !== project.id) return null;
     const live = app.hocuspocus.documents.get(documentNameFor(diagram.id));
-    const elements = (live ? readLiveElements(live) : diagram.elements) as MavisElement[];
-    return { project, diagram, elements: elements.filter((el) => !el.isDeleted) };
+    return {
+      project,
+      diagram,
+      /** Changes whenever what would be drawn does (cheap: nothing is read or drawn). */
+      version: `${diagram.updatedAt.toISOString()}:${live ? sha1(Y.encodeStateVector(live)) : ''}`,
+      elements: () =>
+        ((live ? readLiveElements(live) : diagram.elements) as MavisElement[]).filter(
+          (el) => !el.isDeleted,
+        ),
+    };
+  };
+
+  // Rendered SVGs by what they show, oldest evicted first
+  const svgCache = new Map<string, string>();
+  let svgCacheBytes = 0;
+  const remember = (key: string, svg: string) => {
+    svgCache.set(key, svg);
+    svgCacheBytes += svg.length;
+    for (const [oldKey, old] of svgCache) {
+      if (svgCacheBytes <= SVG_CACHE_BYTES || oldKey === key) break;
+      svgCache.delete(oldKey);
+      svgCacheBytes -= old.length;
+    }
   };
 
   const gone = (reply: FastifyReply) =>
@@ -120,7 +150,7 @@ export async function embedRoutes(app: FastifyInstance): Promise<void> {
           title: found.diagram.title,
           renderMode: found.diagram.renderMode,
           viewBackgroundColor: found.diagram.viewBackgroundColor,
-          elements: found.elements,
+          elements: found.elements(),
         },
       });
     },
@@ -132,15 +162,26 @@ export async function embedRoutes(app: FastifyInstance): Promise<void> {
     if (!query.success) return reply.code(400).send({ error: 'Invalid options' });
     const found = await embeddedDiagram(token, query.data.d);
     if (!found) return gone(reply);
-    const svg = renderSvgMarkup(found.elements, {
-      theme: query.data.theme ?? 'light',
-      renderMode:
-        query.data.style ?? (found.diagram.renderMode === 'sketchy' ? 'sketchy' : 'clean'),
-      backgroundColor: found.diagram.viewBackgroundColor,
-      maxWidth: SVG_MAX_WIDTH,
-    });
-    const etag = `"${createHash('sha1').update(svg).digest('base64url')}"`;
+    const theme = query.data.theme ?? 'light';
+    const style =
+      query.data.style ?? (found.diagram.renderMode === 'sketchy' ? 'sketchy' : 'clean');
+    // Known before drawing anything, so revalidations (GitHub's image proxy,
+    // CDNs) and repeat fetches cost no rendering
+    const key = [RENDERER_ID, found.diagram.id, found.version, theme, style].join('|');
+    const etag = `"${sha1(key)}"`;
     if (request.headers['if-none-match'] === etag) return svgHeaders(reply, etag).code(304).send();
+    let svg = svgCache.get(key);
+    if (svg === undefined) {
+      const elements = found.elements();
+      svg = renderSvgMarkup(elements, {
+        theme,
+        renderMode:
+          style === 'sketchy' && elements.length <= SKETCHY_MAX_ELEMENTS ? style : 'clean',
+        backgroundColor: found.diagram.viewBackgroundColor,
+        maxWidth: SVG_MAX_WIDTH,
+      });
+      remember(key, svg);
+    }
     return svgHeaders(reply, etag).send(svg);
   });
 }

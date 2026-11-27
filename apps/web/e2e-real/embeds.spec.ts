@@ -105,6 +105,11 @@ test.describe('Embeds', () => {
     await pasteMermaid(page, ['flowchart LR', '  cache[(Redis)]']);
     await waitForSaved(page);
     await expect.poll(async () => (await anon.request.get(imageUrl)).text()).toContain('Redis');
+    // …and a copy cached before the change is no longer confirmed as current
+    const stale = await anon.request.get(imageUrl, {
+      headers: { 'If-None-Match': svg.headers()['etag'] },
+    });
+    expect(stale.status()).toBe(200);
 
     // A new link breaks the old one
     await page.getByRole('button', { name: 'Share' }).click();

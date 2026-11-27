@@ -79,6 +79,14 @@ export async function getDiagramsByProject(projectId: string) {
  * The project's diagram hierarchy without contents: elements and the CRDT
  * state can be megabytes per diagram and are loaded per diagram on open.
  */
+/** Just the ids (e.g. to signal a project's rooms): never the contents. */
+export async function getDiagramIds(projectId: string): Promise<Array<{ id: string }>> {
+  return db.query.diagrams.findMany({
+    where: eq(diagrams.projectId, projectId),
+    columns: { id: true },
+  });
+}
+
 export async function getDiagramSummaries(projectId: string) {
   return db.query.diagrams.findMany({
     where: eq(diagrams.projectId, projectId),

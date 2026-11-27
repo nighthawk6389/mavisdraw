@@ -8,7 +8,7 @@ import { authenticateToken } from '../services/apiTokenService.js';
 import { buildMcpServer, type McpDeps } from '../services/mcpServer.js';
 import { listAccessibleProjects, loadProjectScene } from '../services/projectService.js';
 import { createProposal } from '../services/proposalService.js';
-import { getDiagramsByProject } from '../services/diagramService.js';
+import { getDiagramIds } from '../services/diagramService.js';
 import { signalDocument } from '../ws/hocuspocus.js';
 import { mcpRateLimit } from '../middleware/rateLimit.js';
 import type { RepoSource } from '../db/schema.js';
@@ -55,7 +55,7 @@ export async function mcpRoutes(app: FastifyInstance): Promise<void> {
         connections: proposal.connections,
       });
       // Open editors show it right away
-      for (const d of await getDiagramsByProject(projectId)) {
+      for (const d of await getDiagramIds(projectId)) {
         signalDocument(app.hocuspocus, d.id, 'proposals');
       }
       return created;

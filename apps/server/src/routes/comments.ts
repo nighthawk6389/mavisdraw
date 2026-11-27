@@ -3,7 +3,7 @@ import { z } from 'zod';
 import {
   checkProjectAccess,
   getDiagram,
-  getDiagramsByProject,
+  getDiagramIds,
 } from '../services/diagramService.js';
 import {
   MAX_COMMENT_LENGTH,
@@ -54,7 +54,7 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
    * one a thread is on).
    */
   const signal = (projectId: string) => {
-    void getDiagramsByProject(projectId)
+    void getDiagramIds(projectId)
       .then((list) => {
         for (const d of list) signalDocument(app.hocuspocus, d.id, 'comments');
       })
