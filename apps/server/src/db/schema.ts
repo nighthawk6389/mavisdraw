@@ -487,3 +487,19 @@ export const diagramProposals = pgTable(
   },
   (table) => [index('diagram_proposals_project_status_idx').on(table.projectId, table.status)],
 );
+
+// ── Published embeds (read-only, public, revocable) ─────────
+
+export const projectEmbeds = pgTable(
+  'project_embeds',
+  {
+    projectId: text('project_id')
+      .primaryKey()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    /** The capability in the public URL; rotating it breaks old links. */
+    token: text('token').notNull(),
+    createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex('project_embeds_token_idx').on(table.token)],
+);

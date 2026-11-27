@@ -1,0 +1,183 @@
+:root {
+  --bg: #ffffff;
+  --bar: #f8fafc;
+  --border: #e2e8f0;
+  --text: #1f2937;
+  --muted: #64748b;
+  --accent: #2563eb;
+  --focus: #2563eb;
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --bg: #0d1117;
+  --bar: #161b22;
+  --border: #30363d;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --accent: #58a6ff;
+  --focus: #58a6ff;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font:
+    13px/1.4 -apple-system,
+    'Segoe UI',
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+}
+
+#embed {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bar);
+  border-bottom: 1px solid var(--border);
+  min-height: 38px;
+}
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.crumbs button {
+  border: 0;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 2px 4px;
+  font: inherit;
+  border-radius: 4px;
+  max-width: 14em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.crumbs .current {
+  font-weight: 600;
+  padding: 2px 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.crumbs .sep {
+  color: var(--muted);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.actions button {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.actions .open {
+  margin-left: 6px;
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.canvas {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  outline: none;
+}
+
+.canvas.panning {
+  cursor: grabbing;
+}
+
+.stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  transition: opacity 0.15s;
+}
+
+.stage.loading {
+  opacity: 0.4;
+}
+
+.stage svg {
+  display: block;
+  overflow: visible;
+}
+
+g.portal {
+  cursor: pointer;
+}
+
+g.portal:hover > rect,
+g.portal:focus-visible > rect {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+g.portal:focus {
+  outline: none;
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.message {
+  margin: auto;
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.message button {
+  margin-top: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bar);
+  color: var(--text);
+  cursor: pointer;
+}

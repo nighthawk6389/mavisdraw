@@ -47,6 +47,9 @@ importers:
       '@hocuspocus/server':
         specifier: ^2.15.0
         version: 2.15.3(y-protocols@1.0.7(yjs@13.6.29))(yjs@13.6.29)
+      '@mavisdraw/export':
+        specifier: workspace:*
+        version: link:../../packages/export
       '@mavisdraw/llm':
         specifier: workspace:*
         version: link:../../packages/llm

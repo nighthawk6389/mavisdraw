@@ -4,3 +4,4 @@ export { exportToSvg, createSvgDocument } from './svg';
 export { exportToPdf } from './pdf';
 export { embedPngTextChunk, extractPngTextChunk } from './utils/png-metadata';
 export type { RenderElementCallback } from './png';
+export { renderSvgMarkup, safeColor, escapeXml, type SvgMarkupOptions } from './svgMarkup.js';

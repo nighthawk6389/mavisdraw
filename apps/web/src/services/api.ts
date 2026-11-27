@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
+import { API_BASE } from './apiBase';
 
 let accessToken: string | null = null;
 let onUnauthorized: (() => void) | null = null;
@@ -792,4 +792,26 @@ export function apiResolveProposal(
     method: 'POST',
     body: JSON.stringify({ status }),
   });
+}
+
+// ── Published embeds ──
+
+export interface EmbedInfo {
+  token: string;
+  createdAt: string;
+}
+
+export function apiGetEmbed(projectId: string): Promise<{ embed: EmbedInfo | null }> {
+  return apiFetch(`/api/projects/${projectId}/embed`);
+}
+
+export function apiPublishEmbed(projectId: string, rotate = false): Promise<{ embed: EmbedInfo }> {
+  return apiFetch(`/api/projects/${projectId}/embed`, {
+    method: 'POST',
+    body: JSON.stringify({ rotate }),
+  });
+}
+
+export function apiUnpublishEmbed(projectId: string): Promise<void> {
+  return apiFetch(`/api/projects/${projectId}/embed`, { method: 'DELETE' });
 }

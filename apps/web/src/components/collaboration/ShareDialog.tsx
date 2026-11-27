@@ -12,6 +12,7 @@ import {
 } from '../../services/api';
 import { usePermissionStore } from '../../stores/permissionStore';
 import { toast } from '../../stores/toastStore';
+import EmbedSection from './EmbedSection';
 
 interface ShareDialogProps {
   projectId: string;
@@ -135,7 +136,7 @@ export default function ShareDialog({ projectId, isOpen, onClose }: ShareDialogP
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4 flex max-h-[90vh] flex-col">
         <div className="flex items-center justify-between p-4 border-b border-gray-200">
           <h3 className="text-lg font-semibold text-gray-900">Share Project</h3>
           <button
@@ -146,7 +147,7 @@ export default function ShareDialog({ projectId, isOpen, onClose }: ShareDialogP
           </button>
         </div>
 
-        <div className="p-4 space-y-4">
+        <div className="p-4 space-y-4 overflow-y-auto">
           {error && (
             <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2">
               {error}
@@ -356,6 +357,10 @@ export default function ShareDialog({ projectId, isOpen, onClose }: ShareDialogP
               </ul>
             </div>
           )}
+
+          <div className="border-t border-gray-200 pt-4">
+            <EmbedSection projectId={projectId} />
+          </div>
         </div>
 
         <div className="p-4 border-t border-gray-200">

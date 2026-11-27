@@ -209,6 +209,11 @@ read access to your maps: they look up which component owns the file they're cha
 show up live under **Proposals** in the editor for someone to apply or dismiss. See
 [docs/mcp.md](docs/mcp.md).
 
+### Embeds
+
+**Share → Embed** publishes a map read-only: an iframe readers can click into (docs, wikis, Notion),
+and a README image that stays current, with a dark-theme variant. See [docs/embeds.md](docs/embeds.md).
+
 ### Diagram as code
 
 Paste a Mermaid flowchart (from a README, PR or design doc) straight onto the canvas, or use

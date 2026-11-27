@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Diagram content is untrusted: nothing inline may run -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="robots" content="noindex" />
+    <title>MavisDraw</title>
+    <link rel="stylesheet" href="/src/embed/embed.css" />
+  </head>
+  <body>
+    <main id="embed" aria-live="polite"></main>
+    <script type="module" src="/src/embed/main.ts"></script>
+  </body>
+</html>

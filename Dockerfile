@@ -48,6 +48,10 @@ COPY --from=build /app/packages/types/dist ./packages/types/dist
 COPY --from=base /app/packages/types/package.json ./packages/types/
 COPY --from=build /app/packages/llm/dist ./packages/llm/dist
 COPY --from=base /app/packages/llm/package.json ./packages/llm/
+COPY --from=build /app/packages/export/dist ./packages/export/dist
+COPY --from=base /app/packages/export/package.json ./packages/export/
+COPY --from=base /app/packages/export/node_modules ./packages/export/node_modules
+COPY --from=base /app/packages/math/package.json ./packages/math/
 
 # Migrations (applied by dist/db/migrate.js) + schema source (db:seed, dev only)
 COPY apps/server/drizzle/ ./apps/server/drizzle/
