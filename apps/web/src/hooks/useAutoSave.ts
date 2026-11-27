@@ -73,8 +73,9 @@ export async function saveDiagram(diagram: Diagram, elements: MavisElement[]): P
   // The next save is checked against this base, so the base must describe
   // exactly what this tab holds: take in everything the server has that this
   // tab hasn't touched since sending (a teammate's edits and new shapes),
-  // and keep the old base for anything edited while the save was in flight
-  const nextBase = adoptServerState(diagram.id, elements, serverElements, base);
+  // and for anything edited while the save was in flight, the version that
+  // edit builds on
+  const nextBase = adoptServerState(diagram.id, elements, serverElements, base, conflicts);
   recordSaved(diagram.id, nextBase, diagram.updatedAt);
   acknowledge(diagram.id, serverElements);
 }
@@ -89,7 +90,9 @@ export function adoptServerState(
   sent: MavisElement[],
   server: MavisElement[],
   previousBase: ReadonlyMap<string, number> | undefined,
+  conflicts: readonly string[] = [],
 ): MavisElement[] {
+  const conflicted = new Set(conflicts);
   const sentById = new Map(sent.map((el) => [el.id, el]));
   const base: MavisElement[] = [];
   const adopt: MavisElement[] = [];
@@ -98,15 +101,21 @@ export function adoptServerState(
     if (theirs.diagramId !== diagramId) continue;
     const mine = store.get(theirs.id);
     const sentCopy = sentById.get(theirs.id);
-    const untouched = mine === undefined ? sentCopy === undefined : mine === sentCopy;
+    // (or the store already holds the server's copy: a conflict just adopted it)
+    const untouched =
+      mine === theirs || (mine === undefined ? sentCopy === undefined : mine === sentCopy);
     if (untouched) {
       // A teammate's new shape, or our own write as the server merged it
       if (mine !== theirs) adopt.push(theirs);
       base.push(theirs);
     } else {
-      // Edited here mid-save: the next save goes out against what this edit
-      // was based on, so a teammate's change in between is caught as a conflict
-      const before = previousBase?.get(theirs.id);
+      // Edited here mid-save. If the server took this tab's write as sent, the
+      // new edit builds on it. Otherwise the next save goes out against what
+      // this edit was based on, so a teammate's change in between is caught
+      // as a conflict
+      const tookOurs =
+        sentCopy !== undefined && !conflicted.has(theirs.id) && sentCopy.version === theirs.version;
+      const before = tookOurs ? theirs.version : previousBase?.get(theirs.id);
       if (before !== undefined) base.push({ ...theirs, version: before } as MavisElement);
     }
   }

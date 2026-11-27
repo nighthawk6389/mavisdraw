@@ -47,6 +47,8 @@ const PUBLIC = new Set([
   'POST /api/auth/login',
   'POST /api/auth/refresh',
   'POST /api/auth/logout',
+  // The emailed confirmation link may be opened signed out (the token is the key)
+  'POST /api/auth/verify-email',
   // Describes an invite before sign-in (the token is the key)
   'GET /api/invites/:token',
   // Published embeds (the embed token is the key)
