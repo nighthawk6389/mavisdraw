@@ -8,6 +8,7 @@ import {
   getUserById,
   AuthError,
 } from '../services/authService.js';
+import { claimInvitesForEmail } from '../services/workspaceService.js';
 import { requireAuth } from '../middleware/auth.js';
 import { authRateLimit } from '../middleware/rateLimit.js';
 
@@ -36,6 +37,8 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
     try {
       const { user, tokens } = await registerUser(parsed.data.email, parsed.data.password, parsed.data.name);
+      // Invitations sent to this address before the account existed
+      await claimInvitesForEmail(user.id, user.email);
 
       reply.setCookie('refreshToken', tokens.refreshToken, {
         httpOnly: true,
@@ -64,6 +67,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
     try {
       const { user, tokens } = await loginUser(parsed.data.email, parsed.data.password);
+      await claimInvitesForEmail(user.id, user.email);
 
       reply.setCookie('refreshToken', tokens.refreshToken, {
         httpOnly: true,

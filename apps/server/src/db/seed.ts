@@ -5,6 +5,11 @@ import { db } from './client.js';
 import { users, projects, diagrams } from './schema.js';
 
 async function seed() {
+  // A demo account with a published password must never exist in production
+  if (process.env.NODE_ENV === 'production') {
+    console.error('Refusing to seed a production database (it creates a demo account with a known password).');
+    process.exit(1);
+  }
   console.log('Seeding database...');
 
   // Check if demo user already exists

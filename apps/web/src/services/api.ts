@@ -18,6 +18,34 @@ export function setOnUnauthorized(callback: () => void): void {
 /** Deduplicates concurrent refresh attempts — only one inflight at a time. */
 let refreshPromise: Promise<boolean> | null = null;
 
+/** Seconds until a JWT expires (0 if unknown or already expired). */
+export function tokenSecondsLeft(token: string | null, now = Date.now()): number {
+  if (!token) return 0;
+  try {
+    const payload = token.split('.')[1];
+    const json = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))) as { exp?: number };
+    return json.exp ? Math.max(0, json.exp - now / 1000) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * An access token good for at least `minSeconds` more, refreshing first if
+ * needed. Long-lived connections (the collaboration socket) call this on
+ * every (re)connect instead of holding on to the token they started with.
+ */
+export async function getFreshAccessToken(minSeconds = 60): Promise<string | null> {
+  if (accessToken && tokenSecondsLeft(accessToken) > minSeconds) return accessToken;
+  await refreshAccessToken();
+  return accessToken;
+}
+
+/** Force a refresh (e.g. the server rejected the token we had). */
+export async function forceRefreshAccessToken(): Promise<boolean> {
+  return refreshAccessToken();
+}
+
 async function refreshAccessToken(): Promise<boolean> {
   if (refreshPromise) return refreshPromise;
 
@@ -50,8 +78,10 @@ export async function apiFetch<T = unknown>(
   options: RequestInit = {},
 ): Promise<T> {
   const url = `${API_BASE}${path}`;
+  // Only declare a JSON body when there is one: Fastify rejects an empty
+  // body sent as application/json (e.g. POST /api/share/:token)
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
     ...(options.headers as Record<string, string>),
   };
 
@@ -84,9 +114,15 @@ export async function apiFetch<T = unknown>(
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({ error: 'Request failed' }));
-    throw new ApiError(body.error ?? 'Request failed', response.status);
+    throw new ApiError(
+      body.error ?? 'Request failed',
+      response.status,
+      body.requestId ?? response.headers?.get?.('x-request-id') ?? undefined,
+    );
   }
 
+  // 204 No Content (deletes, mark-as-read) has no JSON to parse
+  if (response.status === 204) return undefined as T;
   return response.json();
 }
 
@@ -94,6 +130,8 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public statusCode: number,
+    /** Server request id: quote it in bug reports (it's in the logs and Sentry). */
+    public requestId?: string,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -155,14 +193,21 @@ export interface ProjectResponse {
   isPublic: boolean;
   thumbnailUrl: string | null;
   role?: string;
+  /** Team workspace it belongs to (null: the owner's personal space). */
+  workspaceId?: string | null;
+  folder?: string | null;
+  repoSource?: RepoSourceData | null;
   createdAt: string;
   updatedAt: string;
 }
 
-export async function apiCreateProject(name: string): Promise<{ project: ProjectResponse }> {
+export async function apiCreateProject(
+  name: string,
+  workspaceId?: string | null,
+): Promise<{ project: ProjectResponse }> {
   return apiFetch('/api/projects', {
     method: 'POST',
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, ...(workspaceId ? { workspaceId } : {}) }),
   });
 }
 
@@ -176,7 +221,7 @@ export async function apiGetProject(id: string): Promise<{ project: ProjectRespo
 
 export async function apiUpdateProject(
   id: string,
-  updates: { name?: string; isPublic?: boolean },
+  updates: { name?: string; isPublic?: boolean; folder?: string | null; workspaceId?: string | null },
 ): Promise<{ project: ProjectResponse }> {
   return apiFetch(`/api/projects/${id}`, {
     method: 'PUT',
@@ -213,8 +258,13 @@ export async function apiGetDiagram(id: string): Promise<{ diagram: DiagramRespo
 
 export async function apiUpdateDiagram(
   id: string,
-  updates: Partial<Pick<DiagramResponse, 'title' | 'elements' | 'viewBackgroundColor' | 'gridEnabled' | 'gridSize' | 'renderMode' | 'layers'>>,
-): Promise<{ diagram: DiagramResponse }> {
+  updates: Partial<Pick<DiagramResponse, 'title' | 'elements' | 'viewBackgroundColor' | 'gridEnabled' | 'gridSize' | 'renderMode' | 'layers'>> & {
+    /** Version of each element the edits are based on (lets the server detect conflicts). */
+    baseVersions?: Record<string, number>;
+    /** Elements deleted since the base. */
+    deletedIds?: string[];
+  },
+): Promise<{ diagram: DiagramResponse; conflicts?: string[] }> {
   return apiFetch(`/api/diagrams/${id}`, {
     method: 'PUT',
     body: JSON.stringify(updates),
@@ -222,6 +272,8 @@ export async function apiUpdateDiagram(
 }
 
 export async function apiCreateDiagram(input: {
+  /** Client-generated id; the server creates idempotently with it. */
+  id?: string;
   projectId: string;
   parentDiagramId?: string | null;
   parentPortalId?: string | null;
@@ -246,6 +298,40 @@ export async function apiSaveDiagram(
     method: 'POST',
     body: JSON.stringify({ trigger, label }),
   });
+}
+
+export interface SnapshotSummary {
+  id: string;
+  diagramId: string;
+  version: number;
+  label: string | null;
+  trigger: 'auto' | 'manual';
+  createdBy: string;
+  elementCount: number;
+  createdAt: string;
+}
+
+export interface SnapshotDetail extends Omit<SnapshotSummary, 'elementCount'> {
+  elements: unknown[];
+  appState: Record<string, unknown>;
+}
+
+export async function apiGetSnapshot(
+  diagramId: string,
+  snapshotId: string,
+): Promise<{ snapshot: SnapshotDetail }> {
+  return apiFetch(`/api/diagrams/${diagramId}/snapshots/${snapshotId}`);
+}
+
+export async function apiListSnapshots(diagramId: string): Promise<{ snapshots: SnapshotSummary[] }> {
+  return apiFetch(`/api/diagrams/${diagramId}/snapshots?limit=100`);
+}
+
+export async function apiRestoreSnapshot(
+  diagramId: string,
+  snapshotId: string,
+): Promise<{ diagram: DiagramResponse }> {
+  return apiFetch(`/api/diagrams/${diagramId}/snapshots/${snapshotId}/restore`, { method: 'POST' });
 }
 
 export async function apiListDiagrams(projectId: string): Promise<{ diagrams: DiagramResponse[] }> {
@@ -296,4 +382,325 @@ export async function apiListPermissions(
 
 export async function apiRevokePermission(permissionId: string): Promise<void> {
   await apiFetch(`/api/permissions/${permissionId}`, { method: 'DELETE' });
+}
+
+// ── Comments & notifications ───────────────────────────────────────────
+
+export interface Member {
+  id: string;
+  name: string;
+  avatarUrl: string | null;
+}
+
+export interface CommentData {
+  id: string;
+  threadId: string;
+  body: string;
+  mentions: string[];
+  author: Member;
+  createdAt: string;
+  editedAt: string | null;
+}
+
+export interface CommentThreadData {
+  id: string;
+  projectId: string;
+  diagramId: string;
+  elementId: string | null;
+  x: number;
+  y: number;
+  offsetX: number;
+  offsetY: number;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+  createdBy: string;
+  createdAt: string;
+  comments: CommentData[];
+}
+
+export interface NotificationData {
+  id: string;
+  type: 'mention' | 'reply';
+  projectId: string;
+  projectName: string;
+  diagramId: string;
+  diagramTitle: string;
+  threadId: string;
+  commentId: string;
+  actor: { id: string; name: string };
+  excerpt: string;
+  readAt: string | null;
+  createdAt: string;
+}
+
+export function apiListMembers(projectId: string): Promise<{ members: Member[] }> {
+  return apiFetch(`/api/projects/${projectId}/members`);
+}
+
+export function apiListComments(projectId: string): Promise<{ threads: CommentThreadData[] }> {
+  return apiFetch(`/api/projects/${projectId}/comments`);
+}
+
+export function apiCreateThread(
+  diagramId: string,
+  input: {
+    elementId: string | null;
+    x: number;
+    y: number;
+    offsetX: number;
+    offsetY: number;
+    body: string;
+    mentions: string[];
+  },
+): Promise<{ thread: CommentThreadData }> {
+  return apiFetch(`/api/diagrams/${diagramId}/comments`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function apiReplyToThread(
+  threadId: string,
+  body: string,
+  mentions: string[],
+): Promise<{ thread: CommentThreadData }> {
+  return apiFetch(`/api/comment-threads/${threadId}/replies`, {
+    method: 'POST',
+    body: JSON.stringify({ body, mentions }),
+  });
+}
+
+export function apiResolveThread(
+  threadId: string,
+  resolved: boolean,
+): Promise<{ thread: CommentThreadData }> {
+  return apiFetch(`/api/comment-threads/${threadId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ resolved }),
+  });
+}
+
+export function apiDeleteThread(threadId: string): Promise<void> {
+  return apiFetch(`/api/comment-threads/${threadId}`, { method: 'DELETE' });
+}
+
+export function apiEditComment(
+  commentId: string,
+  body: string,
+  mentions: string[],
+): Promise<{ thread: CommentThreadData }> {
+  return apiFetch(`/api/comments/${commentId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ body, mentions }),
+  });
+}
+
+export function apiDeleteComment(commentId: string): Promise<{ thread: CommentThreadData | null }> {
+  return apiFetch(`/api/comments/${commentId}`, { method: 'DELETE' });
+}
+
+export function apiListNotifications(): Promise<{
+  notifications: NotificationData[];
+  unreadCount: number;
+}> {
+  return apiFetch('/api/notifications');
+}
+
+export function apiMarkNotificationsRead(ids?: string[]): Promise<void> {
+  return apiFetch('/api/notifications/read', {
+    method: 'POST',
+    body: JSON.stringify(ids ? { ids } : {}),
+  });
+}
+
+// ── Tours & presenting ─────────────────────────────────────────────────
+
+export interface TourStop {
+  id: string;
+  diagramId: string;
+  /** Saved camera; null means "fit the diagram's content". */
+  viewport: { zoom: number; scrollX: number; scrollY: number } | null;
+  title: string;
+  note: string;
+}
+
+export interface PresentationState {
+  presenterId: string;
+  presenterName: string;
+  stop: number;
+  updatedAt: number;
+}
+
+export function apiGetTour(projectId: string): Promise<{ stops: TourStop[] }> {
+  return apiFetch(`/api/projects/${projectId}/tour`);
+}
+
+export function apiSaveTour(projectId: string, stops: TourStop[]): Promise<{ stops: TourStop[] }> {
+  return apiFetch(`/api/projects/${projectId}/tour`, {
+    method: 'PUT',
+    body: JSON.stringify({ stops }),
+  });
+}
+
+export function apiGetPresentation(
+  projectId: string,
+): Promise<{ presentation: PresentationState | null }> {
+  return apiFetch(`/api/projects/${projectId}/presentation`);
+}
+
+export function apiSetPresentation(
+  projectId: string,
+  stop: number | null,
+): Promise<{ presentation: PresentationState | null }> {
+  return apiFetch(`/api/projects/${projectId}/presentation`, {
+    method: 'PUT',
+    body: JSON.stringify({ stop }),
+  });
+}
+
+// ── Workspaces & invites ───────────────────────────────────────────────
+
+export type WorkspaceRole = 'owner' | 'admin' | 'member';
+
+export interface WorkspaceResponse {
+  id: string;
+  name: string;
+  role: WorkspaceRole;
+  memberCount: number;
+  createdAt: string;
+}
+
+export interface WorkspaceMember {
+  userId: string;
+  name: string;
+  email: string;
+  role: WorkspaceRole;
+}
+
+export interface PendingInvite {
+  id: string;
+  email: string;
+  role: string;
+  token: string;
+  createdAt: string;
+}
+
+export type InviteResult =
+  | { status: 'added'; emailed?: boolean }
+  | { status: 'invited'; inviteUrl: string; emailed?: boolean };
+
+export function apiListWorkspaces(): Promise<{ workspaces: WorkspaceResponse[] }> {
+  return apiFetch('/api/workspaces');
+}
+
+export function apiCreateWorkspace(name: string): Promise<{ workspace: WorkspaceResponse }> {
+  return apiFetch('/api/workspaces', { method: 'POST', body: JSON.stringify({ name }) });
+}
+
+export function apiWorkspaceMembers(
+  id: string,
+): Promise<{ role: WorkspaceRole; members: WorkspaceMember[]; invites: PendingInvite[] }> {
+  return apiFetch(`/api/workspaces/${id}/members`);
+}
+
+export function apiSetWorkspaceRole(id: string, userId: string, role: WorkspaceRole): Promise<unknown> {
+  return apiFetch(`/api/workspaces/${id}/members/${userId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ role }),
+  });
+}
+
+export function apiRemoveWorkspaceMember(id: string, userId: string): Promise<void> {
+  return apiFetch(`/api/workspaces/${id}/members/${userId}`, { method: 'DELETE' });
+}
+
+export function apiInviteToWorkspace(id: string, email: string, role: 'admin' | 'member'): Promise<InviteResult> {
+  return apiFetch(`/api/workspaces/${id}/invites`, {
+    method: 'POST',
+    body: JSON.stringify({ email, role }),
+  });
+}
+
+export function apiRevokeWorkspaceInvite(id: string, inviteId: string): Promise<void> {
+  return apiFetch(`/api/workspaces/${id}/invites/${inviteId}`, { method: 'DELETE' });
+}
+
+export function apiInviteToProject(
+  id: string,
+  email: string,
+  role: 'viewer' | 'editor' | 'admin',
+): Promise<InviteResult> {
+  return apiFetch(`/api/projects/${id}/invites`, {
+    method: 'POST',
+    body: JSON.stringify({ email, role }),
+  });
+}
+
+export function apiListProjectInvites(id: string): Promise<{ invites: PendingInvite[] }> {
+  return apiFetch(`/api/projects/${id}/invites`);
+}
+
+export function apiRevokeProjectInvite(id: string, inviteId: string): Promise<void> {
+  return apiFetch(`/api/projects/${id}/invites/${inviteId}`, { method: 'DELETE' });
+}
+
+export function apiTransferProject(id: string, userId: string): Promise<{ ok: true }> {
+  return apiFetch(`/api/projects/${id}/transfer`, { method: 'POST', body: JSON.stringify({ userId }) });
+}
+
+export interface InviteInfo {
+  kind: 'project' | 'workspace';
+  targetId: string;
+  targetName: string;
+  invitedBy: string | null;
+  email: string;
+  role: string;
+  accepted: boolean;
+}
+
+export function apiGetInvite(token: string): Promise<{ invite: InviteInfo }> {
+  return apiFetch(`/api/invites/${token}`);
+}
+
+export function apiAcceptInvite(token: string): Promise<{ kind: 'project' | 'workspace'; targetId: string }> {
+  return apiFetch(`/api/invites/${token}/accept`, { method: 'POST' });
+}
+
+// ── Repository ⇄ map ───────────────────────────────────────────────────
+
+export interface RepoSourceData {
+  kind: 'github' | 'folder';
+  label: string;
+  owner?: string;
+  repo?: string;
+  ref?: string;
+  connectionId?: string;
+  model: import('@mavisdraw/compat').RepoModel;
+  generatedAt: string;
+  generatedBy: string;
+}
+
+export function apiSetProjectRepo(
+  projectId: string,
+  source: Omit<RepoSourceData, 'generatedAt' | 'generatedBy'> | null,
+): Promise<{ repoSource: RepoSourceData | null }> {
+  return apiFetch(`/api/projects/${projectId}/repo`, { method: 'PUT', body: JSON.stringify(source) });
+}
+
+export interface RepoSnapshotData {
+  name: string;
+  ref: string;
+  files: string[];
+  manifests: Record<string, string>;
+  truncated: boolean;
+}
+
+export function apiGetRepoSnapshot(
+  connectionId: string,
+  owner: string,
+  repo: string,
+  ref?: string,
+): Promise<{ snapshot: RepoSnapshotData }> {
+  const q = new URLSearchParams({ connectionId, ...(ref ? { ref } : {}) });
+  return apiFetch(`/api/github/repos/${owner}/${repo}/snapshot?${q}`);
 }

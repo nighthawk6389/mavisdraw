@@ -1,9 +1,9 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from './schema.js';
+import { config } from '../config.js';
 
-const connectionString =
-  process.env.DATABASE_URL ?? 'postgresql://mavisdraw:mavisdraw_dev@localhost:5432/mavisdraw';
+const connectionString = config.databaseUrl;
 
 const queryClient = postgres(connectionString);
 

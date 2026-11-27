@@ -8,7 +8,7 @@ vi.stubGlobal('fetch', mockFetch);
 // Set the env var before importing
 vi.stubEnv('VITE_API_URL', 'http://test-api.local');
 
-import { apiFetch, setAccessToken, ApiError } from '../api';
+import { apiFetch, setAccessToken, ApiError, tokenSecondsLeft } from '../api';
 
 describe('api service', () => {
   beforeEach(() => {
@@ -111,5 +111,21 @@ describe('api service', () => {
       expect(refreshCallCount).toBeLessThanOrEqual(2);
       // Note: with the deduplication fix, ideally only 1 refresh call
     });
+  });
+
+  describe('tokenSecondsLeft', () => {
+    const jwt = (exp: number) => `h.${btoa(JSON.stringify({ exp })).replace(/=+$/, '')}.s`;
+    it('reads the expiry from the token', () => {
+      const now = 1_000_000_000_000;
+      expect(tokenSecondsLeft(jwt(now / 1000 + 120), now)).toBeCloseTo(120);
+      expect(tokenSecondsLeft(jwt(now / 1000 - 5), now)).toBe(0);
+      expect(tokenSecondsLeft('not-a-jwt', now)).toBe(0);
+      expect(tokenSecondsLeft(null, now)).toBe(0);
+    });
+  });
+
+  it('treats 204 No Content as success with no body', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await expect(apiFetch('/api/x', { method: 'DELETE' })).resolves.toBeUndefined();
   });
 });

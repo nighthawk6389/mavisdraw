@@ -12,9 +12,10 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
+    "db:migrate": "tsx src/db/migrate.ts",
     "db:push": "drizzle-kit push",
-    "db:seed": "tsx src/db/seed.ts"
+    "db:seed": "tsx src/db/seed.ts",
+    "db:migrate:deploy": "node dist/db/migrate.js"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.58",
@@ -23,6 +24,7 @@
     "@fastify/websocket": "^11.0.0",
     "@hocuspocus/server": "^2.15.0",
     "@mavisdraw/types": "workspace:*",
+    "@sentry/node": "^9.47.2",
     "ai": "^6.0.116",
     "bcryptjs": "^2.4.3",
     "drizzle-orm": "^0.38.0",

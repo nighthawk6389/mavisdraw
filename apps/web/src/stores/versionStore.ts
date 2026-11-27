@@ -1,157 +1,123 @@
 import { create } from 'zustand';
-import type { VersionSnapshot } from '@mavisdraw/types';
+import type { MavisElement } from '@mavisdraw/types';
 import {
-  saveSnapshot as dbSaveSnapshot,
-  getSnapshotsByProject,
-  getSnapshot as dbGetSnapshot,
-  deleteSnapshotById,
-  pruneSnapshots,
-} from '../utils/versionDb';
-import { useElementsStore } from './elementsStore';
+  apiGetSnapshot,
+  apiListSnapshots,
+  apiRestoreSnapshot,
+  apiSaveDiagram,
+  type SnapshotSummary,
+} from '../services/api';
+import { useElementsStore, withoutHistory } from './elementsStore';
 import { useDiagramStore } from './diagramStore';
-import { useUIStore } from './uiStore';
+import { isLiveSynced } from './collaborationStore';
+import { flushPendingSaves, recordSaved } from '../services/saveTracker';
+import { toast } from './toastStore';
 
-const MAX_AUTO_SNAPSHOTS = 50;
-const MAX_AUTO_SNAPSHOT_AGE = 90 * 24 * 60 * 60 * 1000; // 90 days
-
-let snapshotCounter = 0;
-function generateSnapshotId(): string {
-  return `snap-${Date.now()}-${++snapshotCounter}`;
-}
-
+/**
+ * Shared, server-side version history of the diagram on screen. Everyone on
+ * the project sees the same versions; restoring one updates every connected
+ * collaborator (the server writes it into the live document).
+ */
 interface VersionState {
-  snapshots: VersionSnapshot[];
+  diagramId: string | null;
+  snapshots: SnapshotSummary[];
   isLoading: boolean;
 
-  initialize: (projectId: string) => Promise<void>;
+  load: (diagramId: string) => Promise<void>;
   saveSnapshot: (label: string) => Promise<void>;
-  autoSnapshot: () => Promise<void>;
+  /** Called by the auto-snapshot hook after bursts of edits. */
+  autoSnapshot: (diagramId?: string) => Promise<void>;
   restoreSnapshot: (snapshotId: string) => Promise<void>;
-  deleteSnapshot: (snapshotId: string) => Promise<void>;
+
+  /** A version being compared with what's on the canvas now. */
+  compare: {
+    diagramId: string;
+    snapshotId: string;
+    title: string;
+    createdAt: string;
+    elements: MavisElement[];
+  } | null;
+  startCompare: (snapshotId: string) => Promise<void>;
+  stopCompare: () => void;
 }
 
 export const useVersionStore = create<VersionState>((set, get) => ({
+  diagramId: null,
   snapshots: [],
   isLoading: false,
+  compare: null,
 
-  initialize: async (projectId: string) => {
-    set({ isLoading: true });
+  startCompare: async (snapshotId) => {
+    const diagramId = useDiagramStore.getState().activeDiagramId;
     try {
-      const snapshots = await getSnapshotsByProject(projectId);
-      set({ snapshots, isLoading: false });
-    } catch {
+      const { snapshot } = await apiGetSnapshot(diagramId, snapshotId);
+      if (useDiagramStore.getState().activeDiagramId !== diagramId) return;
+      set({
+        compare: {
+          diagramId,
+          snapshotId,
+          title: snapshot.label || `Version ${snapshot.version}`,
+          createdAt: snapshot.createdAt,
+          elements: (snapshot.elements ?? []) as MavisElement[],
+        },
+      });
+    } catch (err) {
+      toast(`Couldn't load that version: ${(err as Error).message}`, 'error');
+    }
+  },
+
+  stopCompare: () => set({ compare: null }),
+
+  load: async (diagramId) => {
+    set({ diagramId, isLoading: true });
+    try {
+      const { snapshots } = await apiListSnapshots(diagramId);
+      if (get().diagramId === diagramId) set({ snapshots: snapshots ?? [], isLoading: false });
+    } catch (err) {
+      console.error('Failed to load versions:', err);
       set({ isLoading: false });
     }
   },
 
-  saveSnapshot: async (label: string) => {
-    const elementsMap = useElementsStore.getState().elements;
-    const diagrams = Array.from(useDiagramStore.getState().diagrams.values());
-    const rootDiagramId = useDiagramStore.getState().diagramPath[0] || 'root-diagram';
-    const uiState = useUIStore.getState();
-
-    const elements = Array.from(elementsMap.values()).filter((el) => !el.isDeleted);
-    const projectId = diagrams[0]?.projectId || 'default';
-
-    const snapshot: VersionSnapshot = {
-      id: generateSnapshotId(),
-      projectId,
-      label,
-      createdAt: Date.now(),
-      isAutoSave: false,
-      scene: {
-        diagrams,
-        elements,
-        rootDiagramId,
-      },
-      appState: {
-        renderMode: uiState.renderMode,
-        viewBackgroundColor: '#ffffff',
-        gridEnabled: uiState.showGrid,
-        gridSize: uiState.gridSize,
-      },
-      thumbnailDataUrl: null,
-    };
-
-    await dbSaveSnapshot(snapshot);
-    set((state) => ({ snapshots: [snapshot, ...state.snapshots] }));
+  saveSnapshot: async (label) => {
+    const diagramId = useDiagramStore.getState().activeDiagramId;
+    // Without a live room the server snapshots what's saved, so save first
+    if (!isLiveSynced(diagramId)) await flushPendingSaves();
+    await apiSaveDiagram(diagramId, 'manual', label);
+    toast(`Saved version "${label}"`, 'success');
+    await get().load(diagramId);
   },
 
-  autoSnapshot: async () => {
-    const elementsMap = useElementsStore.getState().elements;
-    const diagrams = Array.from(useDiagramStore.getState().diagrams.values());
-    const rootDiagramId = useDiagramStore.getState().diagramPath[0] || 'root-diagram';
-    const uiState = useUIStore.getState();
-
-    const elements = Array.from(elementsMap.values()).filter((el) => !el.isDeleted);
-    if (elements.length === 0) return;
-
-    const projectId = diagrams[0]?.projectId || 'default';
-
-    const snapshot: VersionSnapshot = {
-      id: generateSnapshotId(),
-      projectId,
-      label: 'Auto-save',
-      createdAt: Date.now(),
-      isAutoSave: true,
-      scene: {
-        diagrams,
-        elements,
-        rootDiagramId,
-      },
-      appState: {
-        renderMode: uiState.renderMode,
-        viewBackgroundColor: '#ffffff',
-        gridEnabled: uiState.showGrid,
-        gridSize: uiState.gridSize,
-      },
-      thumbnailDataUrl: null,
-    };
-
-    await dbSaveSnapshot(snapshot);
-    set((state) => ({ snapshots: [snapshot, ...state.snapshots] }));
-
-    // Prune old auto-saves
-    await pruneSnapshots(projectId, MAX_AUTO_SNAPSHOT_AGE, MAX_AUTO_SNAPSHOTS);
-  },
-
-  restoreSnapshot: async (snapshotId: string) => {
-    const snapshot = await dbGetSnapshot(snapshotId);
-    if (!snapshot) return;
-
-    // Create safety snapshot before restoring
-    await get().saveSnapshot('Before restore');
-
-    // Push current state to history so restore is undoable
-    useElementsStore.getState().pushHistory();
-
-    // Load elements
-    useElementsStore.getState().setElements(snapshot.scene.elements);
-
-    // Load diagrams
-    const diagStore = useDiagramStore.getState();
-    const newDiagrams = new Map(snapshot.scene.diagrams.map((d) => [d.id, d]));
-    // We need to set diagrams directly — use a simple approach
-    for (const [id, diagram] of newDiagrams) {
-      if (!diagStore.diagrams.has(id)) {
-        diagStore.createDiagram(
-          diagram.parentDiagramId,
-          diagram.parentPortalId,
-          diagram.title,
-        );
-      }
-    }
-
-    // Navigate to root
-    if (snapshot.scene.rootDiagramId) {
-      diagStore.navigateToDiagram(snapshot.scene.rootDiagramId);
+  autoSnapshot: async (target) => {
+    const diagramId = target ?? useDiagramStore.getState().activeDiagramId;
+    try {
+      if (!isLiveSynced(diagramId)) await flushPendingSaves();
+      await apiSaveDiagram(diagramId, 'auto', 'Auto-save');
+      if (get().diagramId === diagramId) await get().load(diagramId);
+    } catch (err) {
+      console.error('Auto snapshot failed:', err);
     }
   },
 
-  deleteSnapshot: async (snapshotId: string) => {
-    await deleteSnapshotById(snapshotId);
-    set((state) => ({
-      snapshots: state.snapshots.filter((s) => s.id !== snapshotId),
-    }));
+  restoreSnapshot: async (snapshotId) => {
+    const diagramId = useDiagramStore.getState().activeDiagramId;
+    const { diagram } = await apiRestoreSnapshot(diagramId, snapshotId);
+
+    // Live rooms deliver the restore over Y.js; otherwise apply it here
+    if (!isLiveSynced(diagramId)) {
+      const restored = (diagram.elements ?? []) as MavisElement[];
+      withoutHistory(() =>
+        useElementsStore.setState((prev) => {
+          const next = new Map(prev.elements);
+          for (const [id, el] of prev.elements) if (el.diagramId === diagramId) next.delete(id);
+          for (const el of restored) next.set(el.id, el);
+          // Undo history doesn't span a restore
+          return { elements: next, history: [], historyIndex: -1 };
+        }),
+      );
+      recordSaved(diagramId, restored);
+    }
+    toast('Version restored. The previous state was saved as a backup.', 'success');
+    await get().load(diagramId);
   },
 }));

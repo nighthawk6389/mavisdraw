@@ -60,6 +60,12 @@ export interface BaseElement {
   groupIds: string[];
   isLocked: boolean;
   isDeleted: boolean;
+  /**
+   * Stacking order within a diagram (higher renders on top). Optional for
+   * backward compatibility: elements without it render in insertion order
+   * beneath elements that have one.
+   */
+  zIndex?: number;
 
   // Binding
   boundElements: { id: string; type: string }[];
@@ -130,6 +136,8 @@ export interface PortalElement extends BaseElement {
   thumbnailDataUrl: string | null;
   portalStyle: PortalStyle;
   githubLink: GitHubLink | null;
+  /** Folder in the linked repository this level stands for (set by repo → map). */
+  codePath?: string | null;
 }
 
 export type MavisElement =

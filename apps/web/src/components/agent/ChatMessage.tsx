@@ -3,11 +3,24 @@ import type { UIMessage } from 'ai';
 import type { DiagramProposal } from '@mavisdraw/types';
 import ProposalCard from './ProposalCard';
 
-function ToolPart({ part }: { part: { type: string; state?: string; output?: unknown; toolName?: string } }) {
+/** AI SDK v5+ reports 'output-available'; 'result' is the v4 name. */
+function isDone(state: string | undefined): boolean {
+  return state === 'output-available' || state === 'result';
+}
+
+function ToolPart({
+  part,
+}: {
+  part: { type: string; state?: string; output?: unknown; toolName?: string; errorText?: string };
+}) {
   // Detect tool name from the part type (e.g., "tool-propose_changes")
   const toolName = part.type.startsWith('tool-') ? part.type.slice(5) : (part.toolName ?? '');
 
-  if (toolName === 'propose_changes' && part.state === 'result') {
+  if (part.state === 'output-error') {
+    return <p className="text-xs text-red-600 py-1">{part.errorText ?? `${toolName} failed`}</p>;
+  }
+
+  if (toolName === 'propose_changes' && isDone(part.state)) {
     const proposal = part.output as DiagramProposal;
     if (proposal?.proposalId) {
       return <ProposalCard proposal={proposal} />;
@@ -30,7 +43,7 @@ function ToolPart({ part }: { part: { type: string; state?: string; output?: unk
   }
 
   // Completed non-proposal tools
-  if (part.state === 'result') {
+  if (isDone(part.state)) {
     const labels: Record<string, string> = {
       browse_diagram: 'Viewed diagram',
       browse_code: 'Browsed code',

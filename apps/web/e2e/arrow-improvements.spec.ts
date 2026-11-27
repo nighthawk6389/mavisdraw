@@ -32,6 +32,8 @@ async function selectElement(page: Page, x: number, y: number) {
 
 async function ensureStylePanelOpen(page: Page) {
   const panel = page.getByTestId('style-panel');
+  // Contextual panels appear once the selection settles (~250ms)
+  await panel.waitFor({ state: 'visible', timeout: 1500 }).catch(() => undefined);
   if (!(await panel.isVisible().catch(() => false))) {
     await page.locator('button[title^="Style panel"]').click();
     await page.waitForTimeout(200);
@@ -153,20 +155,41 @@ test.describe('Arrowhead Controls (Phase 2)', () => {
     expect(errors).toEqual([]);
   });
 
-  test('double-clicking arrow cycles routing mode', async ({ page }) => {
+  test('double-clicking an arrow adds a label at its midpoint', async ({ page }) => {
     const errors = collectErrors(page);
 
     const box = (await getCanvasBox(page))!;
     await drawArrow(page, box.x + 100, box.y + 300, box.x + 400, box.y + 300);
 
-    await selectElement(page, box.x + 250, box.y + 300);
-    await page.waitForTimeout(200);
-
-    // Double-click to cycle routing mode (straight -> curved)
     await page.mouse.dblclick(box.x + 250, box.y + 300);
-    await page.waitForTimeout(300);
+    await page.keyboard.type('REST');
+    await page.keyboard.press('Enter');
 
+    const els = await page.evaluate(() =>
+      (window as unknown as { __MAVISDRAW__: { getActiveElements: () => Array<Record<string, unknown>> } })
+        .__MAVISDRAW__.getActiveElements(),
+    );
+    const arrow = els.find((e) => e.type === 'arrow')!;
+    const label = els.find((e) => e.type === 'text')!;
+    expect(label.text).toBe('REST');
+    expect(label.containerId).toBe(arrow.id);
+    // Centred on the arrow's midpoint
+    const cx = (label.x as number) + (label.width as number) / 2;
+    expect(cx).toBeCloseTo((arrow.x as number) + 150, -1);
     expect(errors).toEqual([]);
+  });
+
+  test('routing mode changes from the context menu', async ({ page }) => {
+    const box = (await getCanvasBox(page))!;
+    await drawArrow(page, box.x + 100, box.y + 300, box.x + 400, box.y + 300);
+    await page.mouse.click(box.x + 250, box.y + 300, { button: 'right' });
+    await page.getByRole('menuitemcheckbox', { name: /Elbow connector/ }).click();
+    const routing = await page.evaluate(() =>
+      (window as unknown as { __MAVISDRAW__: { getActiveElements: () => Array<Record<string, unknown>> } })
+        .__MAVISDRAW__.getActiveElements()
+        .find((e) => e.type === 'arrow')?.routingMode,
+    );
+    expect(routing).toBe('elbow');
   });
 });
 

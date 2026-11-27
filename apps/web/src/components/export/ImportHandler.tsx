@@ -1,10 +1,10 @@
 import React, { useCallback, useRef } from 'react';
 import { useElementsStore } from '../../stores/elementsStore';
 import { useDiagramStore } from '../../stores/diagramStore';
-import { importMavisDrawFile } from '@mavisdraw/export';
-import { importFromPng } from '@mavisdraw/export';
-import { importFromExcalidraw, importFromDrawio } from '@mavisdraw/compat';
 import type { ExcalidrawFile } from '@mavisdraw/compat';
+import { importMermaidText, looksLikeMermaid } from '../../import/diagramAsCode';
+import { getCanvasController } from '../canvas/canvasController';
+import { toast } from '../../stores/toastStore';
 
 function detectFormat(
   filename: string,
@@ -47,11 +47,29 @@ export default function ImportHandler() {
         content = await file.text();
       }
 
-      const format = detectFormat(file.name, content);
-      if (!format) {
-        alert('Unsupported file format. Supported: .mavisdraw, .excalidraw, .drawio, .png');
+      // Mermaid flowcharts import into the current diagram (subgraphs → nested diagrams)
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      if (
+        typeof content === 'string' &&
+        (ext === 'mmd' || ext === 'mermaid' || looksLikeMermaid(content))
+      ) {
+        const at = getCanvasController()?.getPasteAnchor() ?? { x: 0, y: 0 };
+        await importMermaidText(content, at);
         return;
       }
+
+      const format = detectFormat(file.name, content);
+      if (!format) {
+        toast(
+          'Unsupported file. Supported: .mavisdraw, .excalidraw, .drawio, .png, Mermaid (.mmd)',
+          'error',
+        );
+        return;
+      }
+
+      // Parsers load on demand so they don't weigh down the editor bundle
+      const [{ importMavisDrawFile, importFromPng }, { importFromExcalidraw, importFromDrawio }] =
+        await Promise.all([import('@mavisdraw/export'), import('@mavisdraw/compat')]);
 
       let diagrams: import('@mavisdraw/types').Diagram[] = [];
       let elements: import('@mavisdraw/types').MavisElement[] = [];
@@ -152,7 +170,7 @@ export default function ImportHandler() {
       <input
         ref={fileInputRef}
         type="file"
-        accept=".mavisdraw,.excalidraw,.drawio,.png,.json,.xml"
+        accept=".mavisdraw,.excalidraw,.drawio,.png,.json,.xml,.mmd,.mermaid,.md,.txt"
         onChange={handleFileChange}
         className="hidden"
         id="import-file-input"

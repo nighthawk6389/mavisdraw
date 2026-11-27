@@ -192,18 +192,28 @@ test.describe('Right-Click Pan', () => {
     expect(errors).toEqual([]);
   });
 
-  test('right-click pan does not open context menu', async ({ page }) => {
+  test('right-click drag pans without opening a context menu', async ({ page }) => {
     const box = (await getCanvasBox(page))!;
-    const centerX = box.x + box.width / 2;
-    const centerY = box.y + box.height / 2;
+    const startX = box.x + box.width / 2;
+    const startY = box.y + box.height / 2;
 
-    // Right-click on the canvas
-    await page.mouse.click(centerX, centerY, { button: 'right' });
+    await page.mouse.move(startX, startY);
+    await page.mouse.down({ button: 'right' });
+    await page.mouse.move(startX + 120, startY + 80, { steps: 5 });
+    await page.mouse.up({ button: 'right' });
     await page.waitForTimeout(200);
 
-    // No context menu should be visible (browser-native context menus are prevented)
-    const contextMenu = page.locator('[role="menu"]');
-    await expect(contextMenu).toHaveCount(0);
+    await expect(page.locator('[role="menu"]')).toHaveCount(0);
+  });
+
+  test('right-click without dragging opens the canvas context menu', async ({ page }) => {
+    const box = (await getCanvasBox(page))!;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button: 'right' });
+    const menu = page.getByRole('menu', { name: 'Canvas actions' });
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole('menuitem', { name: /Zoom to fit/ })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
   });
 
   test('right-click pan does not produce errors', async ({ page }) => {

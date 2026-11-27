@@ -1,11 +1,12 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { nanoid } from 'nanoid';
-import { eq } from 'drizzle-orm';
+import { eq, or } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { users, sessions } from '../db/schema.js';
+import { config } from '../config.js';
 
-const JWT_SECRET = process.env.JWT_SECRET ?? 'mavisdraw-dev-secret-change-in-production';
+const JWT_SECRET = config.jwtSecret;
 const JWT_ACCESS_EXPIRY = '15m';
 const JWT_REFRESH_EXPIRY_DAYS = 30;
 const BCRYPT_ROUNDS = 10;
@@ -94,9 +95,20 @@ export async function loginUser(
   return { user: toUserResponse(user), tokens };
 }
 
+/**
+ * How long a just-rotated refresh token keeps working. Covers responses that
+ * never reached the browser (navigation aborted the request, flaky network)
+ * and several tabs refreshing at once — otherwise any of those logs the user
+ * out.
+ */
+const ROTATION_GRACE_MS = 60_000;
+
 export async function refreshTokens(refreshToken: string): Promise<AuthTokens> {
   const session = await db.query.sessions.findFirst({
-    where: eq(sessions.refreshToken, refreshToken),
+    where: or(
+      eq(sessions.refreshToken, refreshToken),
+      eq(sessions.previousRefreshToken, refreshToken),
+    ),
   });
 
   if (!session || session.expiresAt < new Date()) {
@@ -110,15 +122,40 @@ export async function refreshTokens(refreshToken: string): Promise<AuthTokens> {
     throw new AuthError('User not found', 401);
   }
 
-  // Delete old session
-  await db.delete(sessions).where(eq(sessions.id, session.id));
+  const accessToken = signAccessToken(user.id, user.email);
 
-  // Create new session
-  return createSession(user.id, user.email);
+  // A recently replaced token: hand back the session's current token
+  if (session.refreshToken !== refreshToken) {
+    const rotatedAt = session.rotatedAt?.getTime() ?? 0;
+    if (Date.now() - rotatedAt > ROTATION_GRACE_MS) {
+      throw new AuthError('Invalid or expired refresh token', 401);
+    }
+    return { accessToken, refreshToken: session.refreshToken };
+  }
+
+  // Rotate in place, remembering the old token for the grace window
+  const nextRefreshToken = nanoid(64);
+  const expiresAt = new Date();
+  expiresAt.setDate(expiresAt.getDate() + JWT_REFRESH_EXPIRY_DAYS);
+  await db
+    .update(sessions)
+    .set({
+      refreshToken: nextRefreshToken,
+      previousRefreshToken: refreshToken,
+      rotatedAt: new Date(),
+      expiresAt,
+    })
+    .where(eq(sessions.id, session.id));
+
+  return { accessToken, refreshToken: nextRefreshToken };
 }
 
 export async function logout(refreshToken: string): Promise<void> {
-  await db.delete(sessions).where(eq(sessions.refreshToken, refreshToken));
+  await db
+    .delete(sessions)
+    .where(
+      or(eq(sessions.refreshToken, refreshToken), eq(sessions.previousRefreshToken, refreshToken)),
+    );
 }
 
 export async function getUserById(userId: string): Promise<UserResponse | null> {
@@ -137,10 +174,14 @@ export function verifyAccessToken(token: string): TokenPayload {
   }
 }
 
-async function createSession(userId: string, email: string): Promise<AuthTokens> {
-  const accessToken = jwt.sign({ userId, email } satisfies TokenPayload, JWT_SECRET, {
+function signAccessToken(userId: string, email: string): string {
+  return jwt.sign({ userId, email } satisfies TokenPayload, JWT_SECRET, {
     expiresIn: JWT_ACCESS_EXPIRY,
   });
+}
+
+async function createSession(userId: string, email: string): Promise<AuthTokens> {
+  const accessToken = signAccessToken(userId, email);
 
   const refreshToken = nanoid(64);
   const expiresAt = new Date();

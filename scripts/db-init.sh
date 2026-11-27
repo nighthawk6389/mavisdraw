@@ -6,9 +6,9 @@ until pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" 2>/dev/null; do
   sleep 1
 done
 
-echo "Running schema push..."
+echo "Applying migrations..."
 cd /app/apps/server
-pnpm run db:push
+node dist/db/migrate.js
 
 echo "Running seed..."
 pnpm run db:seed

@@ -5,6 +5,7 @@ import {
   timestamp,
   boolean,
   integer,
+  doublePrecision,
   jsonb,
   index,
   uniqueIndex,
@@ -42,10 +43,17 @@ export const sessions = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     refreshToken: text('refresh_token').notNull(),
+    /** Token replaced by the last rotation; still honoured for a short grace window. */
+    previousRefreshToken: text('previous_refresh_token'),
+    rotatedAt: timestamp('rotated_at', { withTimezone: true }),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index('sessions_user_id_idx').on(table.userId)],
+  (table) => [
+    index('sessions_user_id_idx').on(table.userId),
+    index('sessions_refresh_token_idx').on(table.refreshToken),
+    index('sessions_previous_refresh_token_idx').on(table.previousRefreshToken),
+  ],
 );
 
 export const sessionsRelations = relations(sessions, ({ one }) => ({
@@ -67,6 +75,15 @@ export const projects = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     rootDiagramId: text('root_diagram_id'),
     isPublic: boolean('is_public').notNull().default(false),
+    /** Team space the project belongs to (its members get access); null = personal. */
+    workspaceId: text('workspace_id').references(() => workspaces.id, { onDelete: 'set null' }),
+    /** Dashboard folder (a name, shared by everyone who sees the project). */
+    folder: varchar('folder', { length: 100 }),
+    /**
+     * The repository the map was generated from, and the architecture model
+     * at that time (drift is measured against it).
+     */
+    repoSource: jsonb('repo_source').$type<RepoSource | null>(),
     thumbnailUrl: text('thumbnail_url'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -103,6 +120,12 @@ export const diagrams = pgTable(
     gridSize: integer('grid_size').notNull().default(20),
     renderMode: varchar('render_mode', { length: 20 }).notNull().default('sketchy'),
     layers: jsonb('layers').notNull().default([]),
+    /**
+     * Collaboration document (Y.js update, base64). Source of truth while it
+     * exists; cleared whenever `elements` is written directly so the next
+     * live session re-seeds from the JSON.
+     */
+    yjsState: text('yjs_state'),
     createdBy: text('created_by')
       .notNull()
       .references(() => users.id),
@@ -204,6 +227,180 @@ export const projectPermissionsRelations = relations(projectPermissions, ({ one 
     references: [users.id],
   }),
 }));
+
+// ── Workspaces (teams) ───────────────────────────────────────
+
+export type WorkspaceRole = 'owner' | 'admin' | 'member';
+
+export const workspaces = pgTable('workspaces', {
+  id: text('id').primaryKey(),
+  name: varchar('name', { length: 120 }).notNull(),
+  createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const workspaceMembers = pgTable(
+  'workspace_members',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    role: varchar('role', { length: 20 }).notNull().default('member').$type<WorkspaceRole>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('workspace_members_unique_idx').on(table.workspaceId, table.userId),
+    index('workspace_members_user_idx').on(table.userId),
+  ],
+);
+
+/** An invitation by email to a project or a workspace, claimable by that email's account. */
+export const invites = pgTable(
+  'invites',
+  {
+    id: text('id').primaryKey(),
+    kind: varchar('kind', { length: 20 }).notNull().$type<'project' | 'workspace'>(),
+    targetId: text('target_id').notNull(),
+    email: varchar('email', { length: 255 }).notNull(),
+    role: varchar('role', { length: 20 }).notNull(),
+    token: text('token').notNull(),
+    invitedBy: text('invited_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+    acceptedBy: text('accepted_by').references(() => users.id, { onDelete: 'set null' }),
+  },
+  (table) => [
+    uniqueIndex('invites_token_idx').on(table.token),
+    index('invites_email_idx').on(table.email),
+    index('invites_target_idx').on(table.kind, table.targetId),
+  ],
+);
+
+// ── Comments ─────────────────────────────────────────────────
+
+/**
+ * A comment thread pinned to a diagram. When `elementId` is set the pin
+ * follows that element (offset from its top-left); x/y is where it was
+ * placed, used if the element is gone.
+ */
+export const commentThreads = pgTable(
+  'comment_threads',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    diagramId: text('diagram_id')
+      .notNull()
+      .references(() => diagrams.id, { onDelete: 'cascade' }),
+    elementId: text('element_id'),
+    x: doublePrecision('x').notNull(),
+    y: doublePrecision('y').notNull(),
+    offsetX: doublePrecision('offset_x').notNull().default(0),
+    offsetY: doublePrecision('offset_y').notNull().default(0),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    resolvedBy: text('resolved_by').references(() => users.id, { onDelete: 'set null' }),
+    createdBy: text('created_by')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('comment_threads_project_id_idx').on(table.projectId),
+    index('comment_threads_diagram_id_idx').on(table.diagramId),
+  ],
+);
+
+export const comments = pgTable(
+  'comments',
+  {
+    id: text('id').primaryKey(),
+    threadId: text('thread_id')
+      .notNull()
+      .references(() => commentThreads.id, { onDelete: 'cascade' }),
+    authorId: text('author_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    body: text('body').notNull(),
+    /** User ids @mentioned in the body. */
+    mentions: jsonb('mentions').notNull().default([]).$type<string[]>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    editedAt: timestamp('edited_at', { withTimezone: true }),
+  },
+  (table) => [index('comments_thread_id_idx').on(table.threadId)],
+);
+
+export type NotificationType = 'mention' | 'reply';
+
+export const notifications = pgTable(
+  'notifications',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    type: varchar('type', { length: 20 }).notNull().$type<NotificationType>(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    diagramId: text('diagram_id')
+      .notNull()
+      .references(() => diagrams.id, { onDelete: 'cascade' }),
+    threadId: text('thread_id')
+      .notNull()
+      .references(() => commentThreads.id, { onDelete: 'cascade' }),
+    commentId: text('comment_id')
+      .notNull()
+      .references(() => comments.id, { onDelete: 'cascade' }),
+    actorId: text('actor_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    readAt: timestamp('read_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('notifications_user_id_idx').on(table.userId, table.createdAt)],
+);
+
+// ── Repository the map was generated from ───────────────────
+
+export interface RepoSource {
+  kind: 'github' | 'folder';
+  /** "owner/repo@ref" or the folder's name. */
+  label: string;
+  owner?: string;
+  repo?: string;
+  ref?: string;
+  connectionId?: string;
+  /** Architecture model (see @mavisdraw/compat analyzeRepo) at generation time. */
+  model: unknown;
+  generatedAt: string;
+  generatedBy: string;
+}
+
+// ── Tours (presentation paths through the map) ──────────────
+
+export interface TourStop {
+  id: string;
+  diagramId: string;
+  /** Saved camera; null means "fit the diagram's content". */
+  viewport: { zoom: number; scrollX: number; scrollY: number } | null;
+  title: string;
+  note: string;
+}
+
+export const projectTours = pgTable('project_tours', {
+  projectId: text('project_id')
+    .primaryKey()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  stops: jsonb('stops').notNull().default([]).$type<TourStop[]>(),
+  updatedBy: text('updated_by').references(() => users.id, { onDelete: 'set null' }),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
 
 // ── GitHub Connections ──────────────────────────────────────
 

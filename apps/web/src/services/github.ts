@@ -46,11 +46,12 @@ export async function apiGetGitHubAuthUrl(
 
 export async function apiGitHubCallback(
   code: string,
-  enterpriseUrl?: string,
+  state: string,
 ): Promise<{ connection: GitHubConnection }> {
+  // The server reads the host from the signed state, not from the client
   return apiFetch('/api/github/callback', {
     method: 'POST',
-    body: JSON.stringify({ code, enterpriseUrl }),
+    body: JSON.stringify({ code, state }),
   });
 }
 

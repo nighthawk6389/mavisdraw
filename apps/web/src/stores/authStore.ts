@@ -32,6 +32,8 @@ interface AuthState {
   clearError: () => void;
 }
 
+let initializing: Promise<void> | null = null;
+
 export const useAuthStore = create<AuthState>((set, _get) => {
   // Set up unauthorized callback
   setOnUnauthorized(() => {
@@ -88,52 +90,64 @@ export const useAuthStore = create<AuthState>((set, _get) => {
       set({ user: null, isAuthenticated: false });
     },
 
-    initialize: async () => {
-      set({ isLoading: true });
-      try {
-        // Try to refresh the token first
-        console.log('[auth] Attempting token refresh...');
-        const tokenResponse = await apiRefreshToken();
-        setAccessToken(tokenResponse.accessToken);
-        console.log('[auth] Token refresh succeeded');
-
-        // Then get user info
-        const userResponse = await apiGetMe();
-        console.log('[auth] Got user:', userResponse.user.email);
-        set({
-          user: userResponse.user,
-          isAuthenticated: true,
-          isLoading: false,
-        });
-      } catch (refreshErr) {
-        console.log('[auth] Token refresh failed:', refreshErr);
-        // In dev mode, auto-login as demo user
-        console.log('[auth] DEV mode:', import.meta.env.DEV);
-        if (import.meta.env.DEV) {
-          try {
-            console.log('[auth] Attempting dev auto-login as demo@mavisdraw.dev...');
-            const response = await apiLogin('demo@mavisdraw.dev', 'password123');
-            setAccessToken(response.accessToken);
-            console.log('[auth] Dev auto-login succeeded for:', response.user.email);
-            set({
-              user: response.user,
-              isAuthenticated: true,
-              isLoading: false,
-            });
-            return;
-          } catch (loginErr) {
-            console.error('[auth] Dev auto-login FAILED:', loginErr);
-            // Fall through to unauthenticated state if demo login fails
-          }
-        }
-        set({
-          user: null,
-          isAuthenticated: false,
-          isLoading: false,
+    initialize: () => {
+      // Single-flight: StrictMode (and multiple callers) must not race two
+      // refreshes with the same rotating refresh token, or the loser logs
+      // the user out.
+      if (!initializing) {
+        initializing = runInitialize().finally(() => {
+          initializing = null;
         });
       }
+      return initializing;
     },
 
     clearError: () => set({ error: null }),
   };
+
+  async function runInitialize(): Promise<void> {
+    set({ isLoading: true });
+    try {
+      // Try to refresh the token first
+      console.log('[auth] Attempting token refresh...');
+      const tokenResponse = await apiRefreshToken();
+      setAccessToken(tokenResponse.accessToken);
+      console.log('[auth] Token refresh succeeded');
+
+      // Then get user info
+      const userResponse = await apiGetMe();
+      console.log('[auth] Got user:', userResponse.user.email);
+      set({
+        user: userResponse.user,
+        isAuthenticated: true,
+        isLoading: false,
+      });
+    } catch (refreshErr) {
+      console.log('[auth] Token refresh failed:', refreshErr);
+      // In dev mode, auto-login as demo user
+      console.log('[auth] DEV mode:', import.meta.env.DEV);
+      if (import.meta.env.DEV && import.meta.env.VITE_DISABLE_DEV_AUTO_LOGIN !== 'true') {
+        try {
+          console.log('[auth] Attempting dev auto-login as demo@mavisdraw.dev...');
+          const response = await apiLogin('demo@mavisdraw.dev', 'password123');
+          setAccessToken(response.accessToken);
+          console.log('[auth] Dev auto-login succeeded for:', response.user.email);
+          set({
+            user: response.user,
+            isAuthenticated: true,
+            isLoading: false,
+          });
+          return;
+        } catch (loginErr) {
+          console.error('[auth] Dev auto-login FAILED:', loginErr);
+          // Fall through to unauthenticated state if demo login fails
+        }
+      }
+      set({
+        user: null,
+        isAuthenticated: false,
+        isLoading: false,
+      });
+    }
+  }
 });

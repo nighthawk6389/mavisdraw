@@ -119,3 +119,26 @@ The popup lost its `window.opener` reference. This can happen if the browser blo
 ### Token refresh / 401 errors
 
 The backend requires authentication for all GitHub routes. Make sure you're logged in (dev mode auto-login should handle this). Check the browser console for `[auth]` log messages.
+
+
+## GitHub Enterprise Server
+
+Only github.com and **one** Enterprise Server configured by the operator can
+be used — the server never sends OAuth credentials or users' tokens to a host
+a client names. To enable an Enterprise Server, register an OAuth app on it and
+set:
+
+```
+GITHUB_ENTERPRISE_URL=https://github.example.com
+GITHUB_ENTERPRISE_CLIENT_ID=...
+GITHUB_ENTERPRISE_CLIENT_SECRET=...
+```
+
+## Security notes
+
+- The OAuth `state` is signed by the server and bound to the user who started
+  the flow and to the GitHub host; the callback rejects anything else (and
+  states older than 10 minutes).
+- In production the server refuses to start without `JWT_SECRET`,
+  `COOKIE_SECRET` (32+ characters each), `DATABASE_URL`, `CORS_ORIGIN`, and —
+  when GitHub is configured — a 64-hex-character `GITHUB_TOKEN_ENCRYPTION_KEY`.

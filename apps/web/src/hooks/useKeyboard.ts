@@ -1,10 +1,15 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect } from 'react';
+import { useCommentsStore } from '../stores/commentsStore';
+import { useVersionStore } from '../stores/versionStore';
 import { useToolStore, type Tool } from '../stores/toolStore';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useElementsStore } from '../stores/elementsStore';
 import { useDiagramStore } from '../stores/diagramStore';
 import { useUIStore } from '../stores/uiStore';
 import { openImportDialog } from '../components/export/ImportHandler';
+import { getCanvasController } from '../components/canvas/canvasController';
+import * as actions from '../editor/actions';
+import { canEdit } from '../stores/permissionStore';
 
 const KEY_TO_TOOL: Record<string, Tool> = {
   v: 'select',
@@ -17,224 +22,270 @@ const KEY_TO_TOOL: Record<string, Tool> = {
   p: 'freedraw',
   t: 'text',
   o: 'portal',
+  c: 'comment',
 };
 
+const NUDGE_KEYS: Record<string, [number, number]> = {
+  arrowleft: [-1, 0],
+  arrowright: [1, 0],
+  arrowup: [0, -1],
+  arrowdown: [0, 1],
+};
+
+/** Move the selection by (dx, dy); repeated nudges merge into one undo step. */
+function nudgeSelection(dx: number, dy: number): void {
+  const ids = useSelectionStore.getState().selectedIds;
+  if (ids.size === 0) return;
+  const store = useElementsStore.getState();
+  store.pushHistory('nudge');
+  for (const id of ids) {
+    const el = store.elements.get(id);
+    if (!el || el.isDeleted || el.isLocked) continue;
+    if (el.type === 'text' && el.containerId && ids.has(el.containerId)) continue;
+    useElementsStore.getState().moveElementWithBindings(id, el.x + dx, el.y + dy);
+  }
+  getCanvasController()?.invalidate();
+}
+
+/**
+ * Global editor shortcuts. Reads store state at keypress time so the
+ * listener is bound once instead of on every selection change.
+ * Copy/cut/paste are handled by useClipboard via real clipboard events.
+ */
 export function useKeyboard(
   interactionManagerRef: React.MutableRefObject<{ setSpacePressed: (p: boolean) => void } | null>,
 ) {
-  const setTool = useToolStore((s) => s.setTool);
-  const selectedIds = useSelectionStore((s) => s.selectedIds);
-  const clearSelection = useSelectionStore((s) => s.clearSelection);
-  const selectAll = useSelectionStore((s) => s.selectAll);
-  const selectMultiple = useSelectionStore((s) => s.selectMultiple);
-  const undo = useElementsStore((s) => s.undo);
-  const redo = useElementsStore((s) => s.redo);
-  const deleteElements = useElementsStore((s) => s.deleteElements);
-  const groupElements = useElementsStore((s) => s.groupElements);
-  const ungroupElements = useElementsStore((s) => s.ungroupElements);
-  const copyElements = useElementsStore((s) => s.copyElements);
-  const pasteElements = useElementsStore((s) => s.pasteElements);
-  const duplicateElements = useElementsStore((s) => s.duplicateElements);
-  const activeDiagramId = useDiagramStore((s) => s.activeDiagramId);
-  const diagramPath = useDiagramStore((s) => s.diagramPath);
-
-  const handleKeyDown = useCallback(
-    (event: KeyboardEvent) => {
-      // Don't handle if typing in an input
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
         return;
       }
 
       const key = event.key.toLowerCase();
-      const isCtrlOrMeta = event.ctrlKey || event.metaKey;
+      const code = event.code;
+      const mod = event.ctrlKey || event.metaKey;
+      const selectedIds = useSelectionStore.getState().selectedIds;
+      const editable = canEdit();
 
-      // Space = toggle pan mode
+      // Viewers: navigation, selection, search, copy/export only
+      if (!editable) {
+        if (key === 'enter' && selectedIds.size === 1) {
+          const [id] = Array.from(selectedIds);
+          if (useElementsStore.getState().elements.get(id)?.type === 'portal') {
+            event.preventDefault();
+            getCanvasController()?.openPortal?.(id);
+          }
+          return;
+        }
+        if (key === 'backspace' && selectedIds.size === 0 && useDiagramStore.getState().diagramPath.length > 1) {
+          event.preventDefault();
+          useDiagramStore.getState().navigateUp();
+          return;
+        }
+        const allowed =
+          (mod && ['a', 'k', '=', '+', '-', '0'].includes(key)) ||
+          (event.shiftKey && !mod && (code === 'Digit1' || code === 'Digit2')) ||
+          (event.shiftKey && event.altKey && code === 'KeyC') ||
+          (mod && event.shiftKey && (key === 'e' || key === 't')) ||
+          key === 'escape' ||
+          (!mod && !event.altKey && ['v', 'h', 'c', ' '].includes(key));
+        if (!allowed) return;
+      }
+
+      // Space = temporary pan mode
       if (key === ' ') {
         event.preventDefault();
         interactionManagerRef.current?.setSpacePressed(true);
         return;
       }
 
-      // Escape = deselect / cancel
       if (key === 'escape') {
-        clearSelection();
-        setTool('select');
+        // Close an open comment / comparison first, then leave comment mode / clear selection
+        if (useVersionStore.getState().compare) {
+          useVersionStore.getState().stopCompare();
+          return;
+        }
+        const comments = useCommentsStore.getState();
+        if (comments.draft || comments.activeThreadId) {
+          comments.cancelDraft();
+          comments.openThread(null);
+          return;
+        }
+        useSelectionStore.getState().clearSelection();
+        useToolStore.getState().setTool('select');
         return;
       }
 
       // Delete / Backspace = delete selected (or remove waypoint if moving one)
       if (key === 'delete' || key === 'backspace') {
-        const mgr = interactionManagerRef.current as { setSpacePressed: (p: boolean) => void; handleKeyDown?: (e: KeyboardEvent) => boolean } | null;
+        const mgr = interactionManagerRef.current as {
+          handleKeyDown?: (e: KeyboardEvent) => boolean;
+        } | null;
         if (mgr?.handleKeyDown?.(event)) return;
         if (selectedIds.size > 0) {
           event.preventDefault();
-          deleteElements(Array.from(selectedIds));
-          clearSelection();
-        } else if (key === 'backspace' && diagramPath.length > 1) {
-          // Navigate up when no selection and not at root
+          actions.deleteSelection();
+        } else if (key === 'backspace' && useDiagramStore.getState().diagramPath.length > 1) {
           event.preventDefault();
           useDiagramStore.getState().navigateUp();
         }
         return;
       }
 
-      // Ctrl+Z = undo
-      if (isCtrlOrMeta && key === 'z' && !event.shiftKey) {
-        event.preventDefault();
-        undo();
-        return;
-      }
-
-      // Ctrl+Shift+Z or Ctrl+Y = redo
-      if ((isCtrlOrMeta && key === 'z' && event.shiftKey) || (isCtrlOrMeta && key === 'y')) {
-        event.preventDefault();
-        redo();
-        return;
-      }
-
-      // Ctrl+A = select all
-      if (isCtrlOrMeta && key === 'a') {
-        event.preventDefault();
-        const currentElements = useElementsStore.getState().elements;
-        const allIds = Array.from(currentElements.values())
-          .filter((el) => !el.isDeleted && el.diagramId === activeDiagramId)
-          .map((el) => el.id);
-        selectAll(allIds);
-        return;
-      }
-
-      // Ctrl+G = group
-      if (isCtrlOrMeta && key === 'g' && !event.shiftKey) {
-        event.preventDefault();
-        if (selectedIds.size >= 2) {
-          groupElements(Array.from(selectedIds));
+      // Enter: drill into a selected portal, or edit the selected element's label
+      if (key === 'enter' && !mod && selectedIds.size === 1) {
+        const [id] = Array.from(selectedIds);
+        const el = useElementsStore.getState().elements.get(id);
+        if (el && !el.isDeleted) {
+          event.preventDefault();
+          const controller = getCanvasController();
+          if (el.type === 'portal') controller?.openPortal?.(id);
+          else controller?.editLabel?.(id);
+          return;
         }
-        return;
       }
 
-      // Ctrl+Shift+G = ungroup
-      if (isCtrlOrMeta && key === 'g' && event.shiftKey) {
+      // Arrow keys nudge the selection (Shift = 10px)
+      if (!mod && NUDGE_KEYS[key] && selectedIds.size > 0) {
         event.preventDefault();
-        if (selectedIds.size > 0) {
-          ungroupElements(Array.from(selectedIds));
-        }
+        const [ux, uy] = NUDGE_KEYS[key];
+        const step = event.shiftKey ? 10 : 1;
+        nudgeSelection(ux * step, uy * step);
         return;
       }
 
-      // Ctrl+C = copy
-      if (isCtrlOrMeta && key === 'c') {
+      // Mod+K = command palette (jump to anything, run commands)
+      if (mod && key === 'k') {
         event.preventDefault();
-        if (selectedIds.size > 0) {
-          copyElements(Array.from(selectedIds));
-        }
+        useUIStore.getState().setShowCommandPalette(true);
         return;
       }
 
-      // Ctrl+V = paste
-      if (isCtrlOrMeta && key === 'v') {
+      // ── Zoom ───────────────────────────────────────────────
+      if (event.shiftKey && !mod && code === 'Digit1') {
         event.preventDefault();
-        const pasted = pasteElements(activeDiagramId);
-        if (pasted.length > 0) {
-          selectMultiple(pasted.map((el) => el.id));
-        }
+        actions.zoomToFit();
         return;
       }
-
-      // Ctrl+D = duplicate
-      if (isCtrlOrMeta && key === 'd') {
+      if (event.shiftKey && !mod && code === 'Digit2') {
         event.preventDefault();
-        if (selectedIds.size > 0) {
-          const duplicated = duplicateElements(Array.from(selectedIds));
-          if (duplicated.length > 0) {
-            selectMultiple(duplicated.map((el) => el.id));
-          }
-        }
+        actions.zoomToSelection();
         return;
       }
-
-      // Ctrl+X = cut (copy + delete)
-      if (isCtrlOrMeta && key === 'x') {
+      if (mod && (key === '=' || key === '+')) {
         event.preventDefault();
-        if (selectedIds.size > 0) {
-          copyElements(Array.from(selectedIds));
-          deleteElements(Array.from(selectedIds));
-          clearSelection();
-        }
+        getCanvasController()?.zoomIn();
+        return;
+      }
+      if (mod && key === '-') {
+        event.preventDefault();
+        getCanvasController()?.zoomOut();
+        return;
+      }
+      if (mod && key === '0') {
+        event.preventDefault();
+        getCanvasController()?.resetZoom();
         return;
       }
 
-      // Ctrl+Shift+T = toggle diagram tree sidebar
-      if (isCtrlOrMeta && event.shiftKey && key === 't') {
+      // ── History ────────────────────────────────────────────
+      if (mod && key === 'z' && !event.shiftKey) {
+        event.preventDefault();
+        useElementsStore.getState().undo();
+        return;
+      }
+      if ((mod && key === 'z' && event.shiftKey) || (mod && key === 'y')) {
+        event.preventDefault();
+        useElementsStore.getState().redo();
+        return;
+      }
+
+      // ── Selection & structure ──────────────────────────────
+      if (mod && key === 'a') {
+        event.preventDefault();
+        actions.selectAll();
+        return;
+      }
+      if (mod && key === 'g') {
+        event.preventDefault();
+        if (event.shiftKey) actions.ungroup();
+        else actions.group();
+        return;
+      }
+      if (mod && key === 'd') {
+        event.preventDefault();
+        actions.duplicate();
+        return;
+      }
+      if (mod && event.shiftKey && key === 'l') {
+        event.preventDefault();
+        actions.toggleLock();
+        return;
+      }
+
+      // ── Stacking: Ctrl+] / Ctrl+[ (with Shift = all the way) ─
+      if (mod && (code === 'BracketRight' || code === 'BracketLeft')) {
+        event.preventDefault();
+        const up = code === 'BracketRight';
+        actions.reorder(event.shiftKey ? (up ? 'front' : 'back') : up ? 'forward' : 'backward');
+        return;
+      }
+
+      // Shift+Alt+T = tidy up layout
+      if (event.shiftKey && event.altKey && code === 'KeyT') {
+        event.preventDefault();
+        void actions.tidyUp();
+        return;
+      }
+
+      // Shift+Alt+C = copy as PNG
+      if (event.shiftKey && event.altKey && code === 'KeyC') {
+        event.preventDefault();
+        void actions.copySelectionAsPng();
+        return;
+      }
+
+      // ── Panels & files ─────────────────────────────────────
+      if (mod && event.shiftKey && key === 't') {
         event.preventDefault();
         useUIStore.getState().toggleDiagramTree();
         return;
       }
-
-      // Ctrl+S = save version snapshot
-      if (isCtrlOrMeta && key === 's' && !event.shiftKey) {
+      if (mod && key === 's' && !event.shiftKey) {
         event.preventDefault();
         useUIStore.getState().toggleVersionHistory();
         return;
       }
-
-      // Ctrl+Shift+E = export dialog
-      if (isCtrlOrMeta && event.shiftKey && key === 'e') {
+      if (mod && event.shiftKey && key === 'e') {
         event.preventDefault();
         useUIStore.getState().toggleExportDialog();
         return;
       }
-
-      // Ctrl+O = import file
-      if (isCtrlOrMeta && key === 'o' && !event.shiftKey) {
+      if (mod && key === 'o' && !event.shiftKey) {
         event.preventDefault();
         openImportDialog();
         return;
       }
 
       // Tool shortcuts (only without modifiers)
-      if (!isCtrlOrMeta && !event.altKey) {
+      if (!mod && !event.altKey && !event.shiftKey) {
         const tool = KEY_TO_TOOL[key];
-        if (tool) {
-          setTool(tool);
-          return;
-        }
+        if (tool) useToolStore.getState().setTool(tool);
       }
-    },
-    [
-      selectedIds,
-      activeDiagramId,
-      diagramPath,
-      clearSelection,
-      selectAll,
-      selectMultiple,
-      setTool,
-      undo,
-      redo,
-      deleteElements,
-      groupElements,
-      ungroupElements,
-      copyElements,
-      pasteElements,
-      duplicateElements,
-    ],
-  );
+    };
 
-  const handleKeyUp = useCallback(
-    (event: KeyboardEvent) => {
+    const handleKeyUp = (event: KeyboardEvent) => {
       if (event.key === ' ') {
         interactionManagerRef.current?.setSpacePressed(false);
       }
-    },
-    [],
-  );
+    };
 
-  useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [handleKeyDown, handleKeyUp]);
+  }, [interactionManagerRef]);
 }

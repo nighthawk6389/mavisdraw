@@ -74,8 +74,8 @@ const ARROWHEAD_OPTIONS: { value: Arrowhead; label: string; icon: string }[] = [
 export default function StylePanel() {
   const showStylePanel = useUIStore((s) => s.showStylePanel);
   const selectedIds = useSelectionStore((s) => s.selectedIds);
+  const settledSelectedIds = useSelectionStore((s) => s.settledSelectedIds);
   const elements = useElementsStore((s) => s.elements);
-  const updateElement = useElementsStore((s) => s.updateElement);
   const alignElements = useElementsStore((s) => s.alignElements);
   const distributeElements = useElementsStore((s) => s.distributeElements);
 
@@ -102,21 +102,67 @@ export default function StylePanel() {
     [selectedElements],
   );
 
-  const applyToAll = useCallback(
-    (updates: Partial<MavisElement>) => {
-      for (const el of selectedElements) {
-        updateElement(el.id, updates);
-      }
+  // One undo step per change; continuous edits (sliders, colour drags)
+  // with the same key merge into a single step.
+  const selectionKey = useMemo(() => Array.from(selectedIds).sort().join(','), [selectedIds]);
+
+  // Per-element updates fired by one control interaction share an undo step
+  const updateElement = useCallback(
+    (id: string, updates: Partial<MavisElement>) => {
+      const store = useElementsStore.getState();
+      store.pushHistory(`panel:${selectionKey}`);
+      store.updateElementSilent(id, updates);
     },
-    [selectedElements, updateElement],
+    [selectionKey],
   );
 
-  const hasTextSelected = selectedElements.some((el) => el.type === 'text');
+  const applyToAll = useCallback(
+    (updates: Partial<MavisElement>, coalesce?: string) => {
+      const store = useElementsStore.getState();
+      store.pushHistory(coalesce ? `${coalesce}:${selectionKey}` : undefined);
+      for (const el of selectedElements) {
+        store.updateElementSilent(el.id, updates);
+      }
+    },
+    [selectedElements, selectionKey],
+  );
+
+  // Text styling applies to selected text and to labels inside selected shapes
+  const textTargets = useMemo(() => {
+    const result: TextElement[] = [];
+    const seen = new Set<string>();
+    for (const el of selectedElements) {
+      const candidates: (MavisElement | undefined)[] =
+        el.type === 'text'
+          ? [el]
+          : el.boundElements.filter((b) => b.type === 'text').map((b) => elements.get(b.id));
+      for (const c of candidates) {
+        if (c && c.type === 'text' && !c.isDeleted && !seen.has(c.id)) {
+          seen.add(c.id);
+          result.push(c);
+        }
+      }
+    }
+    return result;
+  }, [selectedElements, elements]);
+
+  const applyToText = useCallback(
+    (updates: Partial<TextElement>, coalesce?: string) => {
+      const store = useElementsStore.getState();
+      store.pushHistory(coalesce ? `${coalesce}:${selectionKey}` : undefined);
+      for (const el of textTargets) {
+        store.updateElementSilent(el.id, updates as Partial<MavisElement>);
+      }
+    },
+    [textTargets, selectionKey],
+  );
+
+  const hasTextSelected = textTargets.length > 0;
   const hasLinearSelected = selectedElements.some(
     (el) => el.type === 'arrow' || el.type === 'line',
   );
 
-  if (!showStylePanel || selectedElements.length === 0) {
+  if (!showStylePanel || selectedElements.length === 0 || settledSelectedIds.size === 0) {
     return null;
   }
 
@@ -136,7 +182,7 @@ export default function StylePanel() {
       <Section label="Stroke">
         <ColorPicker
           value={strokeColor}
-          onChange={(color) => applyToAll({ strokeColor: color })}
+          onChange={(color) => applyToAll({ strokeColor: color }, 'strokeColor')}
         />
       </Section>
 
@@ -144,7 +190,7 @@ export default function StylePanel() {
       <Section label="Background">
         <ColorPicker
           value={backgroundColor}
-          onChange={(color) => applyToAll({ backgroundColor: color })}
+          onChange={(color) => applyToAll({ backgroundColor: color }, 'backgroundColor')}
         />
       </Section>
 
@@ -227,7 +273,7 @@ export default function StylePanel() {
           min="0"
           max="100"
           value={opacity}
-          onChange={(e) => applyToAll({ opacity: parseInt(e.target.value, 10) })}
+          onChange={(e) => applyToAll({ opacity: parseInt(e.target.value, 10) }, 'opacity')}
           className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer"
         />
       </Section>
@@ -240,7 +286,7 @@ export default function StylePanel() {
           max="3"
           step="0.5"
           value={roughness}
-          onChange={(e) => applyToAll({ roughness: parseFloat(e.target.value) })}
+          onChange={(e) => applyToAll({ roughness: parseFloat(e.target.value) }, 'roughness')}
           className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer"
         />
       </Section>
@@ -356,18 +402,9 @@ export default function StylePanel() {
             <select
               className="w-full text-xs border border-gray-200 rounded px-2 py-1"
               value={
-                (selectedElements.find((el) => el.type === 'text') as TextElement | undefined)
-                  ?.fontFamily ?? 'hand-drawn'
+                textTargets[0]?.fontFamily ?? 'hand-drawn'
               }
-              onChange={(e) => {
-                for (const el of selectedElements) {
-                  if (el.type === 'text') {
-                    updateElement(el.id, {
-                      fontFamily: e.target.value as FontFamily,
-                    } as Partial<TextElement>);
-                  }
-                }
-              }}
+              onChange={(e) => applyToText({ fontFamily: e.target.value as FontFamily })}
             >
               {FONT_FAMILIES.map((ff) => (
                 <option key={ff.value} value={ff.value}>
@@ -385,17 +422,12 @@ export default function StylePanel() {
               min="8"
               max="200"
               value={
-                (selectedElements.find((el) => el.type === 'text') as TextElement | undefined)
-                  ?.fontSize ?? 20
+                textTargets[0]?.fontSize ?? 20
               }
               onChange={(e) => {
                 const size = parseInt(e.target.value, 10);
                 if (isNaN(size)) return;
-                for (const el of selectedElements) {
-                  if (el.type === 'text') {
-                    updateElement(el.id, { fontSize: size } as Partial<TextElement>);
-                  }
-                }
+                applyToText({ fontSize: size }, 'fontSize');
               }}
             />
           </Section>

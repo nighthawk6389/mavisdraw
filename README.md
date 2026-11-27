@@ -42,8 +42,10 @@ pnpm run dev
 | `pnpm run test` | Run unit tests across all packages |
 | `pnpm run lint` | Lint all packages with ESLint |
 | `pnpm run typecheck` | Type-check all packages |
-| `cd apps/web && pnpm run test:e2e` | Run Playwright e2e tests |
-| `cd apps/server && pnpm run db:push` | Push schema to database |
+| `cd apps/web && pnpm run test:e2e` | Run Playwright e2e tests (mocked API) |
+| `cd apps/web && pnpm run test:e2e:real` | Run e2e tests against the real API + Postgres |
+| `cd apps/server && pnpm run db:migrate` | Apply database migrations (`apps/server/drizzle`) |
+| `cd apps/server && pnpm run db:generate --name <change>` | Create a migration after editing `schema.ts` |
 | `cd apps/server && pnpm run db:seed` | Seed database with sample data |
 
 ## Project Structure
@@ -137,6 +139,19 @@ Create three Render resources:
    - Publish dir: `apps/web/dist`
    - Set env: `VITE_API_URL` (backend URL), `VITE_WS_URL` (backend URL with `wss://`)
 
+## Operations
+
+- `GET /api/health` — liveness (the process is up). `GET /api/ready` — readiness (the database
+  answers); Render's health check uses it.
+- Logs are JSON with a request id per request (returned as `x-request-id`); credentials are redacted.
+  Server errors (5xx) return a generic message plus that id, never internal details.
+- Error reporting is optional: set `SENTRY_DSN` (server) and `VITE_SENTRY_DSN` (web). The browser
+  SDK loads after startup, so it isn't in the main bundle.
+- In production the server refuses to start without real secrets — see `apps/server/src/config.ts`.
+- Email (invites and @mentions): `MAIL_PROVIDER=resend` or `postmark` with `MAIL_FROM` and
+  `RESEND_API_KEY` / `POSTMARK_SERVER_TOKEN`. Development prints emails to the server log;
+  without a provider in production, invite links are shown in the app to copy instead.
+
 ## CI/CD
 
 GitHub Actions runs on every push to `main` and on pull requests:
@@ -151,23 +166,76 @@ See `.github/workflows/ci.yml` for the full configuration.
 
 ## Keyboard Shortcuts
 
+`Mod` is ⌘ on macOS and Ctrl elsewhere.
+
 | Key | Action |
 |-----|--------|
-| `V` | Select tool |
-| `H` | Hand (pan) tool |
-| `R` | Rectangle |
-| `E` | Ellipse |
-| `D` | Diamond |
-| `L` | Line |
-| `A` | Arrow |
-| `P` | Freedraw (pen) |
-| `T` | Text |
-| `Space` | Temporary pan mode |
-| `Escape` | Deselect / cancel |
-| `Delete` / `Backspace` | Delete selected |
-| `Ctrl+Z` | Undo |
-| `Ctrl+Shift+Z` / `Ctrl+Y` | Redo |
-| `Ctrl+A` | Select all |
+| `V` / `H` | Select / Hand (pan) tool |
+| `R` `E` `D` `L` `A` `P` `T` `O` | Rectangle, Ellipse, Diamond, Line, Arrow, Pen, Text, Portal |
+| `Space` (hold) | Temporary pan |
+| Mouse wheel / pinch | Zoom (trackpad two-finger scroll pans) |
+| Right-drag / right-click | Pan / context menu |
+| `Shift+1` / `Shift+2` | Zoom to fit / zoom to selection |
+| `Mod+=` `Mod+-` `Mod+0` | Zoom in / out / reset to 100% |
+| Arrow keys (`Shift` = 10px) | Nudge selection |
+| `Mod+Z` / `Mod+Shift+Z` | Undo / redo (one step per gesture; never undoes collaborators) |
+| `Mod+C` `Mod+X` `Mod+V` `Mod+D` | Copy, cut, paste at cursor (works across tabs), duplicate |
+| `Shift+Alt+C` | Copy selection as PNG |
+| `Mod+]` / `Mod+[` | Bring forward / send backward (`Shift` = to front / back) |
+| `Mod+G` / `Mod+Shift+G` | Group / ungroup |
+| `Mod+Shift+L` | Lock / unlock |
+| `Delete` / `Backspace` | Delete selected (labels go with their shape) |
+| `Mod+A` / `Escape` | Select all / deselect |
+| `Mod+K` | Search: jump to any shape or diagram at any depth, or run a command |
+| `Enter` | Drill into the selected portal, or edit the selected shape's / connector's label |
+| `Backspace` (nothing selected) | Zoom back out to the parent diagram |
+| Double-click a connector | Add or edit its label ("REST", "publishes"...) |
+| `Shift+Alt+T` | Tidy up: auto-layout the diagram (or the selection) along its connections |
+
+### Map ⇄ code
+
+**Code** (or ⌘K → *Map a repository…*) turns a repository — a GitHub repo, or a folder on your
+computer — into a nested architecture map: a level per app and package, linked to its folder, its
+main folders inside, and the datastores and services it uses (from `package.json`, workspaces,
+`docker-compose`, `go.mod`, `Cargo.toml`, `pyproject.toml`). Only file names and manifests are read.
+Later, **Check against the code** lists what changed since — new or removed packages, new
+dependencies, new services — each with a one-click fix, then **Mark map as up to date**.
+
+### Diagram as code
+
+Paste a Mermaid flowchart (from a README, PR or design doc) straight onto the canvas, or use
+**Search → Import from Mermaid…**, or import a `.mmd` file. Every `subgraph` becomes a portal you can
+drill into, links that cross subgraphs are drawn between the right portals, and every level is
+auto-laid out — a flat README diagram becomes a navigable, multi-level map.
+
+### Working together
+
+- **Every project and nested diagram has a URL** (`/p/:project/d/:diagram`) — paste it in Slack and
+  teammates land on the same level.
+- **Share links** (`Share` → copy link) add whoever opens them to the project with the chosen role.
+- **Invite by email** (in Share, or a workspace's Members): people with an account get access at
+  once; anyone else gets an invite link that works only for their address and is claimed when they
+  sign up.
+- **Workspaces** share every project inside them with the team (members edit; admins manage), and
+  the dashboard groups projects into Recent, Yours, Shared with you, each workspace, and folders.
+  An owner can hand a project to someone else and stay on as admin.
+- **Live editing** merges per property: one person can move a shape while another recolours it.
+  Undo only ever undoes your own changes, and never reverts a property a teammate changed after you.
+- **Present** turns the map into a guided tour: **Generate from map** makes one stop per level,
+  top-down, or add views by hand. Arrow keys fly between stops, drilling in and out of levels;
+  everyone else on the project can **Follow** along, wherever they are in the map.
+- **Offline**: edits made without a connection are kept in the browser — even if you close the tab —
+  and saved when you're back. If a teammate changed the same shape meanwhile, theirs is kept and
+  you're told.
+- **Viewers** can pan, zoom, select, copy and drill through every level, but can't change anything
+  (enforced on the server too).
+- **Comments** (`C`, then click a shape or anywhere): the pin sticks to the shape, `@` mentions a
+  teammate and notifies them, and the Comments panel lists threads on every nested level.
+  Viewers can comment too.
+- **Version history** (`Mod+S`) is shared by everyone on the project. Restoring a version updates
+  every open editor live, and the previous state is kept as a backup version. **Compare** shows
+  what changed since any version: added, changed and removed shapes are outlined on the canvas, with
+  a plain-language list ("Renamed “Auth” → “Auth Service”", "Moved", "Reconnected").
 
 ## License
 

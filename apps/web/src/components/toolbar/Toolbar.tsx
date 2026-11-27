@@ -1,6 +1,7 @@
 import React from 'react';
 import ToolButton from './ToolButton';
 import { useToolStore, type Tool } from '../../stores/toolStore';
+import { usePermissionStore } from '../../stores/permissionStore';
 import { useUIStore } from '../../stores/uiStore';
 
 interface ToolConfig {
@@ -21,10 +22,16 @@ const TOOLS: ToolConfig[] = [
   { tool: 'freedraw', icon: '\u270E', label: 'Freedraw', shortcut: 'P' },
   { tool: 'text', icon: 'T', label: 'Text', shortcut: 'T' },
   { tool: 'portal', icon: '\u29C9', label: 'Portal', shortcut: 'O' },
+  { tool: 'comment', icon: '\u{1F4AC}', label: 'Comment', shortcut: 'C' },
 ];
 
 export default function Toolbar() {
   const { activeTool, isToolLocked, setTool, toggleToolLock } = useToolStore();
+  const canEdit = usePermissionStore((s) => s.canEdit);
+  // Viewers navigate and comment; they don't get drawing tools
+  const tools = canEdit
+    ? TOOLS
+    : TOOLS.filter((t) => t.tool === 'select' || t.tool === 'hand' || t.tool === 'comment');
   const {
     renderMode,
     setRenderMode,
@@ -40,7 +47,7 @@ export default function Toolbar() {
 
   return (
     <aside data-testid="toolbar" className="w-12 bg-white border-r border-gray-200 flex flex-col items-center py-2 gap-1 z-10">
-      {TOOLS.map((config) => (
+      {tools.map((config) => (
         <ToolButton
           key={config.tool}
           icon={config.icon}

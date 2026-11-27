@@ -10,7 +10,8 @@ export type Tool =
   | 'freedraw'
   | 'text'
   | 'portal'
-  | 'hand';
+  | 'hand'
+  | 'comment';
 
 interface ToolState {
   activeTool: Tool;

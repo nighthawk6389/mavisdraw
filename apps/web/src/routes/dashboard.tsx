@@ -1,63 +1,133 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuthStore } from '../stores/authStore';
+import { projectPath } from '../routing';
 import {
   apiListProjects,
   apiCreateProject,
   apiDeleteProject,
+  apiListWorkspaces,
+  apiCreateWorkspace,
+  apiUpdateProject,
   type ProjectResponse,
+  type WorkspaceResponse,
 } from '../services/api';
+import WorkspaceMembersDialog from '../components/dashboard/WorkspaceMembersDialog';
+import NotificationBell from '../components/comments/NotificationBell';
 
 interface DashboardProps {
-  onOpenProject: (projectId: string, rootDiagramId: string) => void;
+  onOpenProject: (projectId: string) => void;
+}
+
+/** Where a project lives on the dashboard. */
+type Space =
+  | { kind: 'recent' }
+  | { kind: 'personal' }
+  | { kind: 'shared' }
+  | { kind: 'workspace'; id: string };
+
+const isOwner = (p: ProjectResponse) => !p.role || p.role === 'owner';
+
+function inSpace(p: ProjectResponse, space: Space): boolean {
+  if (space.kind === 'recent') return true;
+  if (space.kind === 'workspace') return p.workspaceId === space.id;
+  if (p.workspaceId) return false;
+  return space.kind === 'personal' ? isOwner(p) : !isOwner(p);
+}
+
+function initialSpace(): Space {
+  const ws = new URLSearchParams(window.location.search).get('workspace');
+  return ws ? { kind: 'workspace', id: ws } : { kind: 'recent' };
 }
 
 export default function Dashboard({ onOpenProject }: DashboardProps) {
   const { user, logout } = useAuthStore();
   const [projects, setProjects] = useState<ProjectResponse[]>([]);
+  const [workspaces, setWorkspaces] = useState<WorkspaceResponse[]>([]);
+  const [space, setSpace] = useState<Space>(initialSpace);
   const [isLoading, setIsLoading] = useState(true);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [membersOf, setMembersOf] = useState<WorkspaceResponse | null>(null);
+  const [moving, setMoving] = useState<ProjectResponse | null>(null);
 
-  const loadProjects = useCallback(async () => {
+  const load = useCallback(async () => {
     setIsLoading(true);
     try {
-      const response = await apiListProjects();
-      setProjects(response.projects);
+      const [p, w] = await Promise.all([
+        apiListProjects(),
+        apiListWorkspaces().catch(() => ({ workspaces: [] as WorkspaceResponse[] })),
+      ]);
+      setProjects(p.projects);
+      setWorkspaces(w.workspaces);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load projects';
-      setError(message);
+      setError(err instanceof Error ? err.message : 'Failed to load projects');
     } finally {
       setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    loadProjects();
-  }, [loadProjects]);
+    void load();
+  }, [load]);
+
+  const currentWorkspace =
+    space.kind === 'workspace' ? (workspaces.find((w) => w.id === space.id) ?? null) : null;
+  const title =
+    space.kind === 'recent'
+      ? 'Recent projects'
+      : space.kind === 'personal'
+        ? 'Your projects'
+        : space.kind === 'shared'
+          ? 'Shared with you'
+          : (currentWorkspace?.name ?? 'Workspace');
+
+  const visible = useMemo(
+    () =>
+      projects
+        .filter((p) => inSpace(p, space))
+        .filter((p) => p.name.toLowerCase().includes(searchQuery.toLowerCase())),
+    [projects, space, searchQuery],
+  );
+
+  // Folders in this space, alphabetical; unfiled projects first
+  const groups = useMemo(() => {
+    const byFolder = new Map<string, ProjectResponse[]>();
+    for (const p of visible) {
+      // Recent is one list across spaces; folders belong to a space
+      const key = space.kind === 'recent' ? '' : (p.folder ?? '');
+      byFolder.set(key, [...(byFolder.get(key) ?? []), p]);
+    }
+    return Array.from(byFolder.entries()).sort(([a], [b]) =>
+      a === '' ? -1 : b === '' ? 1 : a.localeCompare(b),
+    );
+  }, [visible, space.kind]);
+
+  const folderNames = useMemo(
+    () =>
+      Array.from(
+        new Set(projects.filter((p) => inSpace(p, space) && p.folder).map((p) => p.folder!)),
+      ),
+    [projects, space],
+  );
 
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProjectName.trim() || isCreating) return;
-
     setIsCreating(true);
     setError(null);
     try {
-      const response = await apiCreateProject(newProjectName.trim());
-      setProjects((prev) => [
-        {
-          ...response.project,
-          role: 'owner',
-        },
-        ...prev,
-      ]);
+      const response = await apiCreateProject(
+        newProjectName.trim(),
+        space.kind === 'workspace' ? space.id : null,
+      );
+      setProjects((prev) => [{ ...response.project, role: 'owner' }, ...prev]);
       setNewProjectName('');
       setShowCreateDialog(false);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to create project';
-      setError(message);
+      setError(err instanceof Error ? err.message : 'Failed to create project');
     } finally {
       setIsCreating(false);
     }
@@ -65,182 +135,354 @@ export default function Dashboard({ onOpenProject }: DashboardProps) {
 
   const handleDeleteProject = async (id: string) => {
     if (!confirm('Are you sure you want to delete this project?')) return;
-
     setError(null);
     try {
       await apiDeleteProject(id);
       setProjects((prev) => prev.filter((p) => p.id !== id));
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to delete project';
-      setError(message);
+      setError(err instanceof Error ? err.message : 'Failed to delete project');
     }
   };
 
-  const filteredProjects = projects.filter((p) =>
-    p.name.toLowerCase().includes(searchQuery.toLowerCase()),
-  );
+  const update = async (
+    id: string,
+    changes: { folder?: string | null; workspaceId?: string | null },
+  ) => {
+    setError(null);
+    try {
+      const { project } = await apiUpdateProject(id, changes);
+      setProjects((prev) =>
+        prev.map((p) => (p.id === id ? { ...p, ...project, role: p.role } : p)),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update project');
+    }
+  };
+
+  const fileInFolder = (p: ProjectResponse) => {
+    const hint = folderNames.length ? ` (existing: ${folderNames.join(', ')})` : '';
+    const name = prompt(
+      `Folder for “${p.name}”${hint}. Leave empty to take it out of its folder.`,
+      p.folder ?? '',
+    );
+    if (name === null) return;
+    void update(p.id, { folder: name.trim() || null });
+  };
+
+  const newWorkspace = async () => {
+    const name = prompt('Name your workspace (e.g. your team or company)');
+    if (!name?.trim()) return;
+    try {
+      const { workspace } = await apiCreateWorkspace(name.trim());
+      setWorkspaces((prev) => [...prev, workspace].sort((a, b) => a.name.localeCompare(b.name)));
+      setSpace({ kind: 'workspace', id: workspace.id });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create workspace');
+    }
+  };
+
+  const spaceButton = (s: Space, label: string, count: number, extra?: string) => {
+    const active =
+      s.kind === space.kind &&
+      (s.kind !== 'workspace' || (space.kind === 'workspace' && space.id === s.id));
+    return (
+      <button
+        type="button"
+        aria-current={active ? 'page' : undefined}
+        onClick={() => setSpace(s)}
+        className={`flex w-full items-center justify-between rounded-md px-3 py-1.5 text-left text-sm ${
+          active ? 'bg-blue-50 font-medium text-blue-800' : 'text-gray-700 hover:bg-gray-100'
+        }`}
+      >
+        <span className="truncate">{label}</span>
+        <span className="ml-2 text-xs text-gray-400">{extra ?? count}</span>
+      </button>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <h1 className="text-xl font-bold text-gray-900">MavisDraw</h1>
-            <div className="flex items-center gap-4">
-              <span className="text-sm text-gray-600">{user?.name}</span>
-              <button
-                onClick={logout}
-                className="text-sm text-gray-500 hover:text-gray-700 transition-colors"
-              >
-                Sign out
-              </button>
-            </div>
+      <header className="border-b border-gray-200 bg-white">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+          <h1 className="text-xl font-bold text-gray-900">MavisDraw</h1>
+          <div className="flex items-center gap-4">
+            <NotificationBell />
+            <span className="text-sm text-gray-600">{user?.name}</span>
+            <button
+              onClick={logout}
+              className="text-sm text-gray-500 transition-colors hover:text-gray-700"
+            >
+              Sign out
+            </button>
           </div>
         </div>
       </header>
 
-      {/* Main content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Toolbar */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-4">
-            <h2 className="text-2xl font-semibold text-gray-900">Projects</h2>
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search projects..."
-              className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
+      <div className="mx-auto flex max-w-7xl gap-6 px-4 py-8 sm:px-6 lg:px-8">
+        {/* Spaces */}
+        <nav className="w-56 shrink-0 space-y-1" aria-label="Spaces">
+          {spaceButton({ kind: 'recent' }, 'Recent', projects.length)}
+          {spaceButton(
+            { kind: 'personal' },
+            'Your projects',
+            projects.filter((p) => inSpace(p, { kind: 'personal' })).length,
+          )}
+          {spaceButton(
+            { kind: 'shared' },
+            'Shared with you',
+            projects.filter((p) => inSpace(p, { kind: 'shared' })).length,
+          )}
+          <div className="flex items-center justify-between px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+            Workspaces
+            <button
+              type="button"
+              onClick={() => void newWorkspace()}
+              className="text-base font-normal leading-none text-gray-400 hover:text-blue-600"
+              aria-label="New workspace"
+              title="New workspace"
+            >
+              +
+            </button>
           </div>
-          <button
-            onClick={() => setShowCreateDialog(true)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm font-medium"
-          >
-            New Project
-          </button>
-        </div>
+          {workspaces.length === 0 && (
+            <p className="px-3 text-xs text-gray-400">
+              Create a workspace to share every project with your team at once.
+            </p>
+          )}
+          {workspaces.map((w) =>
+            spaceButton({ kind: 'workspace', id: w.id }, w.name, 0, `${w.memberCount} 👤`),
+          )}
+        </nav>
 
-        {/* Error banner */}
-        {error && (
-          <div className="mb-4 text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2">
-            {error}
-          </div>
-        )}
-
-        {/* Create dialog */}
-        {showCreateDialog && (
-          <div className="mb-6 bg-white rounded-lg shadow p-4 border border-gray-200">
-            <form onSubmit={handleCreateProject} className="flex items-center gap-3">
+        <main className="min-w-0 flex-1">
+          <div className="mb-6 flex items-center justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-4">
+              <h2 className="truncate text-2xl font-semibold text-gray-900">{title}</h2>
+              {currentWorkspace && (
+                <button
+                  type="button"
+                  onClick={() => setMembersOf(currentWorkspace)}
+                  className="shrink-0 rounded-md border border-gray-300 bg-white px-3 py-1 text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  Members ({currentWorkspace.memberCount})
+                </button>
+              )}
               <input
                 type="text"
-                value={newProjectName}
-                onChange={(e) => setNewProjectName(e.target.value)}
-                placeholder="Project name"
-                autoFocus
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search projects..."
+                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
-              <button
-                type="submit"
-                disabled={isCreating}
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm disabled:opacity-50"
-              >
-                {isCreating ? 'Creating...' : 'Create'}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowCreateDialog(false);
-                  setNewProjectName('');
-                }}
-                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors text-sm"
-              >
-                Cancel
-              </button>
-            </form>
-          </div>
-        )}
-
-        {/* Projects grid */}
-        {isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="text-gray-500">Loading projects...</div>
-          </div>
-        ) : filteredProjects.length === 0 ? (
-          <div className="text-center py-12">
-            <p className="text-gray-500 mb-4">
-              {searchQuery ? 'No projects match your search' : 'No projects yet'}
-            </p>
-            {!searchQuery && (
+            </div>
+            {space.kind !== 'shared' && (
               <button
                 onClick={() => setShowCreateDialog(true)}
-                className="text-blue-600 hover:text-blue-500 font-medium"
+                className="shrink-0 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
               >
-                Create your first project
+                New Project
               </button>
             )}
           </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {filteredProjects.map((project) => (
-              <div
-                key={project.id}
-                className="bg-white rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition-shadow cursor-pointer group"
-                onClick={() => {
-                  if (project.rootDiagramId) {
-                    onOpenProject(project.id, project.rootDiagramId);
-                  }
-                }}
-              >
-                {/* Thumbnail placeholder */}
-                <div className="h-40 bg-gray-100 rounded-t-lg flex items-center justify-center">
-                  <svg
-                    className="w-12 h-12 text-gray-300"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
+
+          {error && (
+            <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+              {error}
+            </div>
+          )}
+
+          {showCreateDialog && (
+            <div className="mb-6 rounded-lg border border-gray-200 bg-white p-4 shadow">
+              <form onSubmit={handleCreateProject} className="flex items-center gap-3">
+                <input
+                  type="text"
+                  value={newProjectName}
+                  onChange={(e) => setNewProjectName(e.target.value)}
+                  placeholder="Project name"
+                  autoFocus
+                  className="flex-1 rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <button
+                  type="submit"
+                  disabled={isCreating}
+                  className="rounded-md bg-blue-600 px-4 py-2 text-sm text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {isCreating ? 'Creating...' : 'Create'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCreateDialog(false);
+                    setNewProjectName('');
+                  }}
+                  className="px-4 py-2 text-sm text-gray-600 transition-colors hover:text-gray-800"
+                >
+                  Cancel
+                </button>
+              </form>
+            </div>
+          )}
+
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12 text-gray-500">
+              Loading projects...
+            </div>
+          ) : visible.length === 0 ? (
+            <div className="py-12 text-center">
+              <p className="mb-4 text-gray-500">
+                {searchQuery
+                  ? 'No projects match your search'
+                  : space.kind === 'shared'
+                    ? 'Nothing has been shared with you yet'
+                    : 'No projects yet'}
+              </p>
+              {!searchQuery && space.kind !== 'shared' && (
+                <button
+                  onClick={() => setShowCreateDialog(true)}
+                  className="font-medium text-blue-600 hover:text-blue-500"
+                >
+                  Create your first project
+                </button>
+              )}
+            </div>
+          ) : (
+            groups.map(([folder, list]) => (
+              <section key={folder || '_'} className="mb-8" aria-label={folder || 'Projects'}>
+                {folder && (
+                  <h3
+                    className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-600"
+                    data-testid="folder-heading"
                   >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={1}
-                      d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
-                    />
-                  </svg>
-                </div>
-
-                <div className="p-3">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-medium text-gray-900 truncate">{project.name}</h3>
-                    {project.role && project.role !== 'owner' && (
-                      <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
-                        {project.role}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs text-gray-500 mt-1">
-                    {new Date(project.updatedAt).toLocaleDateString()}
-                  </p>
-
-                  {/* Delete button (only for owners) */}
-                  {(!project.role || project.role === 'owner') && (
-                    <button
+                    <span aria-hidden>📁</span> {folder}
+                    <span className="font-normal text-gray-400">{list.length}</span>
+                  </h3>
+                )}
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {list.map((project) => (
+                    <a
+                      key={project.id}
+                      href={projectPath(project.id)}
+                      data-testid="project-card"
+                      className="group block cursor-pointer rounded-lg border border-gray-200 bg-white shadow-sm transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                       onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteProject(project.id);
+                        // Let modified clicks open a new tab; plain clicks route in-app
+                        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                        e.preventDefault();
+                        if (project.rootDiagramId) onOpenProject(project.id);
                       }}
-                      className="mt-2 text-xs text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity"
                     >
-                      Delete
-                    </button>
-                  )}
+                      <div className="flex h-32 items-center justify-center rounded-t-lg bg-gray-100 text-3xl text-gray-300">
+                        ⧉
+                      </div>
+                      <div className="p-3">
+                        <div className="flex items-center justify-between">
+                          <h4 className="truncate font-medium text-gray-900">{project.name}</h4>
+                          {project.role && project.role !== 'owner' && (
+                            <span className="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-500">
+                              {project.role}
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-1 text-xs text-gray-500">
+                          {new Date(project.updatedAt).toLocaleDateString()}
+                        </p>
+                        <div className="mt-2 flex gap-3 text-xs opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                          {project.role !== 'viewer' && (
+                            <button
+                              type="button"
+                              className="text-gray-500 hover:text-gray-800"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                fileInFolder(project);
+                              }}
+                            >
+                              Folder…
+                            </button>
+                          )}
+                          {isOwner(project) && (
+                            <>
+                              <button
+                                type="button"
+                                className="text-gray-500 hover:text-gray-800"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setMoving(project);
+                                }}
+                              >
+                                Move…
+                              </button>
+                              <button
+                                type="button"
+                                className="text-red-500 hover:text-red-700"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  void handleDeleteProject(project.id);
+                                }}
+                              >
+                                Delete
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </a>
+                  ))}
                 </div>
-              </div>
-            ))}
+              </section>
+            ))
+          )}
+        </main>
+      </div>
+
+      {membersOf && (
+        <WorkspaceMembersDialog
+          workspace={membersOf}
+          onClose={() => setMembersOf(null)}
+          onChanged={() => void load()}
+        />
+      )}
+
+      {moving && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+          onClick={() => setMoving(null)}
+        >
+          <div
+            role="dialog"
+            aria-label="Move project"
+            className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="mb-1 font-semibold text-gray-900">Move “{moving.name}”</h2>
+            <p className="mb-4 text-sm text-gray-500">
+              Everyone in a workspace can open and edit its projects.
+            </p>
+            <div className="space-y-1">
+              {[
+                { id: null as string | null, name: 'Your projects (personal)' },
+                ...workspaces.map((w) => ({ id: w.id as string | null, name: w.name })),
+              ].map((target) => (
+                <button
+                  key={target.id ?? 'personal'}
+                  type="button"
+                  disabled={(moving.workspaceId ?? null) === target.id}
+                  className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-gray-100 disabled:text-gray-400 disabled:hover:bg-transparent"
+                  onClick={() => {
+                    void update(moving.id, { workspaceId: target.id }).then(() => void load());
+                    setMoving(null);
+                  }}
+                >
+                  {target.name}
+                  {(moving.workspaceId ?? null) === target.id && ' · here now'}
+                </button>
+              ))}
+            </div>
           </div>
-        )}
-      </main>
+        </div>
+      )}
     </div>
   );
 }

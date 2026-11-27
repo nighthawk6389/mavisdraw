@@ -14,11 +14,28 @@ import type {
   PortalElement,
   Point,
 } from '@mavisdraw/types';
+import { useLayerStore } from './layerStore';
+import {
+  BOUND_TEXT_PADDING,
+  boundTextBox,
+  isLinear,
+  cascadeDelete,
+  syncBoundElements,
+  withBoundLabels,
+} from './elementBindings';
+import {
+  type HistoryEntry,
+  COALESCE_WINDOW_MS,
+  MAX_HISTORY,
+  applyValues,
+  createEntry,
+  diffElementMaps,
+  isNoopEntry,
+  recordChange,
+} from './history';
 
-const MAX_HISTORY = 100;
-
-/** Padding between shape edge and bound text box (must match createBoundText). */
-const BOUND_TEXT_PADDING = 10;
+export { getBindingEdgePoint } from './elementBindings';
+export type { HistoryEntry } from './history';
 
 /**
  * Clamp a bound text element's position and size so its box stays inside the container.
@@ -41,15 +58,15 @@ function clampBoundTextToContainer(
   const y = Math.max(minY, Math.min(textY, minY + maxH - height));
   return { x, y, width, height };
 }
+
 function getElementBounds(el: MavisElement): { minX: number; minY: number; maxX: number; maxY: number } {
-  if ('points' in el && Array.isArray((el as LinearElement).points)) {
-    const linear = el as LinearElement;
-    const pts = linear.points;
+  if (el.type === 'line' || el.type === 'arrow' || el.type === 'freedraw') {
+    const pts = el.points;
     if (pts.length > 0) {
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const [px, py] of pts) {
-        const wx = linear.x + px;
-        const wy = linear.y + py;
+        const wx = el.x + px;
+        const wy = el.y + py;
         if (wx < minX) minX = wx;
         if (wy < minY) minY = wy;
         if (wx > maxX) maxX = wx;
@@ -71,8 +88,8 @@ function getElHeight(el: MavisElement): number {
   return b.maxY - b.minY;
 }
 
-/** Shift a linear element so its visual minX becomes newMinX. */
-function setLinearMinX(el: MavisElement, next: Map<string, MavisElement>, newMinX: number) {
+/** Shift an element so its visual minX becomes newMinX. */
+function setMinX(el: MavisElement, next: Map<string, MavisElement>, newMinX: number) {
   const b = getElementBounds(el);
   const dx = newMinX - b.minX;
   const current = next.get(el.id)!;
@@ -84,7 +101,7 @@ function setLinearMinX(el: MavisElement, next: Map<string, MavisElement>, newMin
   } as MavisElement);
 }
 
-function setLinearMinY(el: MavisElement, next: Map<string, MavisElement>, newMinY: number) {
+function setMinY(el: MavisElement, next: Map<string, MavisElement>, newMinY: number) {
   const b = getElementBounds(el);
   const dy = newMinY - b.minY;
   const current = next.get(el.id)!;
@@ -96,6 +113,17 @@ function setLinearMinY(el: MavisElement, next: Map<string, MavisElement>, newMin
   } as MavisElement);
 }
 
+/**
+ * Stacking value for new elements: increases monotonically and is unique per
+ * client without coordination, so newly drawn shapes land on top for every
+ * collaborator. Stays below 2^53.
+ */
+let zCounter = 0;
+export function nextZIndex(): number {
+  zCounter = (zCounter + 1) % 1000;
+  return Date.now() * 1000 + zCounter;
+}
+
 const DEFAULT_STYLE = {
   strokeColor: '#1e1e1e',
   backgroundColor: 'transparent',
@@ -103,7 +131,6 @@ const DEFAULT_STYLE = {
   strokeWidth: 2,
   strokeStyle: 'solid' as const,
   roughness: 1,
-  seed: Math.floor(Math.random() * 2 ** 31),
   renderMode: 'clean' as RenderMode,
   opacity: 100,
   angle: 0,
@@ -113,11 +140,18 @@ const DEFAULT_STYLE = {
   isDeleted: false,
   boundElements: [] as { id: string; type: string }[],
   version: 1,
-  updatedAt: Date.now(),
 };
 
-interface HistoryEntry {
-  elements: Map<string, MavisElement>;
+function newSeed(): number {
+  return Math.floor(Math.random() * 2 ** 31);
+}
+
+function activeLayerId(): string {
+  try {
+    return useLayerStore.getState().activeLayerId || 'default';
+  } catch {
+    return 'default';
+  }
 }
 
 export type AlignmentType =
@@ -130,9 +164,17 @@ export type AlignmentType =
 
 export type DistributeDirection = 'horizontal' | 'vertical';
 
+export type ZOrderAction = 'front' | 'forward' | 'backward' | 'back';
+
 interface ClipboardData {
   elements: MavisElement[];
   sourceOffset: Point;
+}
+
+/** JSON envelope written to the system clipboard (cross-tab paste). */
+export interface ClipboardEnvelope {
+  type: 'mavisdraw-clipboard';
+  elements: MavisElement[];
 }
 
 interface ElementsState {
@@ -152,6 +194,8 @@ interface ElementsState {
   updateElementSilent: (id: string, updates: Partial<MavisElement>) => void;
   deleteElement: (id: string) => void;
   deleteElements: (ids: string[]) => void;
+  /** Remove elements from the map entirely (for never-committed drafts). */
+  discardElements: (ids: string[]) => void;
 
   // Bulk operations
   setElements: (elements: MavisElement[]) => void;
@@ -165,7 +209,16 @@ interface ElementsState {
   // History
   undo: () => void;
   redo: () => void;
-  pushHistory: () => void;
+  /**
+   * Start a new undo step. Pushes with the same `coalesceKey` within a short
+   * window share one step (e.g. dragging a slider).
+   */
+  pushHistory: (coalesceKey?: string) => void;
+  /** Group everything until `endHistoryBatch` into a single undo step. */
+  beginHistoryBatch: () => void;
+  endHistoryBatch: () => void;
+  /** Run `fn` with its changes appended to the most recent undo step. */
+  amendLastHistoryEntry: (fn: () => void) => void;
   canUndo: () => boolean;
   canRedo: () => boolean;
 
@@ -198,7 +251,8 @@ interface ElementsState {
   unbindArrow: (arrowId: string, endpoint: 'start' | 'end') => void;
 
   /**
-   * Move a shape and update all bound arrow endpoints.
+   * Move an element and keep its label and bound arrows attached.
+   * Does not push history: the caller owns the gesture's undo step.
    */
   moveElementWithBindings: (id: string, newX: number, newY: number) => void;
 
@@ -211,39 +265,57 @@ interface ElementsState {
 
   // ── Grouping ───────────────────────────────────────────────
 
-  /**
-   * Group the given element IDs under a new groupId.
-   */
   groupElements: (elementIds: string[]) => string;
-
-  /**
-   * Remove the outermost group from the given elements.
-   */
   ungroupElements: (elementIds: string[]) => void;
 
   // ── Copy/Paste/Duplicate ────────────────────────────────────
 
-  copyElements: (ids: string[]) => void;
-  pasteElements: (diagramId: string) => MavisElement[];
+  copyElements: (ids: string[]) => ClipboardEnvelope | null;
+  /** Paste the internal clipboard. With `at`, the pasted group is centered there. */
+  pasteElements: (diagramId: string, at?: Point) => MavisElement[];
+  /** Load elements from a system-clipboard envelope into the internal clipboard. */
+  setClipboardFromEnvelope: (envelope: ClipboardEnvelope) => void;
   duplicateElements: (ids: string[]) => MavisElement[];
 
   // ── Alignment ──────────────────────────────────────────────
 
   alignElements: (ids: string[], alignment: AlignmentType) => void;
   distributeElements: (ids: string[], direction: DistributeDirection) => void;
+
+  // ── Stacking & locking ─────────────────────────────────────
+
+  reorderElements: (ids: string[], action: ZOrderAction) => void;
+  setElementsLocked: (ids: string[], locked: boolean) => void;
 }
 
-function cloneElementsMap(
-  map: Map<string, MavisElement>,
-): Map<string, MavisElement> {
-  const cloned = new Map<string, MavisElement>();
-  for (const [key, value] of map) {
-    cloned.set(key, { ...value });
+// ── History recording state (module-level, never rendered) ─────────────
+/** >0 while applying changes that must not be undoable (remote, loads). */
+let unrecordedDepth = 0;
+/** >0 while a gesture batch is open: pushHistory() calls are absorbed. */
+let batchDepth = 0;
+
+/**
+ * Apply changes that should never be undone by the local user: edits that
+ * arrive from collaborators, server loads, thumbnail refreshes.
+ */
+export function withoutHistory<T>(fn: () => T): T {
+  unrecordedDepth += 1;
+  try {
+    return fn();
+  } finally {
+    unrecordedDepth -= 1;
   }
-  return cloned;
 }
 
-/** Shared logic for updating a single element (with bound-text clamping). */
+/** Alias used by the collaboration layer for readability. */
+export const applyRemoteChanges = withoutHistory;
+
+/** True while applying changes that aren't the local user's edits (remote, loads). */
+export function isApplyingUnrecorded(): boolean {
+  return unrecordedDepth > 0;
+}
+
+/** Shared logic for updating a single element (keeps labels and arrows attached). */
 function applyElementUpdate(
   set: (fn: (prev: ElementsState) => Partial<ElementsState>) => void,
   id: string,
@@ -261,50 +333,25 @@ function applyElementUpdate(
       updatedAt: Date.now(),
     } as MavisElement;
 
-    // Keep bound text inside its container
-    if (merged.type === 'text') {
-      const textEl = merged as TextElement;
-      if (textEl.containerId) {
-        const container = next.get(textEl.containerId);
-        if (container && !container.isDeleted) {
-          const clamped = clampBoundTextToContainer(
-            textEl.x,
-            textEl.y,
-            textEl.width,
-            textEl.height,
-            container,
+    // Keep bound text inside its container (connector labels re-centre instead)
+    let containerToSync: string | null = null;
+    if (merged.type === 'text' && merged.containerId) {
+      const container = next.get(merged.containerId);
+      if (container && !container.isDeleted) {
+        if (isLinear(container)) {
+          containerToSync = container.id;
+        } else {
+          Object.assign(
+            merged,
+            clampBoundTextToContainer(merged.x, merged.y, merged.width, merged.height, container),
           );
-          (merged as TextElement).x = clamped.x;
-          (merged as TextElement).y = clamped.y;
-          (merged as TextElement).width = clamped.width;
-          (merged as TextElement).height = clamped.height;
         }
       }
     }
 
     next.set(id, merged);
-
-    // When container (shape) is updated, keep its bound text inside
-    if (merged.type !== 'text' && merged.boundElements?.length) {
-      for (const bound of merged.boundElements) {
-        if (bound.type !== 'text') continue;
-        const textEl = next.get(bound.id) as TextElement | undefined;
-        if (!textEl || textEl.isDeleted || textEl.containerId !== id) continue;
-        const clamped = clampBoundTextToContainer(
-          textEl.x,
-          textEl.y,
-          textEl.width,
-          textEl.height,
-          merged,
-        );
-        next.set(bound.id, {
-          ...textEl,
-          ...clamped,
-          version: textEl.version + 1,
-          updatedAt: Date.now(),
-        } as TextElement);
-      }
-    }
+    syncBoundElements(next, id);
+    if (containerToSync) syncBoundElements(next, containerToSync);
 
     return { elements: next };
   });
@@ -317,8 +364,7 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
   clipboard: null,
 
   addElement: (element: MavisElement) => {
-    const state = get();
-    state.pushHistory();
+    get().pushHistory();
     set((prev) => {
       const next = new Map(prev.elements);
       next.set(element.id, element);
@@ -328,24 +374,19 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
 
   updateElement: (id: string, updates: Partial<MavisElement>) => {
     const state = get();
-    const existing = state.elements.get(id);
-    if (!existing) return;
-
+    if (!state.elements.has(id)) return;
     state.pushHistory();
     applyElementUpdate(set, id, updates);
   },
 
   updateElementSilent: (id: string, updates: Partial<MavisElement>) => {
-    const existing = get().elements.get(id);
-    if (!existing) return;
-
+    if (!get().elements.has(id)) return;
     applyElementUpdate(set, id, updates);
   },
 
   updateElements: (updates: { id: string; changes: Partial<MavisElement> }[]) => {
     const state = get();
-    const hasAny = updates.some((u) => state.elements.has(u.id));
-    if (!hasAny) return;
+    if (!updates.some((u) => state.elements.has(u.id))) return;
 
     state.pushHistory();
     set((prev) => {
@@ -361,50 +402,50 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
           } as MavisElement);
         }
       }
+      for (const { id } of updates) syncBoundElements(next, id);
       return { elements: next };
     });
   },
 
   deleteElement: (id: string) => {
-    const state = get();
-    if (!state.elements.has(id)) return;
-
-    state.pushHistory();
-    set((prev) => {
-      const next = new Map(prev.elements);
-      const element = next.get(id);
-      if (element) {
-        next.set(id, {
-          ...element,
-          isDeleted: true,
-          version: element.version + 1,
-          updatedAt: Date.now(),
-        } as MavisElement);
-      }
-      return { elements: next };
-    });
+    get().deleteElements([id]);
   },
 
   deleteElements: (ids: string[]) => {
     const state = get();
-    const hasAny = ids.some((id) => state.elements.has(id));
-    if (!hasAny) return;
+    if (!ids.some((id) => state.elements.has(id))) return;
 
     state.pushHistory();
     set((prev) => {
       const next = new Map(prev.elements);
+      const deleted = cascadeDelete(next, ids);
+      return deleted.size > 0 ? { elements: next } : prev;
+    });
+  },
+
+  discardElements: (ids: string[]) => {
+    set((prev) => {
+      const next = new Map(prev.elements);
+      let changed = false;
       for (const id of ids) {
-        const element = next.get(id);
-        if (element) {
-          next.set(id, {
-            ...element,
-            isDeleted: true,
-            version: element.version + 1,
-            updatedAt: Date.now(),
-          } as MavisElement);
+        const el = next.get(id);
+        if (!el) continue;
+        next.delete(id);
+        changed = true;
+        // Drop back-references from the label's container
+        if (el.type === 'text' && el.containerId) {
+          const container = next.get(el.containerId);
+          if (container) {
+            next.set(container.id, {
+              ...container,
+              boundElements: container.boundElements.filter((b) => b.id !== id),
+              version: container.version + 1,
+              updatedAt: Date.now(),
+            } as MavisElement);
+          }
         }
       }
-      return { elements: next };
+      return changed ? { elements: next } : prev;
     });
   },
 
@@ -440,71 +481,100 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
     return results;
   },
 
-  pushHistory: () => {
-    set((prev) => {
-      // Discard any future entries beyond the current index
-      const trimmed = prev.history.slice(0, prev.historyIndex + 1);
+  // ── History ──────────────────────────────────────────────────
 
-      // Snapshot current elements
-      const snapshot: HistoryEntry = {
-        elements: cloneElementsMap(prev.elements),
-      };
+  pushHistory: (coalesceKey?: string) => {
+    if (batchDepth > 0) return;
+    const { history, historyIndex } = get();
+    const now = Date.now();
+    const top = historyIndex >= 0 ? history[historyIndex] : undefined;
+    const atEnd = historyIndex === history.length - 1;
 
-      trimmed.push(snapshot);
+    // Reuse an empty step (e.g. a click that didn't change anything)
+    if (top && atEnd && top.before.size === 0) {
+      top.key = coalesceKey;
+      top.time = now;
+      return;
+    }
 
-      // Enforce max history size
-      if (trimmed.length > MAX_HISTORY) {
-        trimmed.shift();
-      }
+    // Coalesce rapid repeated changes of the same kind into one step
+    if (coalesceKey && top && atEnd && top.key === coalesceKey && now - top.time < COALESCE_WINDOW_MS) {
+      top.time = now;
+      return;
+    }
 
-      return {
-        history: trimmed,
-        historyIndex: trimmed.length - 1,
-      };
-    });
+    const trimmed = history.slice(0, historyIndex + 1);
+    trimmed.push(createEntry(coalesceKey, now));
+    if (trimmed.length > MAX_HISTORY) trimmed.shift();
+    set({ history: trimmed, historyIndex: trimmed.length - 1 });
+  },
+
+  beginHistoryBatch: () => {
+    if (batchDepth === 0) get().pushHistory();
+    batchDepth += 1;
+  },
+
+  endHistoryBatch: () => {
+    batchDepth = Math.max(0, batchDepth - 1);
+  },
+
+  amendLastHistoryEntry: (fn: () => void) => {
+    const { history, historyIndex } = get();
+    if (historyIndex < 0 || historyIndex !== history.length - 1) {
+      fn();
+      return;
+    }
+    batchDepth += 1;
+    try {
+      fn();
+    } finally {
+      batchDepth -= 1;
+    }
   },
 
   undo: () => {
-    const state = get();
-    if (!state.canUndo()) return;
-
-    const targetIndex = state.historyIndex;
-    const entry = state.history[targetIndex];
-
-    // Save current live state for redo if we're at the end of history
-    let history = state.history;
-    if (history.length === targetIndex + 1) {
-      history = [...history, { elements: cloneElementsMap(state.elements) }];
+    const { history, historyIndex } = get();
+    let idx = historyIndex;
+    while (idx >= 0 && isNoopEntry(history[idx])) idx--;
+    if (idx < 0) {
+      if (historyIndex >= 0) set({ historyIndex: -1 });
+      return;
     }
-
-    set({
-      elements: cloneElementsMap(entry.elements),
-      historyIndex: targetIndex - 1,
-      history,
+    const entry = history[idx];
+    set((prev) => {
+      const next = new Map(prev.elements);
+      applyValues(next, entry.before, entry.after);
+      return { elements: next, historyIndex: idx - 1 };
     });
   },
 
   redo: () => {
-    const state = get();
-    if (!state.canRedo()) return;
-
-    // history[i] is the pre-mutation snapshot for mutation i;
-    // history[i+1] holds the post-mutation state saved by undo
-    const entry = state.history[state.historyIndex + 2];
-
-    set({
-      elements: cloneElementsMap(entry.elements),
-      historyIndex: state.historyIndex + 1,
+    const { history, historyIndex } = get();
+    let idx = historyIndex + 1;
+    while (idx < history.length && isNoopEntry(history[idx])) idx++;
+    if (idx >= history.length) return;
+    const entry = history[idx];
+    set((prev) => {
+      const next = new Map(prev.elements);
+      applyValues(next, entry.after, entry.before);
+      return { elements: next, historyIndex: idx };
     });
   },
 
   canUndo: () => {
-    return get().historyIndex >= 0;
+    const { history, historyIndex } = get();
+    for (let i = historyIndex; i >= 0; i--) {
+      if (!isNoopEntry(history[i])) return true;
+    }
+    return false;
   },
 
   canRedo: () => {
-    const state = get();
-    return state.historyIndex + 2 < state.history.length;
+    const { history, historyIndex } = get();
+    for (let i = historyIndex + 1; i < history.length; i++) {
+      if (!isNoopEntry(history[i])) return true;
+    }
+    return false;
   },
 
   createElement: (
@@ -515,6 +585,7 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
     width: number,
     height: number,
   ): MavisElement => {
+    const now = Date.now();
     const base = {
       id: nanoid(),
       diagramId,
@@ -523,35 +594,24 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
       width,
       height,
       ...DEFAULT_STYLE,
-      seed: Math.floor(Math.random() * 2 ** 31),
-      updatedAt: Date.now(),
+      seed: newSeed(),
+      layerId: activeLayerId(),
+      zIndex: nextZIndex(),
+      updatedAt: now,
     };
 
     switch (type) {
       case 'rectangle':
-        return {
-          ...base,
-          type: 'rectangle',
-          roundness: 0,
-        } as RectangleElement;
+        return { ...base, type: 'rectangle', roundness: 0 } as RectangleElement;
 
       case 'ellipse':
-        return {
-          ...base,
-          type: 'ellipse',
-        } as EllipseElement;
+        return { ...base, type: 'ellipse' } as EllipseElement;
 
       case 'diamond':
-        return {
-          ...base,
-          type: 'diamond',
-        } as DiamondElement;
+        return { ...base, type: 'diamond' } as DiamondElement;
 
       case 'triangle':
-        return {
-          ...base,
-          type: 'triangle',
-        } as TriangleElement;
+        return { ...base, type: 'triangle' } as TriangleElement;
 
       case 'line':
         return {
@@ -637,12 +697,7 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
 
   // ── Arrow Binding ──────────────────────────────────────────
 
-  bindArrow: (
-    arrowId: string,
-    endpoint: 'start' | 'end',
-    targetId: string,
-    gap: number,
-  ) => {
+  bindArrow: (arrowId: string, endpoint: 'start' | 'end', targetId: string, gap: number) => {
     const state = get();
     const arrow = state.elements.get(arrowId);
     const target = state.elements.get(targetId);
@@ -653,7 +708,6 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
     set((prev) => {
       const next = new Map(prev.elements);
 
-      // Update arrow binding
       const currentArrow = next.get(arrowId) as LinearElement | undefined;
       if (!currentArrow) return prev;
 
@@ -669,21 +723,14 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
         updatedAt: Date.now(),
       } as LinearElement);
 
-      // Update target's boundElements
       const currentTarget = next.get(targetId);
-      if (currentTarget) {
-        const existing = currentTarget.boundElements.some((b) => b.id === arrowId);
-        if (!existing) {
-          next.set(targetId, {
-            ...currentTarget,
-            boundElements: [
-              ...currentTarget.boundElements,
-              { id: arrowId, type: 'arrow' },
-            ],
-            version: currentTarget.version + 1,
-            updatedAt: Date.now(),
-          } as MavisElement);
-        }
+      if (currentTarget && !currentTarget.boundElements.some((b) => b.id === arrowId)) {
+        next.set(targetId, {
+          ...currentTarget,
+          boundElements: [...currentTarget.boundElements, { id: arrowId, type: 'arrow' }],
+          version: currentTarget.version + 1,
+          updatedAt: Date.now(),
+        } as MavisElement);
       }
 
       return { elements: next };
@@ -699,30 +746,25 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
     if (!binding) return;
 
     const targetId = binding.elementId;
+    const otherBinding = endpoint === 'start' ? arrow.endBinding : arrow.startBinding;
 
     state.pushHistory();
     set((prev) => {
       const next = new Map(prev.elements);
 
-      // Remove binding from arrow
       const currentArrow = next.get(arrowId) as LinearElement | undefined;
       if (!currentArrow) return prev;
 
-      const bindingUpdate =
-        endpoint === 'start'
-          ? { startBinding: null }
-          : { endBinding: null };
-
       next.set(arrowId, {
         ...currentArrow,
-        ...bindingUpdate,
+        ...(endpoint === 'start' ? { startBinding: null } : { endBinding: null }),
         version: currentArrow.version + 1,
         updatedAt: Date.now(),
       } as LinearElement);
 
-      // Remove arrow from target's boundElements
+      // Keep the back-reference if the other end is bound to the same shape
       const currentTarget = next.get(targetId);
-      if (currentTarget) {
+      if (currentTarget && otherBinding?.elementId !== targetId) {
         next.set(targetId, {
           ...currentTarget,
           boundElements: currentTarget.boundElements.filter((b) => b.id !== arrowId),
@@ -736,9 +778,7 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
   },
 
   moveElementWithBindings: (id: string, newX: number, newY: number) => {
-    const state = get();
-    const element = state.elements.get(id);
-    if (!element) return;
+    if (!get().elements.has(id)) return;
 
     set((prev) => {
       const next = new Map(prev.elements);
@@ -747,22 +787,19 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
 
       let finalX = newX;
       let finalY = newY;
-      // Keep bound text inside its container when moving the text
-      if (current.type === 'text') {
-        const textEl = current as TextElement;
-        if (textEl.containerId) {
-          const container = next.get(textEl.containerId);
-          if (container && !container.isDeleted) {
-            const clamped = clampBoundTextToContainer(
-              newX,
-              newY,
-              textEl.width,
-              textEl.height,
-              container,
-            );
-            finalX = clamped.x;
-            finalY = clamped.y;
-          }
+      // Keep bound text inside its container when moving the text itself
+      if (current.type === 'text' && current.containerId) {
+        const container = next.get(current.containerId);
+        if (container && !container.isDeleted) {
+          const clamped = clampBoundTextToContainer(
+            newX,
+            newY,
+            current.width,
+            current.height,
+            container,
+          );
+          finalX = clamped.x;
+          finalY = clamped.y;
         }
       }
 
@@ -774,69 +811,7 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
         updatedAt: Date.now(),
       } as MavisElement);
 
-      // Update bound arrows
-      for (const bound of current.boundElements) {
-        if (bound.type === 'arrow' || bound.type === 'line') {
-          const arrow = next.get(bound.id) as LinearElement | undefined;
-          if (!arrow || arrow.isDeleted) continue;
-
-          const movedElement = next.get(id)!;
-          const cx = movedElement.x + movedElement.width / 2;
-          const cy = movedElement.y + movedElement.height / 2;
-
-          const newPoints = [...arrow.points] as [number, number][];
-          let updated = false;
-
-          if (arrow.startBinding?.elementId === id) {
-            // Update start point: compute direction from target center to arrow end
-            const endPt: Point = {
-              x: arrow.x + newPoints[newPoints.length - 1][0],
-              y: arrow.y + newPoints[newPoints.length - 1][1],
-            };
-            const edgePt = getBindingEdgePoint(movedElement, endPt.x, endPt.y, arrow.startBinding.gap);
-            newPoints[0] = [edgePt.x - arrow.x, edgePt.y - arrow.y];
-            updated = true;
-          }
-
-          if (arrow.endBinding?.elementId === id) {
-            // Update end point: compute direction from target center to arrow start
-            const startPt: Point = {
-              x: arrow.x + newPoints[0][0],
-              y: arrow.y + newPoints[0][1],
-            };
-            const edgePt = getBindingEdgePoint(movedElement, startPt.x, startPt.y, arrow.endBinding.gap);
-            newPoints[newPoints.length - 1] = [edgePt.x - arrow.x, edgePt.y - arrow.y];
-            updated = true;
-          }
-
-          if (updated) {
-            next.set(bound.id, {
-              ...arrow,
-              points: newPoints,
-              version: arrow.version + 1,
-              updatedAt: Date.now(),
-            } as LinearElement);
-          }
-        }
-
-        // Handle bound text (text-in-shape)
-        if (bound.type === 'text') {
-          const textEl = next.get(bound.id) as TextElement | undefined;
-          if (!textEl || textEl.isDeleted) continue;
-
-          const dx = newX - current.x;
-          const dy = newY - current.y;
-
-          next.set(bound.id, {
-            ...textEl,
-            x: textEl.x + dx,
-            y: textEl.y + dy,
-            version: textEl.version + 1,
-            updatedAt: Date.now(),
-          } as TextElement);
-        }
-      }
-
+      syncBoundElements(next, id);
       return { elements: next };
     });
   },
@@ -848,23 +823,23 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
     const container = state.elements.get(containerId);
     if (!container) throw new Error(`Container ${containerId} not found`);
 
-    const padding = BOUND_TEXT_PADDING;
+    const connector = isLinear(container);
     const textEl: TextElement = {
       id: nanoid(),
       type: 'text',
       diagramId: container.diagramId,
-      x: container.x + padding,
-      y: container.y + padding,
-      width: container.width - padding * 2,
-      height: container.height - padding * 2,
+      ...boundTextBox(container),
       text,
-      fontSize: 20,
+      fontSize: connector ? 16 : 20,
       fontFamily: 'hand-drawn',
       textAlign: 'center',
       verticalAlign: 'middle',
       containerId,
       lineHeight: 1.25,
       ...DEFAULT_STYLE,
+      seed: newSeed(),
+      layerId: container.layerId,
+      zIndex: container.zIndex,
       strokeWidth: 0,
       updatedAt: Date.now(),
     };
@@ -874,15 +849,11 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
       const next = new Map(prev.elements);
       next.set(textEl.id, textEl);
 
-      // Add to container's boundElements
       const currentContainer = next.get(containerId);
       if (currentContainer) {
         next.set(containerId, {
           ...currentContainer,
-          boundElements: [
-            ...currentContainer.boundElements,
-            { id: textEl.id, type: 'text' },
-          ],
+          boundElements: [...currentContainer.boundElements, { id: textEl.id, type: 'text' }],
           version: currentContainer.version + 1,
           updatedAt: Date.now(),
         } as MavisElement);
@@ -900,8 +871,7 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
     if (elementIds.length < 2) return '';
 
     const groupId = nanoid();
-    const state = get();
-    state.pushHistory();
+    get().pushHistory();
 
     set((prev) => {
       const next = new Map(prev.elements);
@@ -925,7 +895,6 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
   ungroupElements: (elementIds: string[]) => {
     const state = get();
 
-    // Find the outermost group shared by the selected elements
     const groupCounts = new Map<string, number>();
     for (const id of elementIds) {
       const el = state.elements.get(id);
@@ -937,7 +906,6 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
 
     if (groupCounts.size === 0) return;
 
-    // Find the most common outermost group
     let targetGroupId = '';
     let maxCount = 0;
     for (const [gid, count] of groupCounts) {
@@ -952,7 +920,6 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
     state.pushHistory();
     set((prev) => {
       const next = new Map(prev.elements);
-      // Remove the target group from ALL elements that have it
       for (const [id, el] of next) {
         if (el.groupIds.includes(targetGroupId)) {
           next.set(id, {
@@ -969,13 +936,14 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
 
   // ── Copy/Paste/Duplicate ────────────────────────────────────
 
-  copyElements: (ids: string[]) => {
+  copyElements: (ids: string[]): ClipboardEnvelope | null => {
     const state = get();
     const elementsToCopy: MavisElement[] = [];
     let minX = Infinity;
     let minY = Infinity;
 
-    for (const id of ids) {
+    // Labels travel with their shapes
+    for (const id of withBoundLabels(state.elements, ids)) {
       const el = state.elements.get(id);
       if (el && !el.isDeleted) {
         elementsToCopy.push({ ...el });
@@ -984,7 +952,7 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
       }
     }
 
-    if (elementsToCopy.length === 0) return;
+    if (elementsToCopy.length === 0) return null;
 
     set({
       clipboard: {
@@ -993,104 +961,96 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
       },
     });
 
-    // Also copy to system clipboard as JSON
-    try {
-      const json = JSON.stringify({
-        type: 'mavisdraw-clipboard',
-        elements: elementsToCopy,
-      });
-      navigator.clipboard.writeText(json).catch(() => {
-        // Silently fail if clipboard write is not available
-      });
-    } catch {
-      // Ignore clipboard errors in non-browser environments
-    }
+    return { type: 'mavisdraw-clipboard', elements: elementsToCopy };
   },
 
-  pasteElements: (diagramId: string): MavisElement[] => {
+  setClipboardFromEnvelope: (envelope: ClipboardEnvelope) => {
+    const elements = envelope.elements.filter((el) => el && typeof el.id === 'string');
+    if (elements.length === 0) return;
+    let minX = Infinity;
+    let minY = Infinity;
+    for (const el of elements) {
+      minX = Math.min(minX, el.x);
+      minY = Math.min(minY, el.y);
+    }
+    set({ clipboard: { elements, sourceOffset: { x: minX, y: minY } } });
+  },
+
+  pasteElements: (diagramId: string, at?: Point): MavisElement[] => {
     const state = get();
     const clipData = state.clipboard;
     if (!clipData || clipData.elements.length === 0) return [];
 
-    const PASTE_OFFSET = 10;
+    // Where to put the pasted group: centered on `at`, or nudged from the source
+    let dx = 10;
+    let dy = 10;
+    if (at) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const el of clipData.elements) {
+        const b = getElementBounds(el);
+        minX = Math.min(minX, b.minX);
+        minY = Math.min(minY, b.minY);
+        maxX = Math.max(maxX, b.maxX);
+        maxY = Math.max(maxY, b.maxY);
+      }
+      dx = at.x - (minX + maxX) / 2;
+      dy = at.y - (minY + maxY) / 2;
+    }
+
     const idMap = new Map<string, string>();
     const groupIdMap = new Map<string, string>();
-    const newElements: MavisElement[] = [];
-
     for (const original of clipData.elements) {
-      const newId = nanoid();
-      idMap.set(original.id, newId);
+      idMap.set(original.id, nanoid());
+    }
 
-      // Map old group IDs to new ones
+    // Keep relative stacking but land on top of existing content
+    const sortedByZ = [...clipData.elements].sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
+    const zFor = new Map<string, number>();
+    for (const el of sortedByZ) zFor.set(el.id, nextZIndex());
+
+    const newElements: MavisElement[] = clipData.elements.map((original) => {
       const newGroupIds = original.groupIds.map((gid) => {
-        if (!groupIdMap.has(gid)) {
-          groupIdMap.set(gid, nanoid());
-        }
+        if (!groupIdMap.has(gid)) groupIdMap.set(gid, nanoid());
         return groupIdMap.get(gid)!;
       });
 
-      const newEl = {
+      const el = {
         ...original,
-        id: newId,
+        id: idMap.get(original.id)!,
         diagramId,
-        x: original.x + PASTE_OFFSET,
-        y: original.y + PASTE_OFFSET,
+        x: original.x + dx,
+        y: original.y + dy,
         groupIds: newGroupIds,
+        isDeleted: false,
+        isLocked: false,
+        zIndex: zFor.get(original.id),
         version: 1,
         updatedAt: Date.now(),
+        // Only references to elements that were pasted along survive
+        boundElements: original.boundElements
+          .filter((b) => idMap.has(b.id))
+          .map((b) => ({ id: idMap.get(b.id)!, type: b.type })),
       } as MavisElement;
 
-      newElements.push(newEl);
-    }
-
-    // Fix references in the pasted elements
-    for (const el of newElements) {
-      // Update boundElements references
-      el.boundElements = el.boundElements
-        .map((b) => ({
-          id: idMap.get(b.id) || b.id,
-          type: b.type,
-        }))
-        .filter((b) => idMap.has(b.id) || !clipData.elements.some((orig) => orig.id === b.id));
-
-      // Update arrow bindings
       if (el.type === 'arrow' || el.type === 'line' || el.type === 'freedraw') {
-        const linear = el as LinearElement;
-        if (linear.startBinding) {
-          const newTargetId = idMap.get(linear.startBinding.elementId);
-          if (newTargetId) {
-            (el as LinearElement).startBinding = {
-              ...linear.startBinding,
-              elementId: newTargetId,
-            };
-          } else {
-            (el as LinearElement).startBinding = null;
-          }
-        }
-        if (linear.endBinding) {
-          const newTargetId = idMap.get(linear.endBinding.elementId);
-          if (newTargetId) {
-            (el as LinearElement).endBinding = {
-              ...linear.endBinding,
-              elementId: newTargetId,
-            };
-          } else {
-            (el as LinearElement).endBinding = null;
-          }
-        }
+        const start = el.startBinding ? idMap.get(el.startBinding.elementId) : undefined;
+        const end = el.endBinding ? idMap.get(el.endBinding.elementId) : undefined;
+        el.startBinding = start && el.startBinding ? { ...el.startBinding, elementId: start } : null;
+        el.endBinding = end && el.endBinding ? { ...el.endBinding, elementId: end } : null;
       }
 
-      // Update text containerId
-      if (el.type === 'text') {
-        const textEl = el as TextElement;
-        if (textEl.containerId) {
-          const newContainerId = idMap.get(textEl.containerId);
-          (el as TextElement).containerId = newContainerId || null;
-        }
+      if (el.type === 'text' && el.containerId) {
+        el.containerId = idMap.get(el.containerId) ?? null;
       }
-    }
 
-    // Add all new elements to the store
+      if (el.type === 'portal') {
+        // A pasted portal is a new door; it doesn't share the original's child diagram
+        el.targetDiagramId = '';
+      }
+
+      return el;
+    });
+
     state.pushHistory();
     set((prev) => {
       const next = new Map(prev.elements);
@@ -1105,13 +1065,14 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
 
   duplicateElements: (ids: string[]): MavisElement[] => {
     const state = get();
-    // Use copy then paste logic, but internally
-    state.copyElements(ids);
-    const currentState = get();
-    if (!currentState.clipboard || currentState.clipboard.elements.length === 0) return [];
-
-    const diagramId = currentState.clipboard.elements[0].diagramId;
-    return state.pasteElements(diagramId);
+    const previousClipboard = state.clipboard;
+    const envelope = state.copyElements(ids);
+    if (!envelope) return [];
+    const diagramId = envelope.elements[0].diagramId;
+    const pasted = get().pasteElements(diagramId);
+    // Duplicating shouldn't clobber what the user copied
+    set({ clipboard: previousClipboard });
+    return pasted;
   },
 
   // ── Alignment ──────────────────────────────────────────────
@@ -1122,7 +1083,7 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
 
     const elems = ids
       .map((id) => state.elements.get(id))
-      .filter((el): el is MavisElement => el !== undefined && !el.isDeleted);
+      .filter((el): el is MavisElement => el !== undefined && !el.isDeleted && !el.isLocked);
 
     if (elems.length < 2) return;
 
@@ -1132,61 +1093,40 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
     set((prev) => {
       const next = new Map(prev.elements);
 
-      let refValue: number;
       switch (alignment) {
-        case 'left':
-          refValue = Math.min(...bounds.map((e) => e.b.minX));
-          for (const { el } of bounds) {
-            setLinearMinX(el, next, refValue);
-          }
+        case 'left': {
+          const ref = Math.min(...bounds.map((e) => e.b.minX));
+          for (const { el } of bounds) setMinX(el, next, ref);
           break;
-
+        }
         case 'center-horizontal': {
-          const groupMinX = Math.min(...bounds.map((e) => e.b.minX));
-          const groupMaxX = Math.max(...bounds.map((e) => e.b.maxX));
-          refValue = (groupMinX + groupMaxX) / 2;
-          for (const { el } of bounds) {
-            const w = getElWidth(el);
-            setLinearMinX(el, next, refValue - w / 2);
-          }
+          const ref = (Math.min(...bounds.map((e) => e.b.minX)) + Math.max(...bounds.map((e) => e.b.maxX))) / 2;
+          for (const { el } of bounds) setMinX(el, next, ref - getElWidth(el) / 2);
           break;
         }
-
-        case 'right':
-          refValue = Math.max(...bounds.map((e) => e.b.maxX));
-          for (const { el } of bounds) {
-            const w = getElWidth(el);
-            setLinearMinX(el, next, refValue - w);
-          }
+        case 'right': {
+          const ref = Math.max(...bounds.map((e) => e.b.maxX));
+          for (const { el } of bounds) setMinX(el, next, ref - getElWidth(el));
           break;
-
-        case 'top':
-          refValue = Math.min(...bounds.map((e) => e.b.minY));
-          for (const { el } of bounds) {
-            setLinearMinY(el, next, refValue);
-          }
+        }
+        case 'top': {
+          const ref = Math.min(...bounds.map((e) => e.b.minY));
+          for (const { el } of bounds) setMinY(el, next, ref);
           break;
-
+        }
         case 'center-vertical': {
-          const groupMinY = Math.min(...bounds.map((e) => e.b.minY));
-          const groupMaxY = Math.max(...bounds.map((e) => e.b.maxY));
-          refValue = (groupMinY + groupMaxY) / 2;
-          for (const { el } of bounds) {
-            const h = getElHeight(el);
-            setLinearMinY(el, next, refValue - h / 2);
-          }
+          const ref = (Math.min(...bounds.map((e) => e.b.minY)) + Math.max(...bounds.map((e) => e.b.maxY))) / 2;
+          for (const { el } of bounds) setMinY(el, next, ref - getElHeight(el) / 2);
           break;
         }
-
-        case 'bottom':
-          refValue = Math.max(...bounds.map((e) => e.b.maxY));
-          for (const { el } of bounds) {
-            const h = getElHeight(el);
-            setLinearMinY(el, next, refValue - h);
-          }
+        case 'bottom': {
+          const ref = Math.max(...bounds.map((e) => e.b.maxY));
+          for (const { el } of bounds) setMinY(el, next, ref - getElHeight(el));
           break;
+        }
       }
 
+      for (const { el } of bounds) syncBoundElements(next, el.id);
       return { elements: next };
     });
   },
@@ -1197,108 +1137,252 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
 
     const elems = ids
       .map((id) => state.elements.get(id))
-      .filter((el): el is MavisElement => el !== undefined && !el.isDeleted);
+      .filter((el): el is MavisElement => el !== undefined && !el.isDeleted && !el.isLocked);
 
     if (elems.length < 3) return;
 
     state.pushHistory();
     set((prev) => {
       const next = new Map(prev.elements);
+      const withBounds = elems.map((e) => ({ el: e, b: getElementBounds(e) }));
 
       if (direction === 'horizontal') {
-        const withBounds = elems.map((e) => ({ el: e, b: getElementBounds(e) }));
         const sorted = withBounds.sort((a, b) => a.b.minX - b.b.minX);
         const firstX = sorted[0].b.minX;
         const lastX = sorted[sorted.length - 1].b.maxX;
         const totalWidth = sorted.reduce((sum, s) => sum + (s.b.maxX - s.b.minX), 0);
-        const totalGap = (lastX - firstX - totalWidth) / (sorted.length - 1);
+        const gap = (lastX - firstX - totalWidth) / (sorted.length - 1);
 
-        let currentX = sorted[0].b.maxX + totalGap;
+        let currentX = sorted[0].b.maxX + gap;
         for (let i = 1; i < sorted.length - 1; i++) {
-          setLinearMinX(sorted[i].el, next, currentX);
-          currentX += (sorted[i].b.maxX - sorted[i].b.minX) + totalGap;
+          setMinX(sorted[i].el, next, currentX);
+          currentX += sorted[i].b.maxX - sorted[i].b.minX + gap;
         }
       } else {
-        const withBounds = elems.map((e) => ({ el: e, b: getElementBounds(e) }));
         const sorted = withBounds.sort((a, b) => a.b.minY - b.b.minY);
         const firstY = sorted[0].b.minY;
         const lastY = sorted[sorted.length - 1].b.maxY;
         const totalHeight = sorted.reduce((sum, s) => sum + (s.b.maxY - s.b.minY), 0);
-        const totalGap = (lastY - firstY - totalHeight) / (sorted.length - 1);
+        const gap = (lastY - firstY - totalHeight) / (sorted.length - 1);
 
-        let currentY = sorted[0].b.maxY + totalGap;
+        let currentY = sorted[0].b.maxY + gap;
         for (let i = 1; i < sorted.length - 1; i++) {
-          setLinearMinY(sorted[i].el, next, currentY);
-          currentY += (sorted[i].b.maxY - sorted[i].b.minY) + totalGap;
+          setMinY(sorted[i].el, next, currentY);
+          currentY += sorted[i].b.maxY - sorted[i].b.minY + gap;
         }
       }
 
+      for (const { el } of withBounds) syncBoundElements(next, el.id);
+      return { elements: next };
+    });
+  },
+
+  // ── Stacking & locking ─────────────────────────────────────
+
+  reorderElements: (ids: string[], action: ZOrderAction) => {
+    const state = get();
+    const targets = ids
+      .map((id) => state.elements.get(id))
+      .filter((el): el is MavisElement => !!el && !el.isDeleted);
+    if (targets.length === 0) return;
+    const diagramId = targets[0].diagramId;
+
+    // Current stacking order of the diagram (labels excluded: they follow their shape)
+    const ordered = sortByStacking(
+      Array.from(state.elements.values()).filter(
+        (el) =>
+          el.diagramId === diagramId &&
+          !el.isDeleted &&
+          !(el.type === 'text' && el.containerId),
+      ),
+    );
+    const moving = new Set(targets.filter((t) => !(t.type === 'text' && t.containerId)).map((t) => t.id));
+    if (moving.size === 0) return;
+
+    const result = reorder(ordered.map((el) => el.id), moving, action);
+    if (result.every((id, i) => id === ordered[i].id)) return;
+
+    state.pushHistory();
+    set((prev) => {
+      const next = new Map(prev.elements);
+      result.forEach((id, index) => {
+        const el = next.get(id);
+        if (!el || el.zIndex === index) return;
+        next.set(id, { ...el, zIndex: index, version: el.version + 1, updatedAt: Date.now() } as MavisElement);
+        // Labels ride along with their shape
+        for (const bound of el.boundElements) {
+          if (bound.type !== 'text') continue;
+          const label = next.get(bound.id);
+          if (label && !label.isDeleted) {
+            next.set(label.id, { ...label, zIndex: index, version: label.version + 1, updatedAt: Date.now() } as MavisElement);
+          }
+        }
+      });
+      return { elements: next };
+    });
+  },
+
+  setElementsLocked: (ids: string[], locked: boolean) => {
+    const state = get();
+    const affected = withBoundLabels(state.elements, ids).filter((id) => {
+      const el = state.elements.get(id);
+      return el && el.isLocked !== locked;
+    });
+    if (affected.length === 0) return;
+
+    state.pushHistory();
+    set((prev) => {
+      const next = new Map(prev.elements);
+      for (const id of affected) {
+        const el = next.get(id);
+        if (el) {
+          next.set(id, { ...el, isLocked: locked, version: el.version + 1, updatedAt: Date.now() } as MavisElement);
+        }
+      }
       return { elements: next };
     });
   },
 }));
 
-// ── Helper functions ──────────────────────────────────────────
+// ── Stacking helpers ───────────────────────────────────────────
 
 /**
- * Get the point on an element's edge closest to a given point.
- * Used for computing arrow binding positions.
+ * Sort elements bottom-to-top. Elements without an explicit zIndex keep their
+ * insertion order beneath those that have one; a label always sits directly
+ * above its container.
  */
-function getBindingEdgePoint(
-  element: MavisElement,
-  fromX: number,
-  fromY: number,
-  gap: number,
-): Point {
-  const cx = element.x + element.width / 2;
-  const cy = element.y + element.height / 2;
-  const angle = Math.atan2(fromY - cy, fromX - cx);
-
-  switch (element.type) {
-    case 'ellipse': {
-      const rx = element.width / 2 + gap;
-      const ry = element.height / 2 + gap;
-      return {
-        x: cx + rx * Math.cos(angle),
-        y: cy + ry * Math.sin(angle),
-      };
-    }
-
-    case 'diamond': {
-      const hw = element.width / 2 + gap;
-      const hh = element.height / 2 + gap;
-      const cosA = Math.abs(Math.cos(angle));
-      const sinA = Math.abs(Math.sin(angle));
-      const denom = cosA / hw + sinA / hh;
-      if (denom === 0) return { x: cx, y: cy };
-      const r = 1 / denom;
-      return {
-        x: cx + r * Math.cos(angle),
-        y: cy + r * Math.sin(angle),
-      };
-    }
-
-    default: {
-      const hw = element.width / 2 + gap;
-      const hh = element.height / 2 + gap;
-      const cosA = Math.cos(angle);
-      const sinA = Math.sin(angle);
-
-      if (cosA === 0) {
-        return { x: cx, y: cy + (sinA > 0 ? hh : -hh) };
+export function sortByStacking(elements: MavisElement[]): MavisElement[] {
+  const byId = new Map<string, MavisElement>();
+  elements.forEach((el) => byId.set(el.id, el));
+  const decorated = elements.map((el, index) => {
+    let z = el.zIndex ?? Number.NEGATIVE_INFINITY;
+    let isLabel = 0;
+    if (el.type === 'text' && el.containerId) {
+      const container = byId.get(el.containerId);
+      if (container) {
+        z = container.zIndex ?? Number.NEGATIVE_INFINITY;
+        isLabel = 1;
       }
-      if (sinA === 0) {
-        return { x: cx + (cosA > 0 ? hw : -hw), y: cy };
+    }
+    return { el, z, isLabel, index };
+  });
+  // Labels sort right after their container: compare by container insertion index
+  const indexOf = new Map<string, number>();
+  decorated.forEach((d) => indexOf.set(d.el.id, d.index));
+  decorated.sort((a, b) => {
+    if (a.z !== b.z) return a.z < b.z ? -1 : 1;
+    const aAnchor =
+      a.isLabel && a.el.type === 'text' && a.el.containerId
+        ? indexOf.get(a.el.containerId) ?? a.index
+        : a.index;
+    const bAnchor =
+      b.isLabel && b.el.type === 'text' && b.el.containerId
+        ? indexOf.get(b.el.containerId) ?? b.index
+        : b.index;
+    if (aAnchor !== bAnchor) return aAnchor - bAnchor;
+    if (a.isLabel !== b.isLabel) return a.isLabel - b.isLabel;
+    return a.index - b.index;
+  });
+  return decorated.map((d) => d.el);
+}
+
+/** Move the `moving` ids within `order` (bottom-to-top) per the action. */
+export function reorder(order: string[], moving: Set<string>, action: ZOrderAction): string[] {
+  const kept = order.filter((id) => !moving.has(id));
+  const moved = order.filter((id) => moving.has(id));
+
+  if (action === 'front') return [...kept, ...moved];
+  if (action === 'back') return [...moved, ...kept];
+
+  const result = [...order];
+  if (action === 'forward') {
+    for (let i = result.length - 2; i >= 0; i--) {
+      if (moving.has(result[i]) && !moving.has(result[i + 1])) {
+        [result[i], result[i + 1]] = [result[i + 1], result[i]];
       }
-
-      const tx = hw / Math.abs(cosA);
-      const ty = hh / Math.abs(sinA);
-      const t = Math.min(tx, ty);
-
-      return {
-        x: cx + t * cosA,
-        y: cy + t * sinA,
-      };
+    }
+  } else {
+    for (let i = 1; i < result.length; i++) {
+      if (moving.has(result[i]) && !moving.has(result[i - 1])) {
+        [result[i], result[i - 1]] = [result[i - 1], result[i]];
+      }
     }
   }
+  return result;
 }
+
+// ── Read-only mode (viewers) ───────────────────────────────────
+// Every local mutation becomes a no-op; remote updates (setState via
+// applyRemoteChanges) still flow in so viewers watch edits live.
+let readOnly = false;
+
+export function setElementsReadOnly(value: boolean): void {
+  readOnly = value;
+}
+
+export function isElementsReadOnly(): boolean {
+  return readOnly;
+}
+
+const MUTATORS = [
+  'addElement',
+  'updateElement',
+  'updateElementSilent',
+  'updateElements',
+  'deleteElement',
+  'deleteElements',
+  'discardElements',
+  'bindArrow',
+  'unbindArrow',
+  'moveElementWithBindings',
+  'groupElements',
+  'ungroupElements',
+  'pasteElements',
+  'duplicateElements',
+  'alignElements',
+  'distributeElements',
+  'reorderElements',
+  'setElementsLocked',
+  'undo',
+  'redo',
+] as const;
+
+{
+  const original = useElementsStore.getState();
+  const guarded: Partial<ElementsState> = {};
+  for (const name of MUTATORS) {
+    const fn = original[name] as (...args: unknown[]) => unknown;
+    const fallback = name === 'pasteElements' || name === 'duplicateElements' ? [] : name === 'groupElements' ? '' : undefined;
+    (guarded as Record<string, unknown>)[name] = (...args: unknown[]) =>
+      readOnly ? fallback : fn(...args);
+  }
+  useElementsStore.setState(guarded);
+}
+
+// ── History recorder ───────────────────────────────────────────
+// Observe every elements change and attribute it to the open undo step.
+// Store operations that manage history themselves (undo/redo/reset) change
+// `history`/`historyIndex` in the same update and are skipped.
+useElementsStore.subscribe((state, prev) => {
+  if (state.elements === prev.elements) return;
+  if (unrecordedDepth > 0) return;
+  if (state.history !== prev.history || state.historyIndex !== prev.historyIndex) return;
+
+  const changed = diffElementMaps(prev.elements, state.elements);
+  if (changed.length === 0) return;
+
+  let { history, historyIndex } = state;
+  let entry = historyIndex >= 0 ? history[historyIndex] : undefined;
+  if (!entry || historyIndex !== history.length - 1) {
+    // Change without an explicit step (or after an undo): open a new step
+    entry = createEntry();
+    history = [...history.slice(0, historyIndex + 1), entry];
+    if (history.length > MAX_HISTORY) history = history.slice(history.length - MAX_HISTORY);
+    historyIndex = history.length - 1;
+    useElementsStore.setState({ history, historyIndex });
+  }
+
+  for (const id of changed) {
+    recordChange(entry, id, prev.elements.get(id), state.elements.get(id));
+  }
+});

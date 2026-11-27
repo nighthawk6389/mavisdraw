@@ -12,6 +12,7 @@ import {
 } from '../services/sharingService.js';
 import { checkProjectAccess } from '../services/diagramService.js';
 import { requireAuth } from '../middleware/auth.js';
+import { applyAccessChange } from '../ws/hocuspocus.js';
 
 const createShareSchema = z.object({
   role: z.enum(['viewer', 'editor']),
@@ -54,6 +55,8 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
     if (!result) {
       return reply.code(404).send({ error: 'Invalid share link' });
     }
+    // An upgrade (viewer → editor) applies to tabs already open
+    applyAccessChange(app.hocuspocus, result.projectId, userId, result.role);
 
     return reply.code(200).send(result);
   });
@@ -72,7 +75,17 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const permissions = await getProjectPermissions(id);
-      return reply.code(200).send({ permissions });
+      // Share links are bearer credentials: only people who can manage
+      // sharing get to see them (an editor link in a viewer's hands is an
+      // escalation)
+      const canManage = access === 'owner' || access === 'admin';
+      return reply.code(200).send({
+        permissions: canManage
+          ? permissions
+          : permissions
+              .filter((p) => p.userId !== null)
+              .map((p) => ({ ...p, shareToken: null })),
+      });
     },
   );
 
@@ -102,7 +115,15 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(403).send({ error: 'Only owner or admin can update permissions' });
       }
 
+      // A share link is a bearer credential: it can grant view or edit, never admin
+      if (!permissions.userId && parsed.data.role === 'admin') {
+        return reply.code(400).send({ error: 'Share links can only grant viewer or editor access' });
+      }
+
       const updated = await updatePermission(permissionId, parsed.data.role);
+      if (permissions.userId) {
+        applyAccessChange(app.hocuspocus, permissions.projectId, permissions.userId, parsed.data.role);
+      }
       return reply.code(200).send({
         permission: {
           ...updated,
@@ -134,6 +155,9 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
       }
 
       await revokePermission(permissionId);
+      if (permission.userId) {
+        applyAccessChange(app.hocuspocus, permission.projectId, permission.userId, null);
+      }
       return reply.code(200).send({ message: 'Permission revoked' });
     },
   );

@@ -134,10 +134,22 @@ export const useDiagramStore = create<DiagramState>((set, get) => {
       parentPortalId: string | null,
       title: string,
     ): Diagram => {
+      // Children belong to their parent's project and inherit its look
+      const parent = parentDiagramId ? get().diagrams.get(parentDiagramId) : undefined;
       const diagram = createDefaultDiagram({
         parentDiagramId,
         parentPortalId,
         title,
+        ...(parent
+          ? {
+              projectId: parent.projectId,
+              createdBy: parent.createdBy,
+              renderMode: parent.renderMode,
+              gridEnabled: parent.gridEnabled,
+              gridSize: parent.gridSize,
+              viewBackgroundColor: parent.viewBackgroundColor,
+            }
+          : {}),
       });
 
       set((prev) => {

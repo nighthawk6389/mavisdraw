@@ -6,7 +6,11 @@ import {
   exportToMavisDrawFile,
   createMavisDrawBlob,
 } from '@mavisdraw/export';
-import { exportToSvg } from '@mavisdraw/export';
+import { exportToSvg, exportToPdf } from '@mavisdraw/export';
+import { renderElementsToPng } from '../../utils/exportImage';
+import { whenFontsReady } from '../../utils/fonts';
+import { CanvasRenderer } from '../canvas/CanvasRenderer';
+import { sortByStacking } from '../../stores/elementsStore';
 import {
   exportToExcalidraw,
   exportToDrawio,
@@ -138,12 +142,56 @@ export default function ExportDialog() {
           break;
         }
 
-        case 'png':
-        case 'pdf':
-          // PNG and PDF require canvas rendering — handled via exportRenderer
-          // For now, show a message that these require the canvas
-          alert(`${format.toUpperCase()} export requires canvas rendering. Use SVG or native format for now.`);
+        case 'png': {
+          // PNG shows the current diagram; with "embed scene" on, the file
+          // re-imports as an editable diagram.
+          const visible = allElements.filter((el) => el.diagramId === activeDiagramId);
+          const blob = await renderElementsToPng(visible, {
+            renderMode,
+            scale,
+            background: includeBackground ? '#ffffff' : null,
+            embedScene: embedScene ? { diagrams, rootDiagramId } : null,
+          });
+          downloadBlob(blob, `${filename}.png`);
           break;
+        }
+
+        case 'pdf': {
+          await whenFontsReady();
+          const renderer = new CanvasRenderer(
+            document.createElement('canvas'),
+            document.createElement('canvas'),
+          );
+          const elementsByDiagram = new Map<string, typeof allElements>();
+          for (const el of allElements) {
+            const arr = elementsByDiagram.get(el.diagramId) ?? [];
+            arr.push(el);
+            elementsByDiagram.set(el.diagramId, arr);
+          }
+          for (const [id, els] of elementsByDiagram) elementsByDiagram.set(id, sortByStacking(els));
+          renderer.setElementsContext(allElements.filter((el) => !el.isDeleted));
+          // Active diagram first, then the rest of the hierarchy (one page each)
+          const ordered = [
+            ...diagrams.filter((d) => d.id === activeDiagramId),
+            ...diagrams.filter((d) => d.id !== activeDiagramId),
+          ];
+          const blob = await exportToPdf(
+            ordered,
+            elementsByDiagram,
+            {
+              format: 'pdf',
+              includeBackground,
+              scale,
+              includeNestedDiagrams: includeNested,
+              renderMode,
+              multiPage: includeNested,
+              pageSize: 'auto',
+            },
+            (ctx, element, mode) => renderer.renderElement(ctx, element, mode),
+          );
+          downloadBlob(blob, `${filename}.pdf`);
+          break;
+        }
       }
 
       toggleExportDialog();

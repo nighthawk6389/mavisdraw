@@ -2,6 +2,8 @@ import type { Bounds, MavisElement } from '@mavisdraw/types';
 
 /**
  * Compute the axis-aligned bounding box enclosing all elements.
+ * Linear elements (lines, arrows, freedraw) are measured from their points,
+ * which can extend left/up of the element origin, so exports don't clip them.
  * Returns null if the array is empty.
  */
 export function computeElementsBounds(elements: MavisElement[]): Bounds | null {
@@ -12,11 +14,23 @@ export function computeElementsBounds(elements: MavisElement[]): Bounds | null {
   let maxX = -Infinity;
   let maxY = -Infinity;
 
+  const include = (x: number, y: number) => {
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+  };
+
   for (const el of elements) {
-    if (el.x < minX) minX = el.x;
-    if (el.y < minY) minY = el.y;
-    if (el.x + el.width > maxX) maxX = el.x + el.width;
-    if (el.y + el.height > maxY) maxY = el.y + el.height;
+    if (
+      (el.type === 'line' || el.type === 'arrow' || el.type === 'freedraw') &&
+      el.points.length > 0
+    ) {
+      for (const [px, py] of el.points) include(el.x + px, el.y + py);
+    } else {
+      include(el.x, el.y);
+      include(el.x + el.width, el.y + el.height);
+    }
   }
 
   return {

@@ -58,3 +58,63 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
+
+  e2e:
+    name: E2E (mocked API)
+    # Pinned: Playwright 1.56 can't install Chromium on ubuntu-latest (26.04)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm turbo run build --filter=@mavisdraw/web^...
+      - run: pnpm --filter @mavisdraw/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @mavisdraw/web run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-mocked
+          path: apps/web/playwright-report
+          retention-days: 7
+
+  e2e-real:
+    name: E2E (real backend + Postgres)
+    # Pinned: Playwright 1.56 can't install Chromium on ubuntu-latest (26.04)
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: mavisdraw
+          POSTGRES_PASSWORD: mavisdraw_dev
+          POSTGRES_DB: mavisdraw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mavisdraw"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      E2E_DATABASE_URL: postgresql://mavisdraw:mavisdraw_dev@localhost:5432/mavisdraw
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm turbo run build --filter=@mavisdraw/web^... --filter=@mavisdraw/server^...
+      - run: pnpm --filter @mavisdraw/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @mavisdraw/web run test:e2e:real
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-real
+          path: apps/web/playwright-report
+          retention-days: 7
