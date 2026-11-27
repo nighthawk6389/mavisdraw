@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { act, createElement } from 'react';
+import { act, createElement, useEffect } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { Diagram, MavisElement } from '@mavisdraw/types';
 
@@ -90,14 +90,18 @@ const idsSent = (call: number) => (bodyOf(call).elements ?? []).map((el) => el.i
 
 let root: Root;
 let hook: ReturnType<typeof useAutoSave>;
-function Harness({ id }: { id: string }) {
-  hook = useAutoSave(id);
+type Result = ReturnType<typeof useAutoSave>;
+function Harness({ id, onRender }: { id: string; onRender: (r: Result) => void }) {
+  const result = useAutoSave(id);
+  useEffect(() => {
+    onRender(result);
+  });
   return null;
 }
 const mount = () =>
   act(() => {
     root = createRoot(document.createElement('div'));
-    root.render(createElement(Harness, { id: ROOT }));
+    root.render(createElement(Harness, { id: ROOT, onRender: (r: Result) => void (hook = r) }));
   });
 
 beforeEach(() => {
