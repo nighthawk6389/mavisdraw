@@ -1,6 +1,6 @@
 import type { APIRequestContext, APIResponse } from '@playwright/test';
 import { expect } from '@playwright/test';
-import { API_URL } from './helpers';
+import { API_URL, confirmEmail } from './helpers';
 
 /**
  * Helpers for API-level tests: several people calling the real backend with
@@ -19,6 +19,7 @@ let counter = 0;
 export const uniq = () =>
   `${Date.now().toString(36)}${(++counter).toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
+/** A new account whose email is confirmed (invites only reach confirmed addresses). */
 export async function signUp(api: APIRequestContext, name: string): Promise<Person> {
   const email = `${name.toLowerCase().replace(/\W+/g, '-')}-${uniq()}@e2e.mavisdraw.dev`;
   const res = await api.post(`${API_URL}/api/auth/register`, {
@@ -26,6 +27,7 @@ export async function signUp(api: APIRequestContext, name: string): Promise<Pers
   });
   expect(res.status(), await res.text()).toBe(201);
   const body = (await res.json()) as { user: { id: string }; accessToken: string };
+  await confirmEmail(api, email);
   return { id: body.user.id, name, email, token: body.accessToken };
 }
 
