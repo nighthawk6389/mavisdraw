@@ -10,6 +10,10 @@ import { defineConfig, devices } from '@playwright/test';
  */
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
 
+/** Override to run two checkouts' suites side by side without sharing a dev server. */
+const PORT = process.env.E2E_MOCK_WEB_PORT ?? '3000';
+const WEB_URL = `http://localhost:${PORT}`;
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
@@ -18,7 +22,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'html',
   use: {
-    baseURL: 'http://localhost:3000',
+    baseURL: WEB_URL,
     trace: 'on-first-retry',
     ...(executablePath ? { launchOptions: { executablePath } } : {}),
   },
@@ -29,8 +33,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'pnpm run dev',
-    url: 'http://localhost:3000',
+    command: `pnpm exec vite --port ${PORT} --strictPort`,
+    url: WEB_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 30000,
   },
