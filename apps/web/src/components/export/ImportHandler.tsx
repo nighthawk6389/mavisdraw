@@ -5,6 +5,8 @@ import type { ExcalidrawFile } from '@mavisdraw/compat';
 import { importMermaidText, looksLikeMermaid } from '../../import/diagramAsCode';
 import { getCanvasController } from '../canvas/canvasController';
 import { toast } from '../../stores/toastStore';
+import { remapImport } from '../../import/remapImport';
+import { registerNewDiagram } from '../../services/diagramSync';
 
 function detectFormat(
   filename: string,
@@ -73,12 +75,14 @@ export default function ImportHandler() {
 
       let diagrams: import('@mavisdraw/types').Diagram[] = [];
       let elements: import('@mavisdraw/types').MavisElement[] = [];
+      let rootDiagramId: string | undefined;
 
       switch (format) {
         case 'mavisdraw': {
           const result = importMavisDrawFile(content as string);
           diagrams = result.diagrams;
           elements = result.elements;
+          rootDiagramId = result.rootDiagramId;
           break;
         }
         case 'excalidraw': {
@@ -111,26 +115,28 @@ export default function ImportHandler() {
         return;
       }
 
-      // Push current state to history before loading
+      // Into this project: the file's top level joins the diagram on screen,
+      // its nested diagrams become this project's (fresh ids throughout, so
+      // nothing is written back to where the file came from, and importing
+      // twice doesn't collide). Nothing already here is replaced.
+      const { diagrams: current, activeDiagramId } = useDiagramStore.getState();
+      const target = current.get(activeDiagramId);
+      if (!target) return;
+      const imported = remapImport({ diagrams, elements, rootDiagramId }, target);
+
+      // One undo step
       useElementsStore.getState().pushHistory();
-
-      // Load imported elements
-      useElementsStore.getState().setElements(elements);
-
-      // Load diagrams
-      const diagStore = useDiagramStore.getState();
-      for (const diagram of diagrams) {
-        if (!diagStore.diagrams.has(diagram.id)) {
-          // Update the diagrams map directly
-          diagStore.diagrams.set(diagram.id, diagram);
-        }
-      }
-
-      // Navigate to first diagram
-      if (diagrams.length > 0) {
-        const root = diagrams.find((d) => !d.parentDiagramId) || diagrams[0];
-        diagStore.navigateToDiagram(root.id);
-      }
+      useDiagramStore.setState((prev) => {
+        const next = new Map(prev.diagrams);
+        for (const d of imported.diagrams) next.set(d.id, d);
+        return { diagrams: next };
+      });
+      useElementsStore.setState((prev) => {
+        const next = new Map(prev.elements);
+        for (const el of imported.elements) next.set(el.id, el);
+        return { elements: next };
+      });
+      for (const d of imported.diagrams) registerNewDiagram(d);
 
       alert(`Imported ${elements.length} elements from ${format} file.`);
     } catch (err) {
