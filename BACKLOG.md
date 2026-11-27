@@ -43,6 +43,13 @@ Still open:
 - **Title/background/layers aren't live** (REST only, last writer wins for those fields).
 - **Off-screen undo**: undo after drilling into a child can change parent elements you can't see (Figma/tldraw scope or reveal it).
 
+### Architecture model follow-ups (docs/model-layer.md)
+
+- **Proposals and PR checks on component ids**: proposals still name components by label within one diagram (`components/agent/applyProposal.ts`, `services/prDrift.ts`). With ids, a proposal could add a relationship to a component drawn on another level, and a PR comment could link each touched component to its panel.
+- **Inspector column hides shapes on the right**: selecting a shape opens the style (and component) column, which narrows the canvas. A shape near the right edge can end up under it. Keep the selection in view, or let the column overlay a reserved gutter.
+- **Component panel actions are separate undo steps from server renames**: renaming everywhere is a server edit (other appearances, titles). Undoing the local label edit doesn't undo the rename elsewhere.
+- **Tags have no editor yet** (the API takes them; the panel shows none).
+
 ### Second independent review (2026-11, `308bc3c..730bf7e`) — status
 
 Fixed: C1 (REST autosave reverting teammates' work), H1 (unverified emails receiving invites), H2 (ReDoS in the PR-check manifest parser), H3 (cross-tenant PR-comment injection), M1 (SVG embed rendered per request), M2 (`TRUST_PROXY=true` spoofable), M4 (collaborator emails visible to public viewers), M5 (project move/privatize ignored open sockets), M9 (repo links never re-verified), M11 (signals loaded whole diagrams), L1 (admins granting admin, fixed on the testing branch), L2 (any bot's comment edited), L3 (MCP limit error hidden).

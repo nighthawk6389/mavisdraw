@@ -102,12 +102,33 @@ rename).
 - Agents (MCP), PR checks and proposals work with component ids instead of matching text.
 - Export of the model as Structurizr DSL (C4).
 
+## Export: Structurizr DSL (C4)
+
+Export → “Structurizr DSL — C4 model”, or `GET /api/projects/:id/model/structurizr`, writes the model
+as a Structurizr workspace:
+- top-level components become people and software systems;
+- what's inside a system becomes its containers, and what's inside a container its components
+  (deeper levels fold into their container);
+- relationships keep their description and technology;
+- kinds become tags (External, Database, Queue);
+- views are generated for every level with something inside.
+
+## Coding agents (MCP)
+
+`get_component` gives a component by id, name or code path: its details, every diagram it's drawn
+on, what it's part of and contains, and its dependencies and dependents across levels.
+`find_component` and `read_architecture` show component ids, and `propose_update` accepts them. See
+[mcp.md](mcp.md).
+
 ## Delivery
 
-1. **Model core** — shared types, the model computed from elements + tables (pure, tested), tables
-   and migration, model API, server-side rename propagation.
-2. **Editor** — identity assignment (labels, paste, duplicate), rename-from-label, component panel,
-   linking/unlinking, appearances and cross-level dependencies, suggestions of connections, legacy
-   backfill.
-3. **Everything on ids** — MCP (component ids, `get_component`, dependencies), PR checks and
-   proposals, Structurizr export, docs.
+1. **Model core** (done): shared types; the model computed from elements and tables (pure,
+   tested); tables and migration; model API; server-side rename propagation.
+2. **Editor** (done): identity on paste and duplicate; rename from a label; the component panel;
+   linking and unlinking; appearances and cross-level dependencies; suggested connections.
+3. **Everything on ids** (done): MCP (component ids, `get_component`, dependencies across levels);
+   Structurizr export.
+   - Pull-request checks still match changed files to components by their code folders, which
+     already picks one owner per file.
+   - Proposals are applied to one diagram by label.
+   - Moving both onto component ids is a follow-up (BACKLOG).

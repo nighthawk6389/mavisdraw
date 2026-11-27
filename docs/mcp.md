@@ -42,8 +42,9 @@ can edit. Revoke it in the same dialog; it stops working on the next request.
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `list_projects`     | Projects you can open, your role, and the repository a map was generated from                                                                           |
 | `read_architecture` | A project's map as Markdown — components, connections, nested diagrams, linked folders — or one nested diagram and what's under it                      |
-| `find_component`    | Components by name, or by a file/folder path: returns the component that owns that code (most specific first), where it sits, its links and connections |
-| `propose_update`    | Add, connect, rename or remove components on one diagram, by name. Waits for review                                                                     |
+| `find_component`    | Components by name, or by a file/folder path: returns the component that owns that code (most specific first), where it sits, its links and connections, and its component id |
+| `get_component`     | One component of the architecture model (by id, name or code path): kind, description, technology, owner, links, code, every diagram it's drawn on, what it's part of and contains, and its dependencies and dependents across all levels (see [the model](model-layer.md)) |
+| `propose_update`    | Add, connect, rename or remove components on one diagram, by name or component id. Waits for review                                                                     |
 
 Proposals appear live in the editor under **Proposals** (and ⌘K → _Proposed map updates_), with the
 agent's description and exactly what would change. **Apply** makes it one undoable step on the

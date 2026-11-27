@@ -16,7 +16,8 @@ import {
   exportToDrawio,
   exportToMiro,
 } from '@mavisdraw/compat';
-import { serializeScene } from '@mavisdraw/llm';
+import { serializeScene, toStructurizrDsl } from '@mavisdraw/llm';
+import { useModelStore } from '../../stores/modelStore';
 import type { ExportFormat } from '@mavisdraw/types';
 
 const FORMAT_OPTIONS: { value: ExportFormat; label: string; ext: string }[] = [
@@ -28,6 +29,7 @@ const FORMAT_OPTIONS: { value: ExportFormat; label: string; ext: string }[] = [
   { value: 'drawio', label: 'draw.io (.drawio)', ext: '.drawio' },
   { value: 'miro', label: 'Miro JSON', ext: '.json' },
   { value: 'llm-text', label: 'LLM-Readable Text (.md)', ext: '.md' },
+  { value: 'structurizr', label: 'Structurizr DSL — C4 model (.dsl)', ext: '.dsl' },
 ];
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -139,6 +141,18 @@ export default function ExportDialog() {
           const markdown = serializeScene(scene, diagramTitle);
           const blob = new Blob([markdown], { type: 'text/markdown' });
           downloadBlob(blob, `${filename}.md`);
+          break;
+        }
+
+        case 'structurizr': {
+          // The whole project's model (every level), as the server has it now
+          await useModelStore.getState().refresh();
+          const model = useModelStore.getState().model;
+          if (!model) throw new Error('The architecture model isn’t available offline');
+          const rootTitle = diagrams.find((d) => d.id === rootDiagramId)?.title || 'Architecture';
+          const dsl = toStructurizrDsl(model, { name: rootTitle });
+          const blob = new Blob([dsl], { type: 'text/plain' });
+          downloadBlob(blob, `${rootTitle.replace(/[^a-zA-Z0-9-_]/g, '_')}.dsl`);
           break;
         }
 

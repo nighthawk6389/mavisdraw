@@ -106,6 +106,7 @@ test.describe('Coding agents (MCP)', () => {
     const { tools } = await agent.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       'find_component',
+      'get_component',
       'list_projects',
       'propose_update',
       'read_architecture',
@@ -117,6 +118,15 @@ test.describe('Coding agents (MCP)', () => {
     const found = await callTool(agent, 'find_component', { query: 'orders' });
     expect(found.text).toContain('### Orders — project "Shop Map"');
     expect(found.text).toContain('Platform');
+    // The component across levels, by the id find_component gave
+    const componentId = /component id: `([^`]+)`/.exec(found.text)![1];
+    const component = await callTool(agent, 'get_component', {
+      project: 'Shop Map',
+      component: componentId,
+    });
+    expect(component.isError).toBe(false);
+    expect(component.text).toContain(`### Orders (`);
+    expect(component.text).toContain('- part of: Platform');
 
     // The owner has the map open while the agent proposes an update
     await openProject(page, 'Shop Map');

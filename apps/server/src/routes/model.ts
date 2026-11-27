@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
-import { MODEL_COMPONENT_KINDS, componentById } from '@mavisdraw/llm';
+import { MODEL_COMPONENT_KINDS, componentById, toStructurizrDsl } from '@mavisdraw/llm';
 import { requireAuth } from '../middleware/auth.js';
 import { db } from '../db/client.js';
 import { projects } from '../db/schema.js';
@@ -100,6 +100,23 @@ export async function modelRoutes(app: FastifyInstance): Promise<void> {
     if (!project) return reply;
     return reply.send({ model: await modelOf(project) });
   });
+
+  // The model as a Structurizr DSL workspace (C4), e.g. for docs pipelines
+  app.get(
+    '/api/projects/:id/model/structurizr',
+    { preHandler: [requireAuth] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const project = await projectFor(id, request.user!.userId, reply, false);
+      if (!project) return reply;
+      const dsl = toStructurizrDsl(await modelOf(project), { name: project.name });
+      const file = project.name.replace(/[^a-zA-Z0-9-_]/g, '_') || 'architecture';
+      return reply
+        .header('Content-Type', 'text/plain; charset=utf-8')
+        .header('Content-Disposition', `attachment; filename="${file}.dsl"`)
+        .send(dsl);
+    },
+  );
 
   // A component nobody has drawn yet (recorded by a person or an agent)
   app.post(

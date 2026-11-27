@@ -219,6 +219,19 @@ test.describe('Architecture model', () => {
     expect(after.relationships.map((r) => [r.sourceId, r.targetId])).toEqual([[web.id, apiC.id]]);
     expect(after.relationships[0]).toMatchObject({ technology: null });
 
+    // …and as a C4 workspace, for docs pipelines
+    const dslRes = await ctxB.request.get(
+      `${API_URL}/api/projects/${project.id}/model/structurizr`,
+      {
+        headers: { Authorization: `Bearer ${guest.accessToken}` },
+      },
+    );
+    expect(dslRes.status()).toBe(200);
+    expect(dslRes.headers()['content-disposition']).toMatch(/\.dsl"$/);
+    const dsl = await dslRes.text();
+    expect(dsl).toContain('softwareSystem "API" "Serves the storefront"');
+    expect(dsl).toContain('web_app -> api');
+
     // Someone outside the project sees nothing
     const ctxC = await browser.newContext();
     const stranger = await registerUser(ctxC, 'Stranger');

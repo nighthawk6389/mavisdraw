@@ -7,6 +7,7 @@ import { projects } from '../db/schema.js';
 import { authenticateToken } from '../services/apiTokenService.js';
 import { buildMcpServer, type McpDeps } from '../services/mcpServer.js';
 import { listAccessibleProjects, loadProjectScene } from '../services/projectService.js';
+import { getProjectModel } from '../services/modelService.js';
 import { createProposal } from '../services/proposalService.js';
 import { getDiagramIds } from '../services/diagramService.js';
 import { signalDocument } from '../ws/hocuspocus.js';
@@ -42,6 +43,14 @@ export async function mcpRoutes(app: FastifyInstance): Promise<void> {
       });
       if (!project) throw new Error(`Project ${projectId} vanished`);
       return loadProjectScene(project, app.hocuspocus.documents);
+    },
+    async loadModel(projectId) {
+      const project = await db.query.projects.findFirst({
+        where: eq(projects.id, projectId),
+        columns: { id: true, rootDiagramId: true, repoSource: true },
+      });
+      if (!project) throw new Error(`Project ${projectId} vanished`);
+      return getProjectModel(project, app.hocuspocus.documents);
     },
     async createProposal({ projectId, diagramId, authorId, sourceLabel, proposal }) {
       const created = await createProposal({

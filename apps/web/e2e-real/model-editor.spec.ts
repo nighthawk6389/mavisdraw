@@ -167,5 +167,26 @@ test.describe('The model in the editor', () => {
     });
     const { model } = (await res.json()) as { model: { components: Array<{ name: string }> } };
     expect(model.components.filter((c) => c.name === 'Redis')).toHaveLength(1);
+
+    // The model exports as a C4 workspace (Structurizr DSL): Jobs is a
+    // system with Worker inside, and the one Redis is shared
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: 'Export' }).click();
+    await page.locator('select').first().selectOption('structurizr');
+    const downloadPromise = page.waitForEvent('download');
+    await page
+      .getByRole('button', { name: /^Export$/ })
+      .last()
+      .click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toMatch(/\.dsl$/);
+    const fs = await import('node:fs');
+    const dsl = fs.readFileSync((await download.path())!, 'utf8');
+    expect(dsl).toMatch(/^workspace "/);
+    expect(dsl).toContain('jobs = softwareSystem "Jobs"');
+    expect(dsl).toContain('worker = container "Worker"');
+    expect(dsl.match(/= \w+ "Redis"/g)).toHaveLength(1);
+    expect(dsl).toContain('jobs.worker -> redis');
+    expect(dsl).toContain('api = softwareSystem "API" "Public REST API"');
   });
 });

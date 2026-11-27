@@ -40,7 +40,9 @@ export type ExportFormat =
   | 'excalidraw'
   | 'drawio'
   | 'miro'
-  | 'llm-text';
+  | 'llm-text'
+  /** The architecture model as a Structurizr DSL workspace (C4). */
+  | 'structurizr';
 
 export interface ExportOptions {
   format: ExportFormat;
