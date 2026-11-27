@@ -24,6 +24,7 @@ import { proposalRoutes } from './routes/proposals.js';
 import { embedRoutes } from './routes/embeds.js';
 import { githubAppRoutes } from './routes/githubApp.js';
 import { modelRoutes } from './routes/model.js';
+import { ssoRoutes } from './routes/sso.js';
 import {
   createHocuspocusServer,
   persistOpenDocuments,
@@ -128,7 +129,12 @@ export async function buildApp() {
 
   // What this server can do, for the app to say the right thing (e.g. a
   // self-hosted instance without email can't send confirmation links)
-  app.get('/api/config', async () => ({ mail: isMailEnabled() }));
+  app.get('/api/config', async () => ({
+    mail: isMailEnabled(),
+    // Single sign-on: the button's name; passwords may be switched off
+    sso: config.oidc ? { name: config.oidc.name } : null,
+    passwordLogin: !config.oidc?.ssoOnly,
+  }));
 
   // Readiness: this instance can serve (the database answers). Used by the
   // load balancer so a deploy never takes traffic it can't handle.
@@ -176,6 +182,7 @@ export async function buildApp() {
   await app.register(embedRoutes);
   await app.register(githubAppRoutes);
   await app.register(modelRoutes);
+  await app.register(ssoRoutes);
 
   return app;
 }

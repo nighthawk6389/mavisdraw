@@ -120,8 +120,9 @@ cd deploy
 docker compose --profile https up -d
 ```
 
-See [docs/self-hosting.md](docs/self-hosting.md) for email (SMTP), GitHub and GitHub Enterprise,
-backups and upgrades. Images are published to GHCR when a `v*` tag is pushed (`release.yml`).
+See [docs/self-hosting.md](docs/self-hosting.md) for email (SMTP), single sign-on
+([OpenID Connect](docs/sso.md)), GitHub and GitHub Enterprise, backups and upgrades. Images are
+published to GHCR when a `v*` tag is pushed (`release.yml`).
 
 ### Render
 
@@ -260,6 +261,9 @@ auto-laid out — a flat README diagram becomes a navigable, multi-level map.
 - **Workspaces** share every project inside them with the team (members edit; admins manage), and
   the dashboard groups projects into Recent, Yours, Shared with you, each workspace, and folders.
   An owner can hand a project to someone else and stay on as admin.
+- **Single sign-on**: a self-hosted server can sign people in with the company's identity provider
+  (Okta, Entra ID, Google Workspace, Keycloak; any OpenID Connect provider), limited to the
+  company's email domains, and optionally with passwords turned off ([docs/sso.md](docs/sso.md)).
 - **Live editing** merges per property: one person can move a shape while another recolours it.
   Undo only ever undoes your own changes, and never reverts a property a teammate changed after you.
 - **Present** turns the map into a guided tour: **Generate from map** makes one stop per level,

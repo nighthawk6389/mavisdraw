@@ -47,6 +47,10 @@ export { TEST_USER, TEST_PROJECT, TEST_DIAGRAM };
  */
 export async function mockSignedIn(page: Page) {
   // Auth endpoints
+  // What the server offers (no single sign-on in the mocked suite)
+  await page.route('**/api/config', (route) =>
+    route.fulfill({ status: 200, json: { mail: true, sso: null, passwordLogin: true } }),
+  );
   await page.route('**/api/auth/refresh', (route) =>
     route.fulfill({ status: 200, json: { accessToken: 'fake-token' } }),
   );

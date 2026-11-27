@@ -80,6 +80,9 @@ importers:
       fastify:
         specifier: ^5.2.0
         version: 5.7.4
+      jose:
+        specifier: ^6.2.18
+        version: 6.2.18
       jsonwebtoken:
         specifier: ^9.0.0
         version: 9.0.3

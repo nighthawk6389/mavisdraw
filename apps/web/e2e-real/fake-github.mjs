@@ -8,7 +8,7 @@
 // back with GET /__test/comments.
 
 import http from 'node:http';
-import { randomBytes, verify } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomBytes, sign, verify } from 'node:crypto';
 
 const port = Number(process.env.FAKE_GITHUB_PORT ?? 3102);
 const appId = process.env.FAKE_GITHUB_APP_ID ?? '';
@@ -23,6 +23,38 @@ const userTokens = new Set();
 let nextCommentId = 1;
 
 const b64url = (s) => Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+
+// ── A stand-in OpenID Connect provider (single sign-on), under /oidc ──
+// Tests choose who "signs in" next with POST /__test/oidc-user.
+const oidcClientId = process.env.FAKE_OIDC_CLIENT_ID ?? 'e2e-oidc';
+const oidcClientSecret = process.env.FAKE_OIDC_CLIENT_SECRET ?? 'e2e-oidc-secret';
+const oidcIssuer = `http://localhost:${port}/oidc`;
+const oidcKeys = generateKeyPairSync('rsa', { modulusLength: 2048 });
+const oidcJwk = {
+  ...oidcKeys.publicKey.export({ format: 'jwk' }),
+  kid: 'fake-1',
+  alg: 'RS256',
+  use: 'sig',
+};
+let oidcNextUser = { sub: 'sso-default', email: 'sso-user@acme.example', name: 'SSO User' };
+let oidcDeny = false;
+/** code → { redirectUri, nonce, challenge, user } (single use) */
+const oidcCodes = new Map();
+const oidcAccess = new Map();
+const enc = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
+function signIdToken(claims) {
+  const head = enc({ alg: 'RS256', typ: 'JWT', kid: 'fake-1' });
+  const body = enc(claims);
+  const sig = sign('RSA-SHA256', Buffer.from(`${head}.${body}`), oidcKeys.privateKey).toString(
+    'base64url',
+  );
+  return `${head}.${body}.${sig}`;
+}
+async function readForm(req) {
+  const chunks = [];
+  for await (const c of req) chunks.push(c);
+  return new URLSearchParams(Buffer.concat(chunks).toString('utf8'));
+}
 
 function validAppJwt(header) {
   const token = header?.startsWith('Bearer ') ? header.slice(7) : '';
@@ -51,6 +83,95 @@ const server = http.createServer(async (req, res) => {
   const path = url.pathname.replace(/^\/api\/v3(?=\/)/, '');
   try {
     if (path === '/health') return send(res, 200, { ok: true });
+
+    // ── OpenID Connect provider ─────────────────────────────
+    if (path === '/__test/oidc-user' && req.method === 'POST') {
+      const { deny = false, ...user } = await readBody(req);
+      oidcDeny = deny;
+      if (user.sub) oidcNextUser = user;
+      return send(res, 200, { ok: true });
+    }
+    if (path === '/oidc/.well-known/openid-configuration') {
+      return send(res, 200, {
+        issuer: oidcIssuer,
+        authorization_endpoint: `${oidcIssuer}/authorize`,
+        token_endpoint: `${oidcIssuer}/token`,
+        jwks_uri: `${oidcIssuer}/jwks`,
+        userinfo_endpoint: `${oidcIssuer}/userinfo`,
+        response_types_supported: ['code'],
+        subject_types_supported: ['public'],
+        id_token_signing_alg_values_supported: ['RS256'],
+        token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
+        code_challenge_methods_supported: ['S256'],
+      });
+    }
+    if (path === '/oidc/jwks') return send(res, 200, { keys: [oidcJwk] });
+    if (path === '/oidc/authorize') {
+      const q = url.searchParams;
+      const redirectUri = q.get('redirect_uri');
+      if (q.get('client_id') !== oidcClientId || !redirectUri) {
+        return send(res, 400, { error: 'invalid_client' });
+      }
+      const back = new URL(redirectUri);
+      back.searchParams.set('state', q.get('state') ?? '');
+      if (oidcDeny) {
+        back.searchParams.set('error', 'access_denied');
+      } else {
+        if (q.get('code_challenge_method') !== 'S256')
+          return send(res, 400, { error: 'pkce_required' });
+        const code = randomBytes(16).toString('hex');
+        oidcCodes.set(code, {
+          redirectUri,
+          nonce: q.get('nonce'),
+          challenge: q.get('code_challenge'),
+          user: oidcNextUser,
+        });
+        back.searchParams.set('code', code);
+      }
+      res.writeHead(302, { location: back.toString() });
+      return res.end();
+    }
+    if (path === '/oidc/token' && req.method === 'POST') {
+      const form = await readForm(req);
+      const basic = req.headers.authorization?.startsWith('Basic ')
+        ? Buffer.from(req.headers.authorization.slice(6), 'base64')
+            .toString('utf8')
+            .split(':')
+            .map(decodeURIComponent)
+        : [form.get('client_id'), form.get('client_secret')];
+      if (basic[0] !== oidcClientId || basic[1] !== oidcClientSecret) {
+        return send(res, 401, { error: 'invalid_client' });
+      }
+      const entry = oidcCodes.get(form.get('code') ?? '');
+      oidcCodes.delete(form.get('code') ?? '');
+      if (!entry || entry.redirectUri !== form.get('redirect_uri')) {
+        return send(res, 400, { error: 'invalid_grant' });
+      }
+      const verifier = form.get('code_verifier') ?? '';
+      if (createHash('sha256').update(verifier).digest('base64url') !== entry.challenge) {
+        return send(res, 400, { error: 'invalid_grant', error_description: 'PKCE' });
+      }
+      const now = Math.floor(Date.now() / 1000);
+      const access = randomBytes(16).toString('hex');
+      oidcAccess.set(access, entry.user);
+      return send(res, 200, {
+        token_type: 'Bearer',
+        expires_in: 300,
+        access_token: access,
+        id_token: signIdToken({
+          iss: oidcIssuer,
+          aud: oidcClientId,
+          iat: now,
+          exp: now + 300,
+          nonce: entry.nonce,
+          ...entry.user,
+        }),
+      });
+    }
+    if (path === '/oidc/userinfo') {
+      const user = oidcAccess.get((req.headers.authorization ?? '').replace(/^Bearer /, ''));
+      return user ? send(res, 200, user) : send(res, 401, { error: 'invalid_token' });
+    }
 
     // ── Test controls ─────────────────────────────────────────
     if (path === '/__test/repo' && req.method === 'POST') {

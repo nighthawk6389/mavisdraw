@@ -1,8 +1,22 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import LoginForm from '../components/auth/LoginForm';
 import SignupForm from '../components/auth/SignupForm';
 import ForgotPasswordForm from '../components/auth/ForgotPasswordForm';
-import type { InviteInfo } from '../services/api';
+import SsoSignIn, { ssoErrorMessage } from '../components/auth/SsoSignIn';
+import { getServerConfig } from '../services/serverConfig';
+import type { InviteInfo, ServerConfig } from '../services/api';
+
+/** ?sso_error=… from a sign-in with the provider that didn't go through (read once). */
+function takeSsoError(): string | null {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('sso_error');
+  if (code) {
+    params.delete('sso_error');
+    const rest = params.toString();
+    window.history.replaceState(null, '', window.location.pathname + (rest ? `?${rest}` : ''));
+  }
+  return code;
+}
 
 export default function LoginPage({
   sharedLink = false,
@@ -14,6 +28,18 @@ export default function LoginPage({
 }) {
   // An invitation usually means a new account
   const [mode, setMode] = useState<'login' | 'signup' | 'forgot'>(invite ? 'signup' : 'login');
+  const [server, setServer] = useState<ServerConfig | null>(null);
+  const [ssoError] = useState(takeSsoError);
+  useEffect(() => {
+    let live = true;
+    void getServerConfig().then((c) => live && setServer(c));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const sso = server?.sso ?? null;
+  const passwords = server?.passwordLogin ?? true;
+  const ssoProblem = ssoErrorMessage(ssoError, sso?.name ?? 'single sign-on');
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex flex-col items-center justify-center p-4">
@@ -43,7 +69,28 @@ export default function LoginPage({
         </p>
       )}
 
-      {mode === 'login' ? (
+      {ssoProblem && (
+        <p
+          role="alert"
+          data-testid="sso-error"
+          className="mb-4 max-w-md rounded-md border border-red-200 bg-white px-4 py-2 text-center text-sm text-red-700"
+        >
+          {ssoProblem}
+        </p>
+      )}
+
+      {sso && (
+        <div className="mb-4 w-full max-w-md">
+          <SsoSignIn name={sso.name} primary={!passwords} />
+          {passwords && (
+            <p className="mt-3 text-center text-xs uppercase tracking-wide text-gray-400">
+              or with your email
+            </p>
+          )}
+        </div>
+      )}
+
+      {!passwords ? null : mode === 'login' ? (
         <LoginForm
           onSwitchToSignup={() => setMode('signup')}
           onForgotPassword={() => setMode('forgot')}

@@ -91,6 +91,12 @@ export default defineConfig({
         GITHUB_APP_SLUG: 'mavisdraw-e2e',
         GITHUB_APP_WEB_URL: GITHUB_URL,
         GITHUB_APP_API_URL: `${GITHUB_URL}/api/v3`,
+        // Single sign-on against the fake provider (fake-github.mjs, /oidc)
+        OIDC_ISSUER: `${GITHUB_URL}/oidc`,
+        OIDC_CLIENT_ID: 'e2e-oidc',
+        OIDC_CLIENT_SECRET: 'e2e-oidc-secret',
+        OIDC_NAME: 'Acme SSO',
+        OIDC_ALLOWED_DOMAINS: 'acme.example,e2e.mavisdraw.dev',
       },
     },
     {

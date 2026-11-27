@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { config } from '../config.js';
 import {
@@ -40,8 +40,18 @@ const refreshSchema = z.object({
 });
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
+  // With SSO_ONLY, everyone signs in through the provider: no passwords
+  const passwordsOff = async (_request: FastifyRequest, reply: FastifyReply) => {
+    if (config.oidc?.ssoOnly) {
+      return reply
+        .code(403)
+        .send({ error: `This server signs in with ${config.oidc.name}`, sso: true });
+    }
+  };
+  const passwordRoute = { preHandler: [authRateLimit, passwordsOff] };
+
   // Register
-  app.post('/api/auth/register', { preHandler: [authRateLimit] }, async (request, reply) => {
+  app.post('/api/auth/register', passwordRoute, async (request, reply) => {
     const parsed = registerSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'Validation failed', details: parsed.error.issues });
@@ -76,7 +86,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Login
-  app.post('/api/auth/login', { preHandler: [authRateLimit] }, async (request, reply) => {
+  app.post('/api/auth/login', passwordRoute, async (request, reply) => {
     const parsed = loginSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'Validation failed', details: parsed.error.issues });
@@ -106,7 +116,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
   // Forgot password: email a reset link. The answer never says whether the
   // address has an account.
-  app.post('/api/auth/forgot-password', { preHandler: [authRateLimit] }, async (request, reply) => {
+  app.post('/api/auth/forgot-password', passwordRoute, async (request, reply) => {
     const parsed = z.object({ email: z.string().email().max(255) }).safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'Enter a valid email address' });
     await requestPasswordReset(parsed.data.email);
@@ -115,7 +125,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
   // Set a new password from the emailed link: every session is signed out,
   // and this browser is signed in
-  app.post('/api/auth/reset-password', { preHandler: [authRateLimit] }, async (request, reply) => {
+  app.post('/api/auth/reset-password', passwordRoute, async (request, reply) => {
     const parsed = z
       .object({ token: z.string().min(1).max(2000), password: z.string().min(8).max(128) })
       .safeParse(request.body);

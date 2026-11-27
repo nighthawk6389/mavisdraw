@@ -54,6 +54,9 @@ const PUBLIC = new Set([
   // Forgotten passwords: by definition signed out (the emailed token is the key)
   'POST /api/auth/forgot-password',
   'POST /api/auth/reset-password',
+  // Single sign-on: the provider round trip happens before anyone is signed in
+  'GET /api/auth/oidc/start',
+  'GET /api/auth/oidc/callback',
   // Describes an invite before sign-in (the token is the key)
   'GET /api/invites/:token',
   // Published embeds (the embed token is the key)

@@ -47,6 +47,24 @@ export interface Config {
   };
   /** The GitHub App behind pull-request map checks (null when not set up). */
   githubApp: GitHubAppConfig | null;
+  /** Single sign-on through an OpenID Connect provider (null when not set up). */
+  oidc: OidcConfig | null;
+}
+
+export interface OidcConfig {
+  /** The provider's issuer URL (its discovery document is under it). */
+  issuer: string;
+  clientId: string;
+  clientSecret: string;
+  /** On the button: "Sign in with <name>". */
+  name: string;
+  scopes: string;
+  /** Only these email domains may sign in (empty: any the provider vouches for). */
+  allowedDomains: string[];
+  /** Set to the provider's callback when it must differ from <request origin>/api/auth/oidc/callback. */
+  redirectUri: string | null;
+  /** Everyone signs in with the provider: no passwords, no sign-up form. */
+  ssoOnly: boolean;
 }
 
 export interface GitHubAppConfig {
@@ -220,6 +238,46 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   }
 
   const appUrl = (env.APP_URL ?? env.CORS_ORIGIN ?? 'http://localhost:3000').replace(/\/+$/, '');
+
+  // ── Single sign-on (OpenID Connect) ──────────────────────
+  let oidc: OidcConfig | null = null;
+  const oidcParts = [env.OIDC_ISSUER, env.OIDC_CLIENT_ID, env.OIDC_CLIENT_SECRET];
+  if (oidcParts.some(Boolean)) {
+    if (!oidcParts.every(Boolean)) {
+      problems.push(
+        'Single sign-on needs OIDC_ISSUER, OIDC_CLIENT_ID and OIDC_CLIENT_SECRET together',
+      );
+    } else {
+      const issuer = env.OIDC_ISSUER!.trim().replace(/\/+$/, '');
+      let issuerOk: boolean;
+      try {
+        issuerOk = ['https:', 'http:'].includes(new URL(issuer).protocol);
+      } catch {
+        issuerOk = false;
+      }
+      if (!issuerOk) problems.push("OIDC_ISSUER must be the provider's issuer URL");
+      else if (isProduction && !issuer.startsWith('https://')) {
+        problems.push('OIDC_ISSUER must use https');
+      }
+      oidc = {
+        issuer,
+        clientId: env.OIDC_CLIENT_ID!.trim(),
+        clientSecret: env.OIDC_CLIENT_SECRET!,
+        name: env.OIDC_NAME?.trim() || 'single sign-on',
+        scopes: env.OIDC_SCOPES?.trim() || 'openid email profile',
+        allowedDomains: (env.OIDC_ALLOWED_DOMAINS ?? '')
+          .split(',')
+          .map((d) => d.trim().toLowerCase().replace(/^@/, ''))
+          .filter(Boolean),
+        redirectUri: env.OIDC_REDIRECT_URI?.trim() || null,
+        ssoOnly: env.SSO_ONLY?.trim().toLowerCase() === 'true',
+      };
+    }
+  } else if (env.SSO_ONLY?.trim().toLowerCase() === 'true') {
+    problems.push(
+      'SSO_ONLY=true needs single sign-on set up (OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET)',
+    );
+  }
   const config: Config = {
     isProduction,
     databaseUrl: required('DATABASE_URL', DEV.databaseUrl),
@@ -249,6 +307,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       enterprise,
     },
     githubApp,
+    oidc,
   };
   return { config, problems };
 }

@@ -89,6 +89,14 @@ Without email, make the link yourself and send it to them:
 docker compose exec api node apps/server/dist/cli/resetLink.js someone@example.com
 ```
 
+## Single sign-on
+
+People can sign in with your identity provider (Okta, Microsoft Entra ID, Google Workspace,
+Keycloak, or any OpenID Connect provider). Register `<APP_URL>/api/auth/oidc/callback` as the
+redirect URI at the provider, then set `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` in
+`.env`. `OIDC_ALLOWED_DOMAINS` limits sign-in to your company's addresses, and `SSO_ONLY=true` turns
+off passwords. See [docs/sso.md](sso.md) for each provider's steps.
+
 ## GitHub
 
 All optional; see `.env.example` for every setting.

@@ -50,6 +50,14 @@ Still open:
 - ~~**Component panel actions are separate undo steps from server renames**~~: fixed. Undo and redo of a label rename the component everywhere, like typing it would; a rename from the panel offers Undo in its toast.
 - ~~**Tags have no editor yet**~~: done. Tags appear as chips in the component panel (Enter or a comma adds one, × removes it) and are exported to Structurizr.
 
+### Single sign-on follow-ups (docs/sso.md)
+
+- **SAML 2.0** — only OpenID Connect is supported. Some enterprises (older ADFS, Shibboleth) only offer SAML; it needs XML signature checking (`@node-saml/node-saml`) and an SP metadata endpoint.
+- **One provider per server** (`config.oidc`). A hosted, multi-company MavisDraw needs SSO per workspace: provider settings stored per workspace (secret encrypted like GitHub tokens), the provider picked by email domain on the sign-in page, and verified domain ownership before a workspace can claim addresses.
+- **No deprovisioning** — removing someone at the provider stops new sign-ins, but their refresh session lasts up to 30 days. SCIM (`/scim/v2/Users`), or at least an admin "sign out everywhere" for an account, would close that. Back-channel logout from the provider isn't handled either.
+- **Groups aren't mapped** — the provider's `groups` claim could put people into workspaces or roles on first sign-in instead of waiting for invites.
+- **No way to see or unlink a linked identity** in account settings (`user_identities`); an admin has to delete the row.
+
 ### Second independent review (2026-11, `308bc3c..730bf7e`) — status
 
 Fixed: C1 (REST autosave reverting teammates' work), H1 (unverified emails receiving invites), H2 (ReDoS in the PR-check manifest parser), H3 (cross-tenant PR-comment injection), M1 (SVG embed rendered per request), M2 (`TRUST_PROXY=true` spoofable), M4 (collaborator emails visible to public viewers), M5 (project move/privatize ignored open sockets), M9 (repo links never re-verified), M11 (signals loaded whole diagrams), L1 (admins granting admin, fixed on the testing branch), L2 (any bot's comment edited), L3 (MCP limit error hidden).

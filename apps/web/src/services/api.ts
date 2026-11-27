@@ -180,9 +180,24 @@ export async function apiGetMe(): Promise<{ user: AuthResponse['user'] }> {
   return apiFetch('/api/auth/me');
 }
 
-/** What this server can do (e.g. whether it sends email). */
-export function apiGetServerConfig(): Promise<{ mail: boolean }> {
-  return apiFetch('/api/config');
+export interface ServerConfig {
+  /** It sends email (confirmation links, invites, resets). */
+  mail: boolean;
+  /** Single sign-on: the provider's name on the button. */
+  sso: { name: string } | null;
+  /** Passwords work (off when everyone signs in with the provider). */
+  passwordLogin: boolean;
+}
+
+/** What this server can do (email, single sign-on). */
+export async function apiGetServerConfig(): Promise<ServerConfig> {
+  const c = await apiFetch<Partial<ServerConfig>>('/api/config');
+  return { mail: c.mail ?? true, sso: c.sso ?? null, passwordLogin: c.passwordLogin ?? true };
+}
+
+/** Where the browser goes to sign in with the provider (then comes back to `next`). */
+export function ssoStartUrl(next: string): string {
+  return `${API_BASE}/api/auth/oidc/start?next=${encodeURIComponent(next)}`;
 }
 
 /** Email a password reset link (the answer is the same whether or not the account exists). */

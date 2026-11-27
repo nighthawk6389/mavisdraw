@@ -560,3 +560,27 @@ export const modelRelationships = pgTable(
   },
   (table) => [primaryKey({ columns: [table.projectId, table.sourceId, table.targetId] })],
 );
+
+// ── Single sign-on identities ───────────────────────────────
+// Who someone is at an OpenID Connect provider (issuer + subject), linked to
+// their MavisDraw account. Emails can change; the subject doesn't.
+
+export const userIdentities = pgTable(
+  'user_identities',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    issuer: text('issuer').notNull(),
+    subject: text('subject').notNull(),
+    /** The email the provider gave at the last sign-in. */
+    email: varchar('email', { length: 255 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastSignInAt: timestamp('last_sign_in_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('user_identities_issuer_subject_idx').on(table.issuer, table.subject),
+    index('user_identities_user_idx').on(table.userId),
+  ],
+);
