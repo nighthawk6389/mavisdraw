@@ -1,5 +1,11 @@
 import type { ComponentInfo } from '@mavisdraw/llm';
-import type { ProposedChange, ProposedConnection } from '@mavisdraw/types';
+import type {
+  ModelComponent,
+  ProjectModel,
+  ProposedChange,
+  ProposedChangeAdd,
+  ProposedConnection,
+} from '@mavisdraw/types';
 
 /**
  * What a coding agent asks for, in the terms it sees in read_architecture
@@ -44,10 +50,16 @@ const key = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
 /**
  * Build a proposal against the components of one diagram, or explain what's
  * wrong in terms the agent can act on (which names exist).
+ *
+ * With the project's `model`, names and component ids can also refer to
+ * components drawn on other diagrams: adding one shows it here (another
+ * appearance, not a duplicate), and connecting to one records the
+ * relationship in the model, since there's no shape here to draw an arrow to.
  */
 export function buildProposal(
   request: ProposalRequest,
   components: ComponentInfo[],
+  model?: ProjectModel,
 ): { ok: true; proposal: BuiltProposal } | { ok: false; error: string } {
   const add = request.add ?? [];
   const connect = request.connect ?? [];
@@ -65,7 +77,31 @@ export function buildProposal(
     existing.set(c.elementId, c);
     if (!existing.has(key(c.label))) existing.set(key(c.label), c);
   }
-  const find = (ref: string) => existing.get(ref) ?? existing.get(key(ref));
+  const findHere = (ref: string) => existing.get(ref) ?? existing.get(key(ref));
+  // A model component by id, or by a name only one component has
+  const inModel = (ref: string): ModelComponent | undefined => {
+    if (!model) return undefined;
+    const byId = model.components.find((c) => c.id === ref.trim());
+    if (byId) return byId;
+    const named = model.components.filter((c) => key(c.name) === key(ref));
+    return named.length === 1 ? named[0] : undefined;
+  };
+  // Its shape on this diagram, if it's drawn here
+  const hereOf = (mc: ModelComponent) =>
+    components.find((c) => mc.appearances.some((a) => a.elementId === c.elementId));
+  const find = (ref: string) => {
+    const here = findHere(ref);
+    if (here) return here;
+    const mc = inModel(ref);
+    return mc ? hereOf(mc) : undefined;
+  };
+  /** A component drawn only on other diagrams (or recorded, not drawn). */
+  const elsewhere = (ref: string) => {
+    const mc = inModel(ref);
+    return mc && !hereOf(mc) ? mc : undefined;
+  };
+  const componentIdOf = (c: ComponentInfo) =>
+    model?.components.find((m) => m.appearances.some((a) => a.elementId === c.elementId))?.id;
   const available = () => {
     const names = components.map((c) => `"${c.label}"`);
     if (names.length === 0) return 'This diagram has no named components yet.';
@@ -88,13 +124,26 @@ export function buildProposal(
       errors.push(`"${name}" is already on this diagram; connect to it instead of adding it.`);
       continue;
     }
-    if (added.has(key(name))) continue;
-    added.set(key(name), name);
-    const change: ProposedChange = {
+    const other = elsewhere(name);
+    const label = other ? other.name : name;
+    if (added.has(key(label))) continue;
+    added.set(key(label), label);
+    if (other) added.set(key(name), label);
+    const change: ProposedChangeAdd = {
       action: 'add',
-      elementType: ELEMENT_TYPE[a.kind ?? 'component'],
-      label: name,
+      elementType: other
+        ? other.detailDiagramId
+          ? 'portal'
+          : ELEMENT_TYPE[other.kind === 'datastore' ? 'datastore' : 'component']
+        : ELEMENT_TYPE[a.kind ?? 'component'],
+      label,
     };
+    if (other) {
+      // The same component, shown here too
+      change.componentId = other.id;
+      if (other.appearances[0]) change.drawnOn = other.appearances[0].path.join(' › ');
+      if (other.detailDiagramId) change.detailDiagramId = other.detailDiagramId;
+    }
     if (a.codePath) change.properties = { codePath: a.codePath };
     changes.push(change);
   }
@@ -117,27 +166,45 @@ export function buildProposal(
     changes.push({ action: 'delete', elementId: target.elementId });
   }
 
-  const resolveEnd = (ref: string): string | null => {
+  /** An end: its label here, or (drawn elsewhere) its name and component id. */
+  const resolveEnd = (ref: string): { label: string; componentId?: string } | null => {
     const fresh = added.get(key(ref));
-    if (fresh) return fresh;
+    if (fresh) return { label: fresh };
     const c = find(ref);
-    return c ? c.label : null;
+    if (c) return { label: c.label };
+    const other = elsewhere(ref);
+    return other ? { label: other.name, componentId: other.id } : null;
   };
+  const nowhere = model
+    ? 'it isn\'t on this diagram, in "add", or anywhere in the map'
+    : 'it isn\'t on this diagram or in "add"';
   const connections: ProposedConnection[] = [];
   for (const c of connect) {
     const from = resolveEnd(c.from);
     const to = resolveEnd(c.to);
-    if (!from) errors.push(`Can't connect from "${c.from}": it isn't on this diagram or in "add".`);
-    if (!to) errors.push(`Can't connect to "${c.to}": it isn't on this diagram or in "add".`);
+    if (!from) errors.push(`Can't connect from "${c.from}": ${nowhere}.`);
+    if (!to) errors.push(`Can't connect to "${c.to}": ${nowhere}.`);
     if (!from || !to) continue;
-    if (key(from) === key(to)) {
-      errors.push(`"${from}" can't connect to itself.`);
+    if (key(from.label) === key(to.label)) {
+      errors.push(`"${from.label}" can't connect to itself.`);
       continue;
     }
+    const conn: ProposedConnection = { fromLabel: from.label, toLabel: to.label };
     const label = c.label?.trim();
-    connections.push(
-      label ? { fromLabel: from, toLabel: to, label } : { fromLabel: from, toLabel: to },
-    );
+    if (label) conn.label = label;
+    // Drawn elsewhere: recorded in the model, so both ends need their ids
+    if (from.componentId || to.componentId) {
+      const here = (end: { label: string; componentId?: string }) => {
+        if (end.componentId) return end.componentId;
+        const shape = findHere(end.label);
+        return shape ? componentIdOf(shape) : undefined; // a new shape: known once applied
+      };
+      const fromId = here(from);
+      const toId = here(to);
+      if (fromId) conn.fromComponentId = fromId;
+      if (toId) conn.toComponentId = toId;
+    }
+    connections.push(conn);
   }
 
   if (errors.length > 0) {

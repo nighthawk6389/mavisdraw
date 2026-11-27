@@ -14,6 +14,24 @@ import { computeLayout } from '../../layout/autoLayout';
 import { connectElements, makeLabel } from '../../editor/elementFactory';
 import { getCanvasController } from '../canvas/canvasController';
 import { measureText } from '../../utils/fonts';
+import { useModelStore } from '../../stores/modelStore';
+import { apiSaveRelationship, ApiError } from '../../services/api';
+
+/**
+ * A relationship to a shape this proposal just added: the server only knows
+ * the shape once it has synced (instantly when live, after the autosave
+ * otherwise), so a "not found" is retried for a few seconds.
+ */
+async function recordWhenKnown<T>(save: () => Promise<T>, attempts = 8): Promise<T> {
+  for (let i = 1; ; i++) {
+    try {
+      return await save();
+    } catch (err) {
+      if (!(err instanceof ApiError) || err.statusCode !== 404 || i >= attempts) throw err;
+      await new Promise((r) => setTimeout(r, 750));
+    }
+  }
+}
 
 /** Style properties the model may change; anything else is ignored. */
 const MODIFIABLE = new Set([
@@ -32,6 +50,8 @@ export interface ApplyResult {
   modified: number;
   deleted: number;
   connected: number;
+  /** Relationships to components on other diagrams, recorded in the model. */
+  recorded: number;
 }
 
 function labelOf(el: MavisElement, elements: Map<string, MavisElement>): string | null {
@@ -91,15 +111,24 @@ export async function applyProposal(proposal: DiagramProposal): Promise<ApplyRes
     const height = type === 'portal' ? 130 : Math.max(70, text.height + 36);
     const shape = store.createElement(type, diagramId, 0, 0, width, height);
 
+    // A component the map already has elsewhere: shown here too, not a new one
+    if (change.componentId) shape.componentId = change.componentId;
+
     if (type === 'portal') {
       const portal = shape as PortalElement;
       portal.label = change.label;
       // A system proposed from the code (PR checks) stays linked to its folder
       const codePath = change.properties?.codePath;
       if (typeof codePath === 'string' && codePath.length <= 300) portal.codePath = codePath;
-      const child = useDiagramStore.getState().createDiagram(diagramId, portal.id, change.label);
-      portal.targetDiagramId = child.id;
-      newDiagrams.push(child);
+      const detail = change.detailDiagramId;
+      if (change.componentId && detail && useDiagramStore.getState().diagrams.has(detail)) {
+        // The same system opens into the same diagram
+        portal.targetDiagramId = detail;
+      } else {
+        const child = useDiagramStore.getState().createDiagram(diagramId, portal.id, change.label);
+        portal.targetDiagramId = child.id;
+        newDiagrams.push(child);
+      }
     } else {
       const label = makeLabel(diagramId, shape, change.label, 20);
       shape.boundElements = [{ id: label.id, type: 'text' }];
@@ -113,9 +142,36 @@ export async function applyProposal(proposal: DiagramProposal): Promise<ApplyRes
   const resolve = (ref: string) =>
     newByLabel.get(ref.trim().toLowerCase()) ?? resolveExisting(ref);
 
+  // ── Connections to components drawn only elsewhere: recorded in the model.
+  // An end the proposal saw elsewhere may be here by now (an earlier proposal
+  // showed it): then it's drawn like any other connection.
+  const componentKey = (el: MavisElement) => el.componentId ?? el.id;
+  const endHere = (label: string, componentId: string | undefined) => {
+    const el = resolve(label);
+    if (!el) return undefined;
+    return !componentId || componentKey(el) === componentId ? el : undefined;
+  };
+  const drawable = (c: DiagramProposal['connections'][number]) =>
+    !!endHere(c.fromLabel, c.fromComponentId) && !!endHere(c.toLabel, c.toComponentId);
+  const elsewhere = proposal.connections.filter(
+    (c) => (c.fromComponentId || c.toComponentId) && !drawable(c),
+  );
+  const recordedLater = elsewhere
+    .map((c) => {
+      const from = c.fromComponentId ?? (resolve(c.fromLabel) && componentKey(resolve(c.fromLabel)!));
+      const to = c.toComponentId ?? (resolve(c.toLabel) && componentKey(resolve(c.toLabel)!));
+      return from && to && from !== to ? { sourceId: from, targetId: to, label: c.label } : null;
+    })
+    .filter((r): r is { sourceId: string; targetId: string; label: string | undefined } => !!r);
+
   // ── Layout the new cluster beside what it connects to ───────────
   const connections = proposal.connections
-    .map((c) => ({ conn: c, from: resolve(c.fromLabel), to: resolve(c.toLabel) }))
+    .filter((c) => !elsewhere.includes(c))
+    .map((c) => ({
+      conn: c,
+      from: endHere(c.fromLabel, c.fromComponentId),
+      to: endHere(c.toLabel, c.toComponentId),
+    }))
     .filter((c): c is { conn: typeof c.conn; from: MavisElement; to: MavisElement } => !!c.from && !!c.to && c.from.id !== c.to.id);
 
   if (newShapes.length > 0) {
@@ -172,7 +228,13 @@ export async function applyProposal(proposal: DiagramProposal): Promise<ApplyRes
   }
 
   // ── Commit as one undo step ─────────────────────────────────────
-  const result: ApplyResult = { added: newShapes.length, modified: 0, deleted: 0, connected: 0 };
+  const result: ApplyResult = {
+    added: newShapes.length,
+    modified: 0,
+    deleted: 0,
+    connected: 0,
+    recorded: 0,
+  };
   store.beginHistoryBatch();
   try {
     useElementsStore.setState((prev) => {
@@ -239,6 +301,24 @@ export async function applyProposal(proposal: DiagramProposal): Promise<ApplyRes
   }
 
   for (const d of newDiagrams) registerNewDiagram(useDiagramStore.getState().diagrams.get(d.id) ?? d);
+
+  // Record what can't be drawn here (the other end is on another diagram)
+  const projectId = useModelStore.getState().projectId;
+  if (projectId && recordedLater.length > 0) {
+    const saved = await Promise.allSettled(
+      recordedLater.map((r) =>
+        recordWhenKnown(() =>
+          apiSaveRelationship(projectId, {
+            sourceId: r.sourceId,
+            targetId: r.targetId,
+            ...(r.label ? { description: r.label } : {}),
+          }),
+        ),
+      ),
+    );
+    result.recorded = saved.filter((s) => s.status === 'fulfilled').length;
+    void useModelStore.getState().refresh();
+  }
   if (newShapes.length > 0) useSelectionStore.getState().selectMultiple(newShapes.map((s) => s.id));
   getCanvasController()?.invalidate();
   return result;

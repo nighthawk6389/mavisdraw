@@ -435,7 +435,7 @@ export function buildMcpServer(caller: McpCaller, deps: McpDeps): McpServer {
     {
       title: 'Propose a map update',
       description:
-        'Propose an update to one diagram of the map: add components, connect them, rename or remove them. Refer to components by their names as they appear in read_architecture, or by component id. The proposal waits for a person to review and apply it in MavisDraw; nothing changes until they do. Requires edit access to the project.',
+        'Propose an update to one diagram of the map: add components, connect them, rename or remove them. Refer to components by their names as they appear in read_architecture, or by component id. A component drawn on another diagram can be added here (it shows the same component) or connected to (the relationship is recorded in the model). The proposal waits for a person to review and apply it in MavisDraw; nothing changes until they do. Requires edit access to the project.',
       inputSchema: {
         project: z.string().min(1).describe('Project id or name'),
         diagram: z
@@ -505,16 +505,9 @@ export function buildMcpServer(caller: McpCaller, deps: McpDeps): McpServer {
         const scene = await deps.loadScene(p.id);
         const diagramId = resolveDiagram(scene, args.diagram);
         const components = indexComponents(scene).filter((c) => c.diagramId === diagramId);
-        // Components can be named by id (from get_component / find_component)
+        // Names and component ids can also mean components on other levels
         const model = await deps.loadModel(p.id);
-        const named = (ref: string) => componentById(model, ref.trim())?.name ?? ref;
-        const request = {
-          ...args,
-          connect: args.connect?.map((c) => ({ ...c, from: named(c.from), to: named(c.to) })),
-          rename: args.rename?.map((r) => ({ ...r, component: named(r.component) })),
-          remove: args.remove?.map((r) => ({ ...r, component: named(r.component) })),
-        };
-        const built = buildProposal(request as ProposalRequest, components);
+        const built = buildProposal(args as ProposalRequest, components, model);
         if (!built.ok) throw new ToolError(built.error);
         const { id } = await deps.createProposal({
           projectId: p.id,

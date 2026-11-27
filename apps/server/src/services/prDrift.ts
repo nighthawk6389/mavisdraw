@@ -6,7 +6,7 @@ import {
   isRelevantPath,
   type DriftChange,
 } from '@mavisdraw/compat/repo';
-import type { MavisDrawScene } from '@mavisdraw/types';
+import type { MavisDrawScene, ProjectModel } from '@mavisdraw/types';
 import { componentForPath, indexComponents, type ComponentInfo } from '@mavisdraw/llm';
 import { buildProposal, type BuiltProposal, type ProposalRequest } from './proposalInput.js';
 
@@ -126,6 +126,8 @@ export function impactOnProject(input: {
   changes: PrFileChange[];
   drift: DriftChange[];
   pr: { repo: string; number: number; title: string };
+  /** The project's architecture model: dependencies known on any level count. */
+  model?: ProjectModel;
 }): ProjectImpact {
   const components = indexComponents(input.scene);
   const byCode = new Map<string, ComponentInfo>();
@@ -154,8 +156,20 @@ export function impactOnProject(input: {
   // ── Architecture changes, against the map
   const level = codeLevel(components, input.scene.rootDiagramId);
   const onLevel = (c: ComponentInfo | undefined) => !!c && c.diagramId === level;
+  // The model component a shape shows, and the relationships it knows
+  const componentOf = new Map<string, string>();
+  for (const mc of input.model?.components ?? []) {
+    for (const a of mc.appearances) componentOf.set(a.elementId, mc.id);
+  }
+  const known = new Set(
+    (input.model?.relationships ?? []).map((r) => `${r.sourceId}->${r.targetId}`),
+  );
   const connected = (a: ComponentInfo, b: ComponentInfo) =>
-    a.outgoing.some((o) => key(o.to) === key(b.label));
+    a.outgoing.some((o) => key(o.to) === key(b.label)) ||
+    known.has(`${componentOf.get(a.elementId)}->${componentOf.get(b.elementId)}`);
+  /** Drawn on another level: a relationship to it is recorded, not drawn. */
+  const recordable = (c: ComponentInfo | undefined) =>
+    !!c && !onLevel(c) && componentOf.has(c.elementId);
   const request: Required<Pick<ProposalRequest, 'add' | 'connect' | 'remove'>> = {
     add: [],
     connect: [],
@@ -194,6 +208,8 @@ export function impactOnProject(input: {
         const onMap = !!from && !!to && connected(from, to);
         if (!onMap && onLevel(from) && (onLevel(to) || adding.has(key(d.to.name)))) {
           connect(from!.label, to?.label ?? d.to.name);
+        } else if (!onMap && onLevel(from) && recordable(to)) {
+          connect(from!.label, componentOf.get(to!.elementId)!);
         }
         return { text, removal, onMap };
       }
@@ -206,6 +222,7 @@ export function impactOnProject(input: {
             add(d.resource.name, d.resource.kind === 'external' ? 'component' : 'datastore');
           if (!resource || onLevel(resource))
             connect(from!.label, resource?.label ?? d.resource.name);
+          else if (recordable(resource)) connect(from!.label, componentOf.get(resource.elementId)!);
         }
         return { text, removal, onMap };
       }
@@ -230,6 +247,7 @@ export function impactOnProject(input: {
         ...request,
       },
       components.filter((c) => c.diagramId === level),
+      input.model,
     );
     if (built.ok) proposal = { diagramId: level, built: built.proposal };
   }

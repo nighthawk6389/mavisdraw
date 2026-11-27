@@ -8,6 +8,8 @@ import { getDecryptedToken, repoAccess } from './githubService.js';
 import { reportError } from '../observability.js';
 import { installationClient, type InstallationClient } from './githubApp.js';
 import { loadProjectScene } from './projectService.js';
+import { loadStoredModel } from './modelService.js';
+import { buildProjectModel } from '@mavisdraw/llm';
 import { createProposal } from './proposalService.js';
 import {
   affectsStructure,
@@ -155,12 +157,16 @@ export async function checkPullRequest(
     // One map's trouble (say, a full review queue) must not stop the others
     try {
       const scene = await loadProjectScene(project, deps.documents);
+      const model = buildProjectModel(scene, await loadStoredModel(project.id), {
+        repo: `${owner}/${repo}`,
+      });
       const impact = impactOnProject({
         project: { id: project.id, name: project.name },
         scene,
         changes,
         drift,
         pr: { repo: `${owner}/${repo}`, number: pr.number, title: pr.title },
+        model,
       });
       impacts.push(impact);
 

@@ -128,7 +128,11 @@ on, what it's part of and contains, and its dependencies and dependents across l
    linking and unlinking; appearances and cross-level dependencies; suggested connections.
 3. **Everything on ids** (done): MCP (component ids, `get_component`, dependencies across levels);
    Structurizr export.
-   - Pull-request checks still match changed files to components by their code folders, which
-     already picks one owner per file.
-   - Proposals are applied to one diagram by label.
-   - Moving both onto component ids is a follow-up (BACKLOG).
+   - Proposals (from agents and PR checks) are model-aware:
+     - adding a component the map already has, by id or by a unique name drawn on another
+       level, shows that same component here (and a system opens into its existing
+       diagram);
+     - connecting to a component drawn only elsewhere records the relationship in the model;
+       if both ends are on the diagram by the time it's applied, it's drawn instead.
+   - PR checks count a dependency as known when the model has it on any level, and record
+     ones to components on other levels.

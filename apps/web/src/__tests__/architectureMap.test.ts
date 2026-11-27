@@ -10,6 +10,12 @@ import { importMermaidGraph } from '../import/mermaidImport';
 import { applyProposal } from '../components/agent/applyProposal';
 
 // Creating nested diagrams also creates them on the server; not under test here
+const saveRelationship = vi.hoisted(() => vi.fn(async () => ({})));
+vi.mock('../services/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../services/api')>()),
+  apiSaveRelationship: saveRelationship,
+}));
+
 vi.mock('../services/diagramSync', () => ({
   registerNewDiagram: vi.fn(),
 }));
@@ -232,7 +238,7 @@ describe('applying AI proposals', () => {
       connections: [{ fromLabel: 'API', toLabel: 'Cache', label: 'reads' }],
     });
 
-    expect(result).toEqual({ added: 1, modified: 0, deleted: 0, connected: 1 });
+    expect(result).toEqual({ added: 1, modified: 0, deleted: 0, connected: 1, recorded: 0 });
     const arrow = all().find((e) => e.type === 'arrow') as LinearElement;
     expect(arrow.diagramId).toBe(ROOT);
     expect(arrow.startBinding?.elementId).toBe(api.id);
@@ -241,6 +247,62 @@ describe('applying AI proposals', () => {
     expect(cache.id).not.toBe(elsewhere.id);
     // Placed beside the existing content
     expect(cache.x).toBeGreaterThan(api.x + api.width);
+  });
+
+  it('shows a component from another diagram here as the same one, opening the same diagram', async () => {
+    const detail = useDiagramStore.getState().createDiagram(ROOT, 'orig', 'Payments');
+    const result = await applyProposal({
+      proposalId: 'p3',
+      description: 'Show Payments here',
+      status: 'pending',
+      changes: [
+        {
+          action: 'add',
+          elementType: 'portal',
+          label: 'Payments',
+          componentId: 'c-payments',
+          drawnOn: 'Shop',
+          detailDiagramId: detail.id,
+        },
+      ],
+      connections: [],
+    });
+    expect(result.added).toBe(1);
+    const portal = all().find((e) => e.type === 'portal') as PortalElement;
+    expect(portal).toMatchObject({ componentId: 'c-payments', targetDiagramId: detail.id });
+  });
+
+  it('records a connection to a component drawn on another diagram, and draws the rest', async () => {
+    const { useModelStore } = await import('../stores/modelStore');
+    useModelStore.setState({ projectId: 'p1', model: null, fetchedAt: 0 });
+    saveRelationship.mockClear();
+    const api = store().createElement('rectangle', ROOT, 0, 0, 140, 70);
+    store().addElement(api);
+    store().createBoundText(api.id, 'API');
+
+    const result = await applyProposal({
+      proposalId: 'p4',
+      description: 'API charges through Stripe; a new queue feeds it',
+      status: 'pending',
+      changes: [{ action: 'add', elementType: 'rectangle', label: 'Queue' }],
+      connections: [
+        // Stripe is drawn on another diagram
+        { fromLabel: 'API', toLabel: 'Stripe', label: 'charges', toComponentId: 'c-stripe' },
+        { fromLabel: 'Queue', toLabel: 'Stripe', toComponentId: 'c-stripe' },
+        { fromLabel: 'Queue', toLabel: 'API' },
+      ],
+    });
+    expect(result).toMatchObject({ added: 1, connected: 1, recorded: 2 });
+    const queue = all().find(
+      (e) => e.type === 'rectangle' && e.id !== api.id,
+    )!;
+    expect(saveRelationship.mock.calls).toEqual([
+      ['p1', { sourceId: api.id, targetId: 'c-stripe', description: 'charges' }],
+      // A shape this proposal added: its own id is its component
+      ['p1', { sourceId: queue.id, targetId: 'c-stripe' }],
+    ]);
+    // Only the connection with both ends here became an arrow
+    expect(all().filter((e) => e.type === 'arrow')).toHaveLength(1);
   });
 
   it('applies as one undo step and ignores unsafe property changes', async () => {

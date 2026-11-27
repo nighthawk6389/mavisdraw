@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { indexComponents } from '@mavisdraw/llm';
+import { buildProjectModel, indexComponents } from '@mavisdraw/llm';
 import { buildProposal } from '../services/proposalInput.js';
 import { shopScene } from './fixtures/scene.js';
 
@@ -66,11 +66,80 @@ describe('buildProposal', () => {
     expect(result).toEqual({ ok: false, error: '"API" can\'t connect to itself.' });
   });
 
-  it('does not let components from other diagrams be targeted', () => {
+  it('without the model, does not let components from other diagrams be targeted', () => {
     const result = buildProposal(
       { description: 'x', connect: [{ from: 'API', to: 'Auth Service' }] },
       root,
     );
     expect(result.ok).toBe(false);
+  });
+});
+
+describe('buildProposal with the architecture model', () => {
+  const model = buildProjectModel(shopScene());
+
+  it('adding a component drawn elsewhere shows the same one here, not a duplicate', () => {
+    const result = buildProposal({ description: 'x', add: [{ name: 'orders' }] }, root, model);
+    expect(result).toMatchObject({
+      ok: true,
+      proposal: {
+        changes: [
+          {
+            action: 'add',
+            elementType: 'rectangle',
+            label: 'Orders',
+            componentId: 'orders',
+            drawnOn: 'Shop › API internals',
+          },
+        ],
+      },
+    });
+  });
+
+  it('connecting to a component on another level records the relationship', () => {
+    const result = buildProposal(
+      {
+        description: 'x',
+        add: [{ name: 'Cache' }],
+        connect: [
+          { from: 'Web App', to: 'Orders', label: 'places orders' },
+          { from: 'Cache', to: 'orders' },
+        ],
+      },
+      root,
+      model,
+    );
+    expect(result.ok && result.proposal.connections).toEqual([
+      {
+        fromLabel: 'Web App',
+        toLabel: 'Orders',
+        label: 'places orders',
+        fromComponentId: 'web',
+        toComponentId: 'orders',
+      },
+      // The new shape's id is only known once it's applied
+      { fromLabel: 'Cache', toLabel: 'Orders', toComponentId: 'orders' },
+    ]);
+  });
+
+  it('component ids work for what is on this diagram too (drawn, not recorded)', () => {
+    const result = buildProposal(
+      { description: 'x', connect: [{ from: 'web', to: 'db' }] },
+      root,
+      model,
+    );
+    expect(result.ok && result.proposal.connections).toEqual([
+      { fromLabel: 'Web App', toLabel: 'Orders DB' },
+    ]);
+  });
+
+  it('names nothing in the whole map: says so', () => {
+    const result = buildProposal(
+      { description: 'x', connect: [{ from: 'API', to: 'Kafka' }] },
+      root,
+      model,
+    );
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).toContain('anywhere in the map');
   });
 });

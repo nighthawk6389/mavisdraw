@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { MavisDrawScene, MavisElement } from '@mavisdraw/types';
+import { buildProjectModel } from '@mavisdraw/llm';
 import {
   affectsStructure,
   architectureDrift,
@@ -208,6 +209,48 @@ describe('what it means for the map', () => {
         { fromLabel: 'api', toLabel: 'Anthropic API' },
       ]),
     );
+  });
+
+  it('with the model: records a dependency on something drawn on another level', () => {
+    // Anthropic API is already drawn, inside api's own diagram
+    const scene = mapScene();
+    scene.elements.push(...(box('anthropic', 'Anthropic API', 'api-d') as MavisElement[]));
+    const model = buildProjectModel(scene);
+    const withModel = impactOnProject({
+      project: { id: 'p1', name: 'Shop Map' },
+      scene,
+      changes,
+      drift: drift(),
+      pr,
+      model,
+    });
+    const built = withModel.proposal!.built;
+    // Not added again on the top level…
+    expect(built.changes.some((c) => c.action === 'add' && c.label === 'Anthropic API')).toBe(
+      false,
+    );
+    // …but recorded as what api uses
+    expect(built.connections).toContainEqual({
+      fromLabel: 'api',
+      toLabel: 'Anthropic API',
+      fromComponentId: 'api',
+      toComponentId: 'anthropic',
+    });
+
+    // Once the model knows it (recorded or drawn anywhere), it's on the map
+    const known = buildProjectModel(scene, {
+      components: [],
+      relationships: [{ sourceId: 'api', targetId: 'anthropic' }],
+    });
+    const quiet = impactOnProject({
+      project: { id: 'p1', name: 'Shop Map' },
+      scene,
+      changes,
+      drift: drift(),
+      pr,
+      model: known,
+    });
+    expect(quiet.changes.find((c) => c.text.includes('Anthropic API'))?.onMap).toBe(true);
   });
 
   it('proposes nothing when the map is already up to date', () => {

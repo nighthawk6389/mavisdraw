@@ -100,6 +100,7 @@ export const useProposalsStore = create<ProposalsState>((set, get) => ({
         const parts = [
           result.added && `${result.added} added`,
           result.connected && `${result.connected} connected`,
+          result.recorded && `${result.recorded} recorded (drawn on other diagrams)`,
           result.modified && `${result.modified} changed`,
           result.deleted && `${result.deleted} removed`,
         ].filter(Boolean);

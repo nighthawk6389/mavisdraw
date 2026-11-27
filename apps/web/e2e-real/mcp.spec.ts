@@ -174,6 +174,78 @@ test.describe('Coding agents (MCP)', () => {
       )
       .toEqual(['API', 'Orders', 'Payments', 'Stripe', 'charges']);
 
+    // Across levels. Web App is only on the top level, so from inside
+    // Platform a connection to it is recorded in the model…
+    const recordOnly = await callTool(agent, 'propose_update', {
+      project: 'Shop Map',
+      diagram: 'Platform',
+      description: 'Orders pushes order updates to the web app',
+      connect: [{ from: 'Orders', to: 'Web App', label: 'order updates' }],
+    });
+    expect(recordOnly.isError, recordOnly.text).toBe(false);
+    const card2 = page.getByTestId('proposal');
+    await expect(card2).toContainText('recorded: one end is on another diagram', {
+      timeout: 10_000,
+    });
+    await card2.getByRole('button', { name: 'Apply' }).click();
+    await expect(page.getByTestId('toast').filter({ hasText: '1 recorded' })).toBeVisible();
+
+    // …and it can be shown here as the same component, not a copy
+    const showHere = await callTool(agent, 'propose_update', {
+      project: 'Shop Map',
+      diagram: 'Platform',
+      description: 'Show the web app next to Payments',
+      add: [{ name: 'Web App' }],
+      connect: [{ from: 'Payments', to: 'Web App', label: 'receipts' }],
+    });
+    expect(showHere.isError, showHere.text).toBe(false);
+    const card3 = page.getByTestId('proposal');
+    await expect(card3).toContainText('Show "Web App" here too (already on', {
+      timeout: 10_000,
+    });
+    await card3.getByRole('button', { name: 'Apply' }).click();
+    await expect(
+      page.getByTestId('toast').filter({ hasText: 'Applied: 1 added, 1 connected' }),
+    ).toBeVisible();
+
+    const model = async () => {
+      const res = await context.request.get(`${API_URL}/api/projects/${project.id}/model`, {
+        headers: { Authorization: `Bearer ${user.accessToken}` },
+      });
+      return (
+        (await res.json()) as {
+          model: {
+            components: Array<{ id: string; name: string; appearances: unknown[] }>;
+            relationships: Array<{
+              sourceId: string;
+              targetId: string;
+              description: string | null;
+            }>;
+          };
+        }
+      ).model;
+    };
+    // One Web App, drawn on both levels; Orders → Web App recorded with its description
+    await expect
+      .poll(
+        async () =>
+          (await model()).components
+            .filter((c) => c.name === 'Web App')
+            .map((c) => c.appearances.length),
+        { timeout: 15_000 },
+      )
+      .toEqual([2]);
+    const m = await model();
+    const web = m.components.find((c) => c.name === 'Web App')!;
+    const ordersC = m.components.find((c) => c.name === 'Orders')!;
+    expect(m.relationships).toContainEqual(
+      expect.objectContaining({
+        sourceId: ordersC.id,
+        targetId: web.id,
+        description: 'order updates',
+      }),
+    );
+
     // Revoking the token cuts the agent off at once
     await page.keyboard.press('Escape');
     await page.keyboard.press('ControlOrMeta+k');

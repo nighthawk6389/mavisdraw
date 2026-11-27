@@ -15,7 +15,9 @@ function changeIcon(change: ProposedChange): string {
 function changeLabel(change: ProposedChange, names?: Map<string, string>): string {
   switch (change.action) {
     case 'add':
-      return `Add "${change.label}" (${change.elementType})`;
+      return change.componentId
+        ? `Show "${change.label}" here too${change.drawnOn ? ` (already on ${change.drawnOn})` : ''}`
+        : `Add "${change.label}" (${change.elementType})`;
     case 'modify': {
       const current = names?.get(change.elementId);
       return current && change.label
@@ -65,6 +67,9 @@ export default function ProposalChangeList({
           <span>
             &quot;{conn.fromLabel}&quot; &rarr; &quot;{conn.toLabel}&quot;
             {conn.label && <span className="text-gray-500"> ({conn.label})</span>}
+            {(conn.fromComponentId || conn.toComponentId) && (
+              <span className="text-gray-500"> — recorded: one end is on another diagram</span>
+            )}
           </span>
         </li>
       ))}
