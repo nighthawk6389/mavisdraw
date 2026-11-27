@@ -125,6 +125,26 @@ test.describe('Phase 1 editing', () => {
     await expect(page.locator('button[title^="Select"]')).toHaveAttribute('aria-pressed', 'true');
   });
 
+  test('a letter typed while the new editor is briefly unfocused still lands in it', async ({
+    page,
+  }) => {
+    await drawRect(page, 200, 200, 360, 280);
+    const box = await canvasBox(page);
+    await page.mouse.dblclick(box.x + 280, box.y + 240);
+    // The click that opens the editor can blur it until the next frame (slow
+    // machines): a key in that gap must not reach the canvas's shortcuts
+    await page.evaluate(() => {
+      (document.activeElement as HTMLElement | null)?.blur();
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'A', bubbles: true }));
+    });
+    await page.keyboard.type('uth API', { delay: 0 });
+    await page.keyboard.press('Enter');
+    await expect
+      .poll(async () => (await hooks.elements(page)).find((e) => e.type === 'text')?.text)
+      .toBe('Auth API');
+    await expect(page.locator('button[title^="Select"]')).toHaveAttribute('aria-pressed', 'true');
+  });
+
   test('a drag is a single undo step', async ({ page }) => {
     await drawRect(page, 200, 200, 320, 280);
     const [rect] = await hooks.elements(page);

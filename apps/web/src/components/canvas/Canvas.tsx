@@ -213,6 +213,35 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
   const typeaheadRef = useRef<{ text: string; since: number } | null>(null);
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      // The editor is open but briefly lost focus: the click that opened it
+      // can blur it until it's refocused on the next frame. A letter typed in
+      // that gap belongs to the editor, not to the canvas's tool shortcuts.
+      const editor = textEditorRef.current;
+      const active = document.activeElement;
+      if (
+        !typeaheadRef.current &&
+        editor?.isConnected &&
+        active !== editor &&
+        (active === document.body || active === null || !!active?.closest?.('canvas')) &&
+        !(e.ctrlKey || e.metaKey || e.altKey) &&
+        e.key.length === 1
+      ) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        editor.focus();
+        const selection = window.getSelection();
+        if (selection && !editor.contains(selection.anchorNode)) {
+          const range = document.createRange();
+          range.selectNodeContents(editor);
+          range.collapse(false);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+        if (!document.execCommand('insertText', false, e.key)) {
+          editor.textContent = (editor.textContent ?? '') + e.key;
+        }
+        return;
+      }
       const pending = typeaheadRef.current;
       if (!pending) return;
       if (Date.now() - pending.since > 1000) {
