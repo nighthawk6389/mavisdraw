@@ -61,10 +61,12 @@ export default function ComponentPanel({ elementId, canEdit, embedded = false }:
 
   // Opening the panel on a component: fetch what the server knows now (it
   // reads live rooms, so copies pasted a moment ago are counted), unless
-  // that was just done (clicking from shape to shape shouldn't refetch the
-  // whole model each time)
+  // that was just done and nothing was drawn since (clicking from shape to
+  // shape shouldn't refetch the whole model each time)
   useEffect(() => {
-    if (key) void useModelStore.getState().refreshIfOlder(MODEL_FRESH_MS);
+    if (!key) return;
+    const drawing = useElementsStore.getState().elements;
+    void useModelStore.getState().refreshIfOlder(MODEL_FRESH_MS, drawing);
   }, [key]);
 
   // A shape labelled moments ago reaches the model once it's saved: retry a

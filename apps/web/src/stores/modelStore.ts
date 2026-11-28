@@ -15,13 +15,18 @@ interface ModelState {
   load: (projectId: string) => Promise<void>;
   /** Refetch the current project's model (coalesced: one request at a time). */
   refresh: () => Promise<void>;
-  /** Refetch unless the model was fetched less than `maxAgeMs` ago. */
-  refreshIfOlder: (maxAgeMs: number) => Promise<void>;
+  /**
+   * Refetch unless the model was fetched less than `maxAgeMs` ago for this
+   * same drawing (`basis`: the elements map then; any edit makes a new one).
+   */
+  refreshIfOlder: (maxAgeMs: number, basis: object) => Promise<void>;
   reset: () => void;
 }
 
 let inFlight: Promise<void> | null = null;
 let again = false;
+/** What the drawing was when `refreshIfOlder` last fetched. */
+let fetchedBasis: object | null = null;
 
 export const useModelStore = create<ModelState>((set, get) => ({
   projectId: null,
@@ -62,10 +67,15 @@ export const useModelStore = create<ModelState>((set, get) => ({
     return inFlight;
   },
 
-  refreshIfOlder: async (maxAgeMs) => {
-    if (get().model && Date.now() - get().fetchedAt < maxAgeMs) return;
+  refreshIfOlder: async (maxAgeMs, basis) => {
+    const { model, fetchedAt } = get();
+    if (model && fetchedBasis === basis && Date.now() - fetchedAt < maxAgeMs) return;
+    fetchedBasis = basis;
     await get().refresh();
   },
 
-  reset: () => set({ projectId: null, model: null, fetchedAt: 0 }),
+  reset: () => {
+    fetchedBasis = null;
+    set({ projectId: null, model: null, fetchedAt: 0 });
+  },
 }));

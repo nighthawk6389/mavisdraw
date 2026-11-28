@@ -38,13 +38,24 @@ describe('the model store', () => {
     expect(useModelStore.getState().model).toEqual(modelOf('p2'));
   });
 
-  it('doesn’t refetch a model fetched a moment ago', async () => {
+  it('doesn’t refetch a model fetched a moment ago for the same drawing', async () => {
     apiGetModel.mockImplementation(async (id: string) => ({ model: modelOf(id) }));
     await useModelStore.getState().load('p1');
-    await useModelStore.getState().refreshIfOlder(2000);
-    expect(apiGetModel).toHaveBeenCalledTimes(1);
-    useModelStore.setState({ fetchedAt: Date.now() - 5000 });
-    await useModelStore.getState().refreshIfOlder(2000);
+    const drawing = new Map();
+    await useModelStore.getState().refreshIfOlder(2000, drawing);
     expect(apiGetModel).toHaveBeenCalledTimes(2);
+    // Clicking from shape to shape: nothing was drawn, so nothing is fetched
+    await useModelStore.getState().refreshIfOlder(2000, drawing);
+    await useModelStore.getState().refreshIfOlder(2000, drawing);
+    expect(apiGetModel).toHaveBeenCalledTimes(2);
+    // Something was pasted meanwhile: fetched again, however recent the last
+    await useModelStore.getState().refreshIfOlder(2000, new Map());
+    expect(apiGetModel).toHaveBeenCalledTimes(3);
+    // …and after a while anyway
+    const later = new Map();
+    await useModelStore.getState().refreshIfOlder(2000, later);
+    useModelStore.setState({ fetchedAt: Date.now() - 5000 });
+    await useModelStore.getState().refreshIfOlder(2000, later);
+    expect(apiGetModel).toHaveBeenCalledTimes(5);
   });
 });
