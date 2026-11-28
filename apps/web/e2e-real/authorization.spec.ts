@@ -748,6 +748,107 @@ test.describe('Authorization (API)', () => {
     ).toHaveLength(1);
   });
 
+  test('a rename only reaches the project’s own diagrams, whatever its shapes claim', async ({
+    request,
+  }) => {
+    const victim = await signUp(request, 'Victim');
+    const attacker = await signUp(request, 'Attacker');
+    const theirs = await createProject(request, victim, `Theirs ${uniq()}`);
+    const mine = await createProject(request, attacker, `Mine ${uniq()}`);
+    const base = { version: 1, isDeleted: false, x: 0, y: 0, width: 120, height: 60 };
+    // The victim's map: a labelled component and a portal
+    await expectJson(
+      as(request, victim).put(`/api/diagrams/${theirs.rootDiagramId}`, {
+        elements: [
+          {
+            ...base,
+            id: 'pay-box',
+            type: 'rectangle',
+            diagramId: theirs.rootDiagramId,
+            boundElements: [{ id: 'pay-label', type: 'text' }],
+          },
+          {
+            ...base,
+            id: 'pay-label',
+            type: 'text',
+            text: 'Payments',
+            containerId: 'pay-box',
+            diagramId: theirs.rootDiagramId,
+            boundElements: [],
+          },
+          {
+            ...base,
+            id: 'pay-portal',
+            type: 'portal',
+            label: 'Ledger',
+            targetDiagramId: null,
+            diagramId: theirs.rootDiagramId,
+            boundElements: [],
+          },
+        ],
+      }),
+      200,
+    );
+    // The attacker saves, into their own map, copies that claim to be on the
+    // victim's diagram (its ids are in any embed of it), then renames them
+    await expectJson(
+      as(request, attacker).put(`/api/diagrams/${mine.rootDiagramId}`, {
+        elements: [
+          {
+            ...base,
+            id: 'bait',
+            type: 'rectangle',
+            componentId: 'c_bait',
+            diagramId: mine.rootDiagramId,
+            boundElements: [{ id: 'pay-label', type: 'text' }],
+          },
+          {
+            ...base,
+            id: 'pay-label',
+            type: 'text',
+            text: 'Payments',
+            containerId: 'bait',
+            diagramId: theirs.rootDiagramId,
+            boundElements: [],
+          },
+          {
+            ...base,
+            id: 'pay-portal',
+            type: 'portal',
+            label: 'Ledger',
+            componentId: 'c_portal',
+            targetDiagramId: null,
+            diagramId: theirs.rootDiagramId,
+            boundElements: [],
+          },
+        ],
+      }),
+      200,
+    );
+    for (const component of ['c_bait', 'c_portal']) {
+      const renamed = await as(request, attacker).put(
+        `/api/projects/${mine.id}/model/components/${component}`,
+        { name: 'pwned' },
+      );
+      expect(renamed.status(), await renamed.text()).toBe(200);
+    }
+    // Only the attacker's own copies changed
+    const read = async (who: Person, diagramId: string) =>
+      new Map(
+        (
+          await expectJson<{
+            diagram: { elements: Array<{ id: string; text?: string; label?: string }> };
+          }>(as(request, who).get(`/api/diagrams/${diagramId}`), 200)
+        ).diagram.elements.map((e) => [e.id, e]),
+      );
+    const victims = await read(victim, theirs.rootDiagramId);
+    expect(victims.get('pay-label')?.text).toBe('Payments');
+    expect(victims.get('pay-portal')?.label).toBe('Ledger');
+    const attackers = await read(attacker, mine.rootDiagramId);
+    expect(attackers.get('pay-label')?.text).toBe('pwned');
+    expect(attackers.get('pay-portal')?.label).toBe('pwned');
+  });
+
   test('a token or an agent sign-in can only be limited to maps the person can open', async ({
     request,
   }) => {

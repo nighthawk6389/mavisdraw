@@ -211,8 +211,11 @@ export async function renameComponent(
 ): Promise<{ labels: number; diagrams: string[] }> {
   const scene = await loadProjectScene(project, rooms.documents);
   const edits = renameEdits(scene, componentId, name);
+  const ours = new Set(scene.diagrams.map((d) => d.id));
   const byDiagram = new Map<string, Array<{ id: string; changes: Record<string, unknown> }>>();
   for (const e of edits.elements) {
+    // Only this project's diagrams, whatever an element claims
+    if (!ours.has(e.diagramId)) continue;
     const list = byDiagram.get(e.diagramId) ?? [];
     list.push({ id: e.id, changes: e.changes });
     byDiagram.set(e.diagramId, list);

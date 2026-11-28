@@ -82,8 +82,16 @@ export async function loadProjectScene(
   const elements: MavisElement[] = [];
   for (const d of rows) {
     const live = documents.get(documentNameFor(d.id));
-    const list = live ? readLiveElements(live) : ((d.elements as unknown[]) ?? []);
-    elements.push(...(list as MavisElement[]));
+    const list = (
+      live ? readLiveElements(live) : ((d.elements as unknown[]) ?? [])
+    ) as MavisElement[];
+    // An element's diagramId is written by whoever saved it: it's on the
+    // diagram it was stored in, whatever it says. Everything built from the
+    // scene (renames, proposals, PR checks, MCP) writes back by this id, so
+    // trusting the claim would let a project's elements point into another
+    for (const el of list) {
+      elements.push(el.diagramId === d.id ? el : { ...el, diagramId: d.id });
+    }
   }
   const rootDiagramId =
     project.rootDiagramId ?? rows.find((d) => !d.parentDiagramId)?.id ?? rows[0]?.id ?? '';
