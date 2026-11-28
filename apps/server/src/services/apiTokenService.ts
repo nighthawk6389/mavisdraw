@@ -2,7 +2,13 @@ import { createHash, randomBytes } from 'node:crypto';
 import { nanoid } from 'nanoid';
 import { and, asc, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { apiTokens, projects, type TokenAccess, type TokenKind } from '../db/schema.js';
+import {
+  apiTokens,
+  oauthClients,
+  projects,
+  type TokenAccess,
+  type TokenKind,
+} from '../db/schema.js';
 
 /**
  * Personal access tokens, for coding agents (Claude Code, Cursor…) that read
@@ -178,6 +184,10 @@ export async function issueOAuthTokens(input: {
         ),
       );
     }
+    await tx
+      .update(oauthClients)
+      .set({ lastUsedAt: new Date(now) })
+      .where(eq(oauthClients.id, input.clientId));
     await tx.insert(apiTokens).values({
       id: nanoid(),
       userId: input.userId,
@@ -232,6 +242,10 @@ export async function refreshOAuthTokens(
     )
     .returning({ access: apiTokens.access });
   if (!row) return null;
+  await db
+    .update(oauthClients)
+    .set({ lastUsedAt: new Date(now) })
+    .where(eq(oauthClients.id, clientId));
   return {
     accessToken,
     refreshToken: next,

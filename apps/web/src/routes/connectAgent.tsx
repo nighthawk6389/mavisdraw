@@ -98,9 +98,12 @@ export default function ConnectAgentPage() {
         name: 'leaving',
         message: approve
           ? `${agent} is connected. Go back to it; you can close this tab.`
-          : `You didn't connect ${agent}.`,
+          : `You didn't connect ${agent}. You can close this tab.`,
       });
-      window.location.assign(redirectTo);
+      // Saying no hands the answer back to an agent on this computer (so it
+      // stops waiting), but never sends the person on to a website they
+      // were told to be wary of
+      if (approve || phase.request.redirect.kind !== 'web') window.location.assign(redirectTo);
     } catch (err) {
       setBusy(false);
       setPhase({

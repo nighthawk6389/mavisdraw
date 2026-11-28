@@ -19,7 +19,6 @@ import {
   getClient,
   pendingRequest,
   redirectMatches,
-  redirectWith,
   registerClient,
   scopeForAccess,
   startRequest,
@@ -137,8 +136,11 @@ export async function oauthRoutes(app: FastifyInstance): Promise<void> {
       return errorPage(reply, 'redirect_uri is not one this agent registered.');
     }
     const state = q.state ?? null;
+    // Shown here, not sent back: anyone can register a client with any
+    // https address, and a redirect on a bad request would make this server
+    // an open redirector to it. Only a person's answer is sent back.
     const fail = (error: string, description: string) =>
-      reply.redirect(redirectWith(redirectUri, { error, error_description: description, state }));
+      errorPage(reply, `${description} (${error}).`);
     if (q.response_type !== 'code') {
       return fail('unsupported_response_type', 'Only response_type=code is supported');
     }

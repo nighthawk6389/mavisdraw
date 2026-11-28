@@ -377,18 +377,49 @@ test.describe('Coding agents signing in through the browser', () => {
     expect(elsewhere.status()).toBe(400);
     expect(elsewhere.headers()['location']).toBeUndefined();
 
-    // Without PKCE the agent is told why, at its own address
+    // Errors before anyone answers are shown here, never redirected: with
+    // open registration that would make this server a redirector
     const noPkce = await authorize({
       response_type: 'code',
       client_id: clientId,
       redirect_uri: CALLBACK,
       state: 's1',
     });
-    expect(noPkce.status()).toBe(302);
-    const sentBack = new URL(noPkce.headers()['location']);
-    expect(sentBack.origin + sentBack.pathname).toBe(CALLBACK);
-    expect(sentBack.searchParams.get('error')).toBe('invalid_request');
-    expect(sentBack.searchParams.get('state')).toBe('s1');
+    expect(noPkce.status()).toBe(400);
+    expect(noPkce.headers()['location']).toBeUndefined();
+    expect(await noPkce.text()).toContain('PKCE is required');
+  });
+
+  test('cancelling a sign-in for a website’s agent stays here instead of following it', async ({
+    page,
+    context,
+  }) => {
+    await registerUser(context, 'Wary Owner');
+    const registered = await context.request.post(`${API_URL}/api/oauth/register`, {
+      data: { client_name: 'Some Web Agent', redirect_uris: ['https://agent.example/cb'] },
+    });
+    const { client_id: clientId } = (await registered.json()) as { client_id: string };
+    let followed = false;
+    await page.route('https://agent.example/**', (route) => {
+      followed = true;
+      return route.fulfill({ body: 'agent site' });
+    });
+    const authorize = new URL(`${API_URL}/api/oauth/authorize`);
+    authorize.search = new URLSearchParams({
+      response_type: 'code',
+      client_id: clientId,
+      redirect_uri: 'https://agent.example/cb',
+      code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+      code_challenge_method: 'S256',
+    }).toString();
+    await page.goto(authorize.toString());
+    await expect(page.getByTestId('connect-agent')).toContainText('agent.example');
+    await page.getByTestId('connect-agent-deny').click();
+    await expect(page.getByTestId('connect-agent')).toContainText(
+      "You didn't connect Some Web Agent",
+    );
+    expect(new URL(page.url()).pathname).toBe('/connect-agent');
+    expect(followed).toBe(false);
   });
 
   test('a read-only token for one map, made in the dialog', async ({ page, context }) => {

@@ -1,8 +1,8 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { nanoid } from 'nanoid';
-import { and, eq, isNull, lt, notInArray, sql } from 'drizzle-orm';
+import { and, eq, isNull, lt, sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { apiTokens, oauthClients, oauthRequests, type TokenAccess } from '../db/schema.js';
+import { oauthClients, oauthRequests, type TokenAccess } from '../db/schema.js';
 import { hashToken, issueOAuthTokens, type IssuedTokens } from './apiTokenService.js';
 
 /**
@@ -185,19 +185,17 @@ export async function registerClient(input: {
     .join('')
     .trim()
     .slice(0, 100);
-  // Registrations nobody ever signed in with don't pile up
-  await db.delete(oauthClients).where(
-    and(
-      lt(oauthClients.createdAt, new Date(Date.now() - UNUSED_CLIENT_TTL_MS)),
-      notInArray(
-        oauthClients.id,
-        db
-          .select({ id: sql<string>`${apiTokens.clientId}` })
-          .from(apiTokens)
-          .where(sql`${apiTokens.clientId} is not null`),
+  // Registrations nobody ever signed in with don't pile up. One that was
+  // used is kept even once its connection is gone: the agent keeps its
+  // client id, and signing in again must still work
+  await db
+    .delete(oauthClients)
+    .where(
+      and(
+        isNull(oauthClients.lastUsedAt),
+        lt(oauthClients.createdAt, new Date(Date.now() - UNUSED_CLIENT_TTL_MS)),
       ),
-    ),
-  );
+    );
   const [row] = await db
     .insert(oauthClients)
     .values({ id: `mdwc_${nanoid(24)}`, name: name || 'A coding agent', redirectUris: uris })

@@ -496,6 +496,8 @@ export const oauthClients = pgTable('oauth_clients', {
   id: text('id').primaryKey(),
   name: varchar('name', { length: 100 }).notNull(),
   redirectUris: jsonb('redirect_uris').notNull().$type<string[]>(),
+  /** Last time it was handed tokens; null if nobody ever signed in with it. */
+  lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
