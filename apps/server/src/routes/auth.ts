@@ -23,6 +23,7 @@ import {
 } from '../services/emailVerification.js';
 import { requireAuth } from '../middleware/auth.js';
 import { authRateLimit } from '../middleware/rateLimit.js';
+import { disconnectUser } from '../ws/hocuspocus.js';
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -134,6 +135,8 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     }
     try {
       const { userId } = await resetPassword(parsed.data.token, parsed.data.password);
+      // Every other tab of the account is signed out, live ones included
+      disconnectUser(app.hocuspocus, userId);
       const { user, tokens } = await signInUser(userId);
       reply.setCookie('refreshToken', tokens.refreshToken, {
         httpOnly: true,

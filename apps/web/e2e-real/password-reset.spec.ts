@@ -14,6 +14,14 @@ const login = (request: APIRequestContext, email: string, password: string) =>
   request.post(`${API_URL}/api/auth/login`, { data: { email, password } });
 const refresh = (request: APIRequestContext) =>
   request.post(`${API_URL}/api/auth/refresh`, { data: {} });
+/** A coding agent's request with this token (200: it's let in). */
+const mcpStatus = async (request: APIRequestContext, token: string) =>
+  (
+    await request.post(`${API_URL}/api/mcp`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json, text/event-stream' },
+      data: { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} },
+    })
+  ).status();
 
 test.describe('Password reset', () => {
   test('a forgotten password is reset from the emailed link, and other sessions end', async ({
@@ -71,7 +79,15 @@ test.describe('Password reset', () => {
     const email = `cto-${uniq()}@example.com`;
     // Someone registers the CTO's address (and can't confirm it)…
     const ctxM = await browser.newContext();
-    await registerUser(ctxM, 'Mallory', 'm', { email, verify: false });
+    const squatter = await registerUser(ctxM, 'Mallory', 'm', { email, verify: false });
+    // …makes an access token for a coding agent, to keep a way in…
+    const made = await ctxM.request.post(`${API_URL}/api/tokens`, {
+      headers: { Authorization: `Bearer ${squatter.accessToken}` },
+      data: { name: 'stash' },
+    });
+    expect(made.status()).toBe(201);
+    const { token: agentToken } = (await made.json()) as { token: string };
+    expect(await mcpStatus(ctxM.request, agentToken)).toBe(200);
     // …and a project is shared with that address meanwhile
     const ctxO = await browser.newContext();
     const owner = await registerUser(ctxO, 'Olivia Owner');
@@ -97,8 +113,14 @@ test.describe('Password reset', () => {
     // The account is theirs: confirmed, with what was shared with the address
     await expect(v.getByText(name)).toBeVisible();
     await expect(v.getByTestId('confirm-email-banner')).toHaveCount(0);
-    // …and the squatter is signed out
+    // …and the squatter is signed out, everywhere: session, the access token
+    // already in hand, and the agent's token
     expect((await refresh(ctxM.request)).status()).not.toBe(200);
+    const stillIn = await ctxM.request.get(`${API_URL}/api/projects`, {
+      headers: { Authorization: `Bearer ${squatter.accessToken}` },
+    });
+    expect(stillIn.status()).toBe(401);
+    expect(await mcpStatus(ctxM.request, agentToken)).toBe(401);
 
     await ctxM.close();
     await ctxO.close();

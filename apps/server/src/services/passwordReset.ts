@@ -3,10 +3,11 @@ import bcrypt from 'bcryptjs';
 import { eq } from 'drizzle-orm';
 import { config } from '../config.js';
 import { db } from '../db/client.js';
-import { sessions, users } from '../db/schema.js';
+import { users } from '../db/schema.js';
 import { isMailEnabled, passwordResetEmail, sendMail } from './mailer.js';
 import { readToken, signToken, SignedTokenError } from './signedToken.js';
 import { claimInvitesForEmail } from './workspaceService.js';
+import { endAccountAccess } from './accountAccess.js';
 
 /**
  * Resetting a forgotten password through a link sent to the account's
@@ -108,7 +109,9 @@ export async function resetPassword(
       updatedAt: new Date(),
     })
     .where(eq(users.id, user.id));
-  await db.delete(sessions).where(eq(sessions.userId, user.id));
+  // Whoever had the account until now (a squatter on the address, or someone
+  // who got the password) loses every way back in: sessions, tokens, agents
+  await endAccountAccess(user.id);
   await claimInvitesForEmail(user.id, user.email);
   return { userId: user.id, email: user.email };
 }

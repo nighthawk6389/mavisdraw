@@ -34,7 +34,10 @@ export default function ResetPasswordPage() {
     try {
       const response = await apiResetPassword(token, password);
       useAuthStore.getState().signedIn(response);
-      toast('Password changed. Every other session was signed out.', 'success');
+      toast(
+        'Password changed. Every other session was signed out, and access tokens and coding agents were disconnected.',
+        'success',
+      );
       navigate('/', { replace: true });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Couldn’t reset the password. Try again.');

@@ -65,6 +65,25 @@ export function applyAccessChange(
 }
 
 /**
+ * The account was taken back (`endAccountAccess`): close every live socket
+ * it has open. The editor then asks where it stands, its tokens are refused,
+ * and it's signed out.
+ */
+export function disconnectUser(server: Pick<Hocuspocus, 'documents'>, userId: string): number {
+  let closed = 0;
+  server.documents.forEach((document) => {
+    document.connections.forEach(({ connection }) => {
+      const user = (connection.context as { user?: { id?: string } }).user;
+      if (user?.id !== userId) return;
+      closed++;
+      connection.close({ code: 4403, reason: 'Signed out' });
+      connection.webSocket.close(4403, 'Signed out');
+    });
+  });
+  return closed;
+}
+
+/**
  * Something changed who can reach the whole project (it moved between
  * workspaces, or stopped being public): recompute access for everyone
  * connected to its rooms and apply it to their open sockets.

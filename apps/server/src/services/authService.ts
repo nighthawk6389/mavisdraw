@@ -5,6 +5,7 @@ import { eq, or } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { users, sessions } from '../db/schema.js';
 import { config } from '../config.js';
+import { issuedTokenRevoked } from './accessRevocation.js';
 
 const JWT_SECRET = config.jwtSecret;
 const JWT_ACCESS_EXPIRY = '15m';
@@ -14,6 +15,10 @@ const BCRYPT_ROUNDS = 10;
 export interface TokenPayload {
   userId: string;
   email: string;
+  /** Issued at, in ms (JWT `iat` is whole seconds): see `accessRevocation`. */
+  iatMs?: number;
+  /** Issued at (seconds), set by jwt.sign. */
+  iat?: number;
 }
 
 export interface AuthTokens {
@@ -169,8 +174,9 @@ export async function getUserById(userId: string): Promise<UserResponse | null> 
 }
 
 export function verifyAccessToken(token: string): TokenPayload {
+  let payload: TokenPayload;
   try {
-    return jwt.verify(token, JWT_SECRET) as TokenPayload;
+    payload = jwt.verify(token, JWT_SECRET) as TokenPayload;
   } catch (err) {
     console.error(
       '[authService] verifyAccessToken failed:',
@@ -178,10 +184,15 @@ export function verifyAccessToken(token: string): TokenPayload {
     );
     throw new AuthError('Invalid or expired access token', 401);
   }
+  // Issued before the account was taken back by the owner of its address
+  if (issuedTokenRevoked(payload.userId, payload)) {
+    throw new AuthError('Invalid or expired access token', 401);
+  }
+  return payload;
 }
 
 function signAccessToken(userId: string, email: string): string {
-  return jwt.sign({ userId, email } satisfies TokenPayload, JWT_SECRET, {
+  return jwt.sign({ userId, email, iatMs: Date.now() } satisfies TokenPayload, JWT_SECRET, {
     expiresIn: JWT_ACCESS_EXPIRY,
   });
 }
