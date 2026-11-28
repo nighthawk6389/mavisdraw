@@ -7,6 +7,10 @@ import {
   checkProjectAccess,
 } from '../services/diagramService.js';
 import { withDiagramLock } from '../services/diagramLock.js';
+import { eq } from 'drizzle-orm';
+import { db } from '../db/client.js';
+import { users } from '../db/schema.js';
+import { trackPresence } from './presence.js';
 import type * as Y from 'yjs';
 import {
   applyState,
@@ -204,10 +208,17 @@ export function createHocuspocusServer(): Hocuspocus {
         }
       }
 
+      // The name others see comes from here, not from what the client says
+      const person = await db.query.users.findFirst({
+        where: eq(users.id, payload.userId),
+        columns: { name: true },
+      });
+
       return {
         user: {
           id: payload.userId,
           email: payload.email,
+          name: person?.name ?? '',
           role: access,
           projectId: diagram.projectId,
         },
@@ -240,6 +251,11 @@ export function createHocuspocusServer(): Hocuspocus {
       appState.set('renderMode', diagram.renderMode);
 
       return document;
+    },
+
+    // Who's in the room, as the server signed them in (ws/presence.ts)
+    async afterLoadDocument({ document }) {
+      trackPresence(document);
     },
 
     async onStoreDocument({ documentName, document }) {

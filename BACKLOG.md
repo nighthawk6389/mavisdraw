@@ -34,7 +34,7 @@ Fixed (each with a regression test; two-browser e2e in `apps/web/e2e-real/sync-i
 - ~~Cursor/viewport awareness unthrottled; colour changes on every drill-in~~ — ≤20 updates/s per field; stable colour per user.
 
 Still open:
-- **Presence identity is client-asserted** (awareness `user.id`/`name`): someone can show up as someone else in the avatar list. Fix: stamp identity server-side (e.g. relay presence through a server-validated stateless channel).
+- ~~**Presence identity is client-asserted**~~ — fixed: the collaboration server notes which signed-in person sent each awareness client (first use owns a client id; only the server or its owner frees it) and tells the room in a stateless message only it can send (`ws/presence.ts`). The app names people, cursors and colours from that, never from a client's own awareness state. A client can still move its own cursor and selection however it likes.
 - **Y.Doc growth**: tombstones are kept forever; state is stored base64 and rewritten whole on every persist. Needs tombstone compaction (e.g. drop tombstones older than N days on load, re-encode), binary storage, incremental persistence.
 - ~~No migrations~~ — fixed: versioned migrations in `apps/server/drizzle`, applied by `db:migrate` / Render's pre-deploy step; databases created with `db:push` are adopted automatically.
 - **Single process assumed**: no Redis extension, so two instances during a deploy overlap can both host a room (last persist wins). Add `@hocuspocus/extension-redis` before scaling out.

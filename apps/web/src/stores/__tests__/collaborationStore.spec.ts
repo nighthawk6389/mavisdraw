@@ -55,7 +55,12 @@ vi.mock('../../services/api', async (importOriginal) => ({
   apiGetProject: vi.fn(async () => ({ project: { role: 'editor' } })),
 }));
 
-import { useCollaborationStore, isLiveSynced, colorFor } from '../collaborationStore';
+import {
+  useCollaborationStore,
+  isLiveSynced,
+  colorFor,
+  presenceClients,
+} from '../collaborationStore';
 import { useElementsStore } from '../elementsStore';
 
 describe('collaborationStore', () => {
@@ -158,6 +163,60 @@ describe('collaborationStore', () => {
     expect(firstProvider.destroy).toHaveBeenCalled();
     const state = useCollaborationStore.getState();
     expect(state.currentDiagramId).toBe('diagram-2');
+  });
+
+  it('names people by the server’s presence list, never by what a client claims', () => {
+    const store = useCollaborationStore.getState();
+    store.connect('diagram-1', 'user-1', 'Alice');
+    const opts = (
+      useCollaborationStore.getState().provider as unknown as {
+        _opts: {
+          onAwarenessUpdate: (p: { states: Array<Record<string, unknown>> }) => void;
+          onStateless: (p: { payload: string }) => void;
+        };
+      }
+    )._opts;
+    // Client 11 says it's Bob; client 12 is our own other tab
+    opts.onAwarenessUpdate({
+      states: [
+        { clientId: 11, user: { id: 'bob', name: 'Bob', color: '#000' }, cursor: { x: 5, y: 6 } },
+        { clientId: 12, user: { id: 'user-1', name: 'Alice' } },
+      ],
+    });
+    // Nobody is shown until the server says who they are
+    expect(useCollaborationStore.getState().connectedUsers).toEqual([]);
+
+    opts.onStateless({
+      payload: JSON.stringify({
+        type: 'mavisdraw:presence',
+        clients: {
+          11: { userId: 'mallory', name: 'Mallory' },
+          12: { userId: 'user-1', name: 'A' },
+        },
+      }),
+    });
+    const { connectedUsers, remoteCursors } = useCollaborationStore.getState();
+    expect(connectedUsers).toHaveLength(1);
+    expect(connectedUsers[0]).toMatchObject({
+      id: 'mallory',
+      name: 'Mallory',
+      color: colorFor('mallory'),
+      cursor: { x: 5, y: 6 },
+    });
+    expect(remoteCursors.get('mallory')?.userName).toBe('Mallory');
+    expect(remoteCursors.has('bob')).toBe(false);
+  });
+
+  it('reads only the server’s presence message', () => {
+    expect(presenceClients('not json')).toBeNull();
+    expect(presenceClients(JSON.stringify({ type: 'something-else', clients: {} }))).toBeNull();
+    const clients = presenceClients(
+      JSON.stringify({
+        type: 'mavisdraw:presence',
+        clients: { 7: { userId: 'u7', name: 'Seven' }, x: { userId: 'bad' }, 8: { name: 'no id' } },
+      }),
+    );
+    expect(clients).toEqual(new Map([[7, { userId: 'u7', name: 'Seven' }]]));
   });
 
   it('closes the socket with the connection, even straight after opening it', () => {

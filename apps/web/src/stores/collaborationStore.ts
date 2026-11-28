@@ -91,6 +91,35 @@ const WS_URL = collaborationUrl();
  */
 let liveSocket: HocuspocusProviderWebsocket | null = null;
 
+type AwarenessStates = Array<Record<string, unknown> & { clientId: number }>;
+
+export interface PresenceIdentity {
+  userId: string;
+  name: string;
+}
+
+/**
+ * The server's list of who each awareness client is (its "mavisdraw:presence"
+ * stateless message), or null for any other message.
+ */
+export function presenceClients(payload: string): Map<number, PresenceIdentity> | null {
+  let message: unknown;
+  try {
+    message = JSON.parse(payload);
+  } catch {
+    return null;
+  }
+  const { type, clients } = (message ?? {}) as { type?: unknown; clients?: unknown };
+  if (type !== 'mavisdraw:presence' || !clients || typeof clients !== 'object') return null;
+  const identities = new Map<number, PresenceIdentity>();
+  for (const [id, who] of Object.entries(clients as Record<string, unknown>)) {
+    const { userId, name } = (who ?? {}) as { userId?: unknown; name?: unknown };
+    if (!/^\d+$/.test(id) || typeof userId !== 'string' || !userId) continue;
+    identities.set(Number(id), { userId, name: typeof name === 'string' ? name : '' });
+  }
+  return identities;
+}
+
 export interface RemoteCursor {
   x: number;
   y: number;
@@ -228,6 +257,54 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
     let initialSyncDone = false;
     let authFailures = 0;
 
+    // People in the room: awareness states, named by the server's presence list
+    let verified = new Map<number, PresenceIdentity>();
+    let lastStates: AwarenessStates = [];
+    const showPeople = () => {
+      const users: CollaborationUser[] = [];
+      const cursors = new Map<string, RemoteCursor>();
+      const existingCursors = get().remoteCursors;
+
+      for (const state of lastStates) {
+        const who = verified.get(state.clientId);
+        if (!who || who.userId === userId) continue;
+        const name = who.name || 'Someone';
+        const color = colorFor(who.userId);
+
+        const cursor = state.cursor as { x?: number; y?: number } | undefined;
+        const selectedIds = (state.selectedElementIds as string[]) ?? [];
+        const viewport = state.viewport as Viewport | undefined;
+        const remoteDiagramId = state.diagramId as string | undefined;
+
+        users.push({
+          id: who.userId,
+          name,
+          color,
+          cursor: cursor?.x != null && cursor?.y != null ? { x: cursor.x, y: cursor.y } : null,
+          selectedElementIds: selectedIds,
+          viewport: viewport ?? null,
+          diagramId: remoteDiagramId ?? null,
+        });
+
+        if (cursor?.x != null && cursor?.y != null) {
+          const existing = existingCursors.get(who.userId);
+          cursors.set(who.userId, {
+            x: cursor.x,
+            y: cursor.y,
+            prevX: existing?.x ?? cursor.x,
+            prevY: existing?.y ?? cursor.y,
+            timestamp: Date.now(),
+            userId: who.userId,
+            userName: name,
+            userColor: color,
+            selectedElementIds: selectedIds,
+          });
+        }
+      }
+
+      set({ connectedUsers: users, remoteCursors: cursors });
+    };
+
     liveSocket = new HocuspocusProviderWebsocket({ url: WS_URL });
     const provider = new HocuspocusProvider({
       websocketProvider: liveSocket,
@@ -310,51 +387,18 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
         set({ connectionStatus: 'connected', syncedDiagramId: diagramId });
       },
 
-      onAwarenessUpdate({
-        states,
-      }: {
-        states: Array<Record<string, unknown> & { clientId: number }>;
-      }) {
-        const users: CollaborationUser[] = [];
-        const cursors = new Map<string, RemoteCursor>();
-        const existingCursors = get().remoteCursors;
+      // Who's who comes from the server (it knows who each client is), never
+      // from the name a client puts in its own awareness state
+      onStateless({ payload }: { payload: string }) {
+        const clients = presenceClients(payload);
+        if (!clients) return;
+        verified = clients;
+        showPeople();
+      },
 
-        for (const state of states) {
-          const user = state.user as { id?: string; name?: string; color?: string } | undefined;
-          if (!user?.id || user.id === userId) continue;
-
-          const cursor = state.cursor as { x?: number; y?: number } | undefined;
-          const selectedIds = (state.selectedElementIds as string[]) ?? [];
-          const viewport = state.viewport as Viewport | undefined;
-          const remoteDiagramId = state.diagramId as string | undefined;
-
-          users.push({
-            id: user.id,
-            name: user.name ?? 'Unknown',
-            color: user.color ?? '#999',
-            cursor: cursor?.x != null && cursor?.y != null ? { x: cursor.x, y: cursor.y } : null,
-            selectedElementIds: selectedIds,
-            viewport: viewport ?? null,
-            diagramId: remoteDiagramId ?? null,
-          });
-
-          if (cursor?.x != null && cursor?.y != null) {
-            const existing = existingCursors.get(user.id);
-            cursors.set(user.id, {
-              x: cursor.x,
-              y: cursor.y,
-              prevX: existing?.x ?? cursor.x,
-              prevY: existing?.y ?? cursor.y,
-              timestamp: Date.now(),
-              userId: user.id,
-              userName: user.name ?? 'Unknown',
-              userColor: user.color ?? '#999',
-              selectedElementIds: selectedIds,
-            });
-          }
-        }
-
-        set({ connectedUsers: users, remoteCursors: cursors });
+      onAwarenessUpdate({ states }: { states: AwarenessStates }) {
+        lastStates = states;
+        showPeople();
       },
     });
 
