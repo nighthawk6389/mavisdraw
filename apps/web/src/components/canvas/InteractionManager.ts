@@ -1,4 +1,4 @@
-import type { MavisElement, Point, Bounds, LinearElement } from '@mavisdraw/types';
+import type { MavisElement, Point, Bounds, LinearElement, TextElement } from '@mavisdraw/types';
 import type { Tool } from '../../stores/toolStore';
 import type { ViewportManager } from './ViewportManager';
 import {
@@ -208,6 +208,23 @@ function resizeCursor(handle: ResizeHandle, angle: number): string {
   const degrees = HANDLE_DIRECTION_DEG[handle] + (angle * 180) / Math.PI;
   return RESIZE_CURSORS[((Math.round(degrees / 45) % 4) + 4) % 4];
 }
+
+/**
+ * Free text at a new scale: its font size, and its box scaled with it (the
+ * box as it was measured when typed, so nothing jumps when the drag starts).
+ */
+function scaledText(text: TextElement, scale: number): Partial<TextElement> {
+  const fontSize = Math.max(MIN_FONT_SIZE, Math.round(text.fontSize * scale * 10) / 10);
+  const k = fontSize / text.fontSize;
+  return {
+    fontSize,
+    width: Math.max(1, text.width * k),
+    height: Math.max(1, text.height * k),
+  };
+}
+
+/** Text never shrinks below this while resizing (px). */
+const MIN_FONT_SIZE = 4;
 
 function isLinearType(type: string): boolean {
   return type === 'arrow' || type === 'line' || type === 'freedraw';
@@ -2064,12 +2081,15 @@ export class InteractionManager {
       y: canvasPoint.y - this.startCanvasPoint.y,
     };
 
-    // Shift keeps proportions; images keep them by default on corners and never flip
+    // Shift keeps proportions; images keep them by default on corners and never
+    // flip; text is scaled, never stretched or mirrored (its font grows with it)
     const isCorner = !handle.includes('center') && !handle.includes('middle');
-    const types = Array.from(this.gestureOriginals.values()).map((el) => el.type);
-    const allImages = types.length > 0 && types.every((t) => t === 'image');
-    const anyImage = types.some((t) => t === 'image');
-    const keepAspect = this.mods.shiftKey || (allImages && isCorner);
+    const originals = Array.from(this.gestureOriginals.values());
+    const isFreeText = (el: MavisElement) => el.type === 'text' && !(el as TextElement).containerId;
+    const allImages = originals.length > 0 && originals.every((el) => el.type === 'image');
+    const allText = originals.length > 0 && originals.every(isFreeText);
+    const noFlip = originals.some((el) => el.type === 'image' || isFreeText(el));
+    const keepAspect = this.mods.shiftKey || (allImages && isCorner) || allText;
     const fromCenter = this.mods.altKey;
 
     this.currentSmartGuides = [];
@@ -2081,9 +2101,14 @@ export class InteractionManager {
         keepAspect,
         fromCenter,
         minSize: 1,
-        noFlip: anyImage,
+        noFlip,
       });
-      this.callbacks.updateElementsSilent([{ id, changes: box }]);
+      const original = this.gestureOriginals.get(id);
+      const changes: Partial<MavisElement> =
+        original && isFreeText(original)
+          ? { ...box, ...scaledText(original as TextElement, box.height / Math.max(1, sb.height)) }
+          : box;
+      this.callbacks.updateElementsSilent([{ id, changes }]);
       return;
     }
     const snapping = this.isSnapEnabled() && !keepAspect;
@@ -2120,7 +2145,7 @@ export class InteractionManager {
       keepAspect,
       fromCenter,
       minSize: 1,
-      noFlip: anyImage,
+      noFlip,
     });
 
     if (snapping && this.snapContext) {
@@ -2151,6 +2176,16 @@ export class InteractionManager {
         result,
         this.dragStartPoints.get(id),
       );
+      const original = this.gestureOriginals.get(id);
+      if (original && isFreeText(original)) {
+        // Text keeps its shape: its font follows the smaller of the two scales
+        const scale = Math.min(Math.abs(result.scaleX), Math.abs(result.scaleY));
+        updates.push({
+          id,
+          changes: { x: next.x, y: next.y, ...scaledText(original as TextElement, scale) },
+        });
+        continue;
+      }
       updates.push({ id, changes: next as Partial<MavisElement> });
     }
     if (updates.length > 0) this.callbacks.updateElementsSilent(updates);

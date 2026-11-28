@@ -345,6 +345,58 @@ test.describe('Resizing', () => {
     expect(await element(page, a.id)).toMatchObject({ x: a.x, width: a.width });
   });
 
+  test('resizing text scales its font from any handle, never stretching or mirroring it', async ({
+    page,
+  }) => {
+    await page.keyboard.press('t');
+    const box = await canvasBox(page);
+    await page.mouse.click(box.x + 200, box.y + 200);
+    await page.keyboard.type('Scale me');
+    await page.keyboard.press('Escape');
+    const [text] = (await hooks.elements(page)) as Array<El & { fontSize: number }>;
+    expect(text.type).toBe('text');
+    await page.mouse.click(box.x + text.x + 5, box.y + text.y + 5);
+
+    // Bottom-right corner, outwards to about twice the width
+    const right = text.x + text.width + 4;
+    const bottom = text.y + text.height + 4;
+    await drag(page, right, bottom, right + text.width, bottom + text.height);
+    const bigger = (await element(page, text.id)) as El & { fontSize: number };
+    expect(bigger.fontSize).toBeGreaterThan(text.fontSize * 1.7);
+    expect(bigger.fontSize).toBeLessThan(text.fontSize * 2.3);
+    // The box is the text's, at its new size: not stretched
+    expect(bigger.width / bigger.height).toBeCloseTo(text.width / text.height, 1);
+
+    // A side handle scales it too, and dragging past the far edge doesn't mirror it
+    const midY = bigger.y + bigger.height / 2;
+    await drag(page, bigger.x + bigger.width + 4, midY, bigger.x - 200, midY);
+    const after = (await element(page, text.id)) as El & { fontSize: number };
+    expect(after.fontSize).toBeGreaterThan(0);
+    expect(after.width).toBeGreaterThan(0);
+    expect(after.height).toBeGreaterThan(0);
+  });
+
+  test('text in a resized multi-selection scales with the shapes', async ({ page }) => {
+    await drawRect(page, 200, 200, 300, 260);
+    await page.keyboard.press('t');
+    const box = await canvasBox(page);
+    await page.mouse.click(box.x + 200, box.y + 300);
+    await page.keyboard.type('Note');
+    await page.keyboard.press('Escape');
+    const text = (await hooks.elements(page)).find((e) => e.type === 'text') as El & {
+      fontSize: number;
+    };
+    await page.keyboard.press(`${mod}+a`);
+    const right = Math.max(300, text.x + text.width) + 4;
+    const bottom = text.y + text.height + 4;
+    // Twice as big both ways, from the top-left (200, 200)
+    const toX = 200 + (right - 4 - 200) * 2 + 4;
+    const toY = 200 + (bottom - 4 - 200) * 2 + 4;
+    await drag(page, right, bottom, toX, toY);
+    const after = (await element(page, text.id)) as El & { fontSize: number };
+    expect(after.fontSize).toBeCloseTo(text.fontSize * 2, 0);
+  });
+
   test('dragging a handle past the opposite edge flips instead of getting stuck', async ({
     page,
   }) => {
