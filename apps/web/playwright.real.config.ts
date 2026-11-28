@@ -32,7 +32,7 @@ export const WEB_URL = `http://localhost:${WEB_PORT}`;
  */
 const SINGLE_PORT = process.env.E2E_SINGLE_PORT ?? '3103';
 export const SINGLE_SITE_URL = `http://localhost:${SINGLE_PORT}`;
-const SINGLE_SITE_DIST = fileURLToPath(new URL('./e2e-real/.single-site-dist', import.meta.url));
+const SINGLE_SITE_DIST = fileURLToPath(new URL('./e2e-real/.single-site/dist', import.meta.url));
 
 /**
  * Pull-request checks talk to a fake GitHub (e2e-real/fake-github.mjs) as a
