@@ -11,6 +11,7 @@ import {
   startLogin,
 } from '../services/oidc.js';
 import { reportError } from '../observability.js';
+import { disconnectUser } from '../ws/hocuspocus.js';
 
 const COOKIE = 'mavisdraw_oidc';
 const COOKIE_PATH = '/api/auth/oidc';
@@ -63,7 +64,10 @@ export async function ssoRoutes(app: FastifyInstance): Promise<void> {
       );
       if (query.error || !query.code) throw new SsoError('denied', query.error ?? 'No code');
       const identity = await completeLogin(cfg, query.code, login);
-      const { tokens } = await signInUser(await accountFor(identity));
+      const account = await accountFor(identity);
+      // Taken back from whoever registered the address: their open tabs go too
+      if (account.tookOver) disconnectUser(app.hocuspocus, account.userId);
+      const { tokens } = await signInUser(account.userId);
       reply.clearCookie(COOKIE, { path: COOKIE_PATH });
       reply.setCookie('refreshToken', tokens.refreshToken, {
         httpOnly: true,

@@ -12,7 +12,10 @@ One provider is set per server. SAML isn't supported yet.
 - **First sign-in:** the person gets a MavisDraw account. If an account with the same email
   address already exists, that account is linked instead, so existing projects stay theirs. The
   provider vouches for the address, so it counts as confirmed, and pending invites to that address
-  are accepted.
+  are accepted. If that account never confirmed its address, whoever registered it may not be the
+  person (anyone can type an address at sign-up), so the account is taken back as a password reset
+  would: its password is removed, and its sessions, access tokens and connected coding agents
+  stop working.
 - **After that:** the provider's identity for the person is linked to their account (the ID
   token's `iss` and `sub`). Their address can change at the provider and they still reach the same
   account.

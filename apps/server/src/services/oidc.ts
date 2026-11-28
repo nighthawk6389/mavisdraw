@@ -7,6 +7,7 @@ import { db } from '../db/client.js';
 import { userIdentities, users } from '../db/schema.js';
 import { claimInvitesForEmail } from './workspaceService.js';
 import { readToken, signToken } from './signedToken.js';
+import { endAccountAccess } from './accountAccess.js';
 
 /**
  * Single sign-on through an OpenID Connect provider (Okta, Microsoft Entra
@@ -255,8 +256,15 @@ export async function completeLogin(
   return identityFrom(cfg.issuer, claims, cfg.allowedDomains);
 }
 
-/** The account for this identity: linked before, matched by email, or new. */
-export async function accountFor(identity: Identity): Promise<string> {
+/**
+ * The account for this identity: linked before, matched by email, or new.
+ * `tookOver`: an account registered with this address but never confirmed was
+ * taken back from whoever registered it (their password, sessions, tokens and
+ * agents no longer work); the caller closes its open sockets.
+ */
+export async function accountFor(
+  identity: Identity,
+): Promise<{ userId: string; tookOver: boolean }> {
   const now = new Date();
   const linked = await db.query.userIdentities.findFirst({
     where: and(
@@ -269,14 +277,22 @@ export async function accountFor(identity: Identity): Promise<string> {
       .update(userIdentities)
       .set({ email: identity.email, lastSignInAt: now })
       .where(eq(userIdentities.id, linked.id));
-    return linked.userId;
+    return { userId: linked.userId, tookOver: false };
   }
 
+  let tookOver = false;
   let user = await db.query.users.findFirst({ where: eq(users.email, identity.email) });
   if (user) {
-    // The provider vouches for the address: it's theirs
+    // The provider vouches for the address: it's theirs. If the account never
+    // confirmed it, whoever registered it may not be them (anyone can type an
+    // address at sign-up): take it back, as a password reset would
     if (!user.emailVerifiedAt) {
-      await db.update(users).set({ emailVerifiedAt: now }).where(eq(users.id, user.id));
+      await db
+        .update(users)
+        .set({ emailVerifiedAt: now, passwordHash: null, updatedAt: now })
+        .where(eq(users.id, user.id));
+      await endAccountAccess(user.id);
+      tookOver = true;
     }
   } else {
     const [created] = await db
@@ -303,5 +319,5 @@ export async function accountFor(identity: Identity): Promise<string> {
     lastSignInAt: now,
   });
   await claimInvitesForEmail(user.id, user.email);
-  return user.id;
+  return { userId: user.id, tookOver };
 }

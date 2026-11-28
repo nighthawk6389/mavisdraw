@@ -83,13 +83,15 @@ Still open:
     - **The refresh cookie is `SameSite=Lax` across Render's two sites,** so it isn't sent cross-site. The fix is to serve the API from the app's origin on Render too (a rewrite of `/api`), as the self-hosted image does. `SameSite=None` would expose sign-out and refresh to CSRF, and Safari blocks it anyway.
     - **Per-process state** (single instance only) is by design for now; see Architecture.
 
-### Third independent review (2026-11-27, `edcb5e1..HEAD`, focus `730bf7e..HEAD`) — not fixed yet
+### Third independent review (2026-11-27, `edcb5e1..HEAD`, focus `730bf7e..HEAD`)
 
-High (1–4 also affect `main`):
-1. **Any signed-in user can overwrite labels in other people's projects.** A rename (`modelService.renameComponent`) patches whatever diagram each element *says* it's on; `loadProjectScene` keeps the client-written `diagramId`. Drop edits for diagrams outside the project, and stamp `diagramId` from the row when loading.
-2. **Accepting an invite link confirms the email address** (`workspaceService` accept), but the inviter gets the link too, so a squatter can invite their own unconfirmed account and get it confirmed, then receive everyone's pending invites to that address.
-3. **SSO links to an existing unconfirmed account and leaves the squatter's password, sessions and tokens** (`oidc.ts` `accountFor`). Treat it like a reset takeover, or refuse to link.
-4. **A password reset leaves access tokens and signed-in agents working** (`passwordReset.ts` deletes sessions only).
+High, fixed (each with an e2e test that fails without the fix):
+1. ~~**Any signed-in user could overwrite labels in other people's projects**~~: a rename patched whatever diagram each element *said* it was on. `loadProjectScene` now puts every element on the diagram it was stored in, and renames only patch the project's own diagrams (`e2e-real/authorization.spec.ts`).
+2. ~~**Accepting an invite link confirmed the email address**~~, though the inviter has the link too. It still joins that invite's project, but the address is only confirmed by the emailed confirmation or reset link, or SSO (`e2e-real/email-verification.spec.ts`).
+3. ~~**SSO linked to an existing unconfirmed account and left the squatter's way in**~~: such an account is now taken back like a reset: password removed, sessions, tokens and agents ended, open sockets closed (`e2e-real/sso.spec.ts`).
+4. ~~**A password reset left access tokens and signed-in agents working**~~: a reset ends sessions, personal tokens, signed-in agents, approved-but-uncollected agent sign-ins and open sockets (`services/accountAccess.ts`). Access tokens already issued (15-minute JWTs, checked without the database) are refused too, per process (`services/accessRevocation.ts`): after a restart, ones issued in the 15 minutes before it work until they expire.
+
+Not fixed yet:
 
 Medium:
 5. OIDC accepts a missing `email_verified` (only `false` is refused).

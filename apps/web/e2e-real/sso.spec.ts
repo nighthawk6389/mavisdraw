@@ -62,6 +62,51 @@ test.describe('Single sign-on', () => {
     await again.close();
   });
 
+  test('an account someone registered with the address but never confirmed is taken back', async ({
+    browser,
+  }) => {
+    const email = `cy-${uniq()}@acme.example`;
+    const ctxM = await browser.newContext();
+    const squatter = await registerUser(ctxM, 'Mallory', 'm', { email, verify: false });
+    const auth = { Authorization: `Bearer ${squatter.accessToken}` };
+    const made = await ctxM.request.post(`${API_URL}/api/tokens`, {
+      headers: auth,
+      data: { name: 'stash' },
+    });
+    const { token: agentToken } = (await made.json()) as { token: string };
+
+    // The address's real owner signs in with the company's provider
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+    await nextSignIn(page.request, { sub: `okta-${uniq()}`, email, name: 'Cy Real' });
+    await page.goto('/');
+    await page.getByTestId('sso-button').click();
+    await expect(page.getByText('Recent projects')).toBeVisible();
+    await expect(page.getByTestId('confirm-email-banner')).toHaveCount(0);
+
+    // Whoever registered it has no way back in: password, session, the access
+    // token in hand, or the agent token
+    const login = await ctxM.request.post(`${API_URL}/api/auth/login`, {
+      data: { email, password: squatter.password },
+    });
+    expect(login.status()).not.toBe(200);
+    const refreshed = await ctxM.request.post(`${API_URL}/api/auth/refresh`, { data: {} });
+    expect(refreshed.status()).not.toBe(200);
+    expect((await ctxM.request.get(`${API_URL}/api/projects`, { headers: auth })).status()).toBe(
+      401,
+    );
+    const agent = await ctxM.request.post(`${API_URL}/api/mcp`, {
+      headers: {
+        Authorization: `Bearer ${agentToken}`,
+        Accept: 'application/json, text/event-stream',
+      },
+      data: { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} },
+    });
+    expect(agent.status()).toBe(401);
+    await ctxM.close();
+    await ctx.close();
+  });
+
   test('comes back to the invite it started from', async ({ browser }) => {
     const ctxO = await browser.newContext();
     const owner = await registerUser(ctxO, 'Olivia Owner');
