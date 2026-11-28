@@ -1,8 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock HocuspocusProvider before imports
+const sockets = vi.hoisted(() => [] as Array<{ url: string; destroy: () => void }>);
+
 vi.mock('@hocuspocus/provider', () => {
   return {
+    HocuspocusProviderWebsocket: vi.fn().mockImplementation((opts: { url: string }) => {
+      const socket = { url: opts.url, destroy: vi.fn() };
+      sockets.push(socket);
+      return socket;
+    }),
     HocuspocusProvider: vi.fn().mockImplementation((opts) => {
       const instance = {
         url: opts.url,
@@ -151,6 +158,26 @@ describe('collaborationStore', () => {
     expect(firstProvider.destroy).toHaveBeenCalled();
     const state = useCollaborationStore.getState();
     expect(state.currentDiagramId).toBe('diagram-2');
+  });
+
+  it('closes the socket with the connection, even straight after opening it', () => {
+    sockets.length = 0;
+    const store = useCollaborationStore.getState();
+    // The editor mounting twice in a row: connect, disconnect, connect
+    store.connect('diagram-1', 'user-1', 'Alice');
+    store.disconnect();
+    store.connect('diagram-1', 'user-1', 'Alice');
+    expect(sockets).toHaveLength(2);
+    expect(sockets[0].destroy).toHaveBeenCalled();
+    expect(sockets[1].destroy).not.toHaveBeenCalled();
+    // Each provider uses its own socket
+    const provider = useCollaborationStore.getState().provider as unknown as {
+      _opts: { websocketProvider: unknown };
+    };
+    expect(provider._opts.websocketProvider).toBe(sockets[1]);
+    expect(sockets[1].url).toMatch(/^wss?:\/\/.+\/collaboration$/);
+    store.disconnect();
+    expect(sockets[1].destroy).toHaveBeenCalled();
   });
 
   it('should update cursor position', () => {

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import * as Y from 'yjs';
-import { HocuspocusProvider } from '@hocuspocus/provider';
+import { HocuspocusProvider, HocuspocusProviderWebsocket } from '@hocuspocus/provider';
 import { useElementsStore, applyRemoteChanges } from './elementsStore';
 import { diffElementMaps } from './history';
 import { docVersion, readElement, writeElement } from '../collab/ydocElements';
@@ -82,6 +82,14 @@ export function collaborationUrl(
 }
 
 const WS_URL = collaborationUrl();
+
+/**
+ * The live connection's socket. Made here rather than by the provider: a
+ * provider destroyed while its own socket is still opening (the editor
+ * mounting twice in a row, a quick room switch) leaves that socket open,
+ * never authenticated, until the server gives up on it.
+ */
+let liveSocket: HocuspocusProviderWebsocket | null = null;
 
 export interface RemoteCursor {
   x: number;
@@ -220,8 +228,9 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
     let initialSyncDone = false;
     let authFailures = 0;
 
+    liveSocket = new HocuspocusProviderWebsocket({ url: WS_URL });
     const provider = new HocuspocusProvider({
-      url: WS_URL,
+      websocketProvider: liveSocket,
       name: `diagram:${diagramId}`,
       document: doc,
       // Asked for on every (re)connect, so a long session never presents an
@@ -471,6 +480,8 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => ({
     if (state.provider) {
       state.provider.destroy();
     }
+    liveSocket?.destroy();
+    liveSocket = null;
     set({
       connectionStatus: 'disconnected',
       provider: null,
