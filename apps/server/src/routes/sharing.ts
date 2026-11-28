@@ -16,6 +16,8 @@ import { applyAccessChange } from '../ws/hocuspocus.js';
 
 const createShareSchema = z.object({
   role: z.enum(['viewer', 'editor']),
+  /** Days until it stops letting people join; null or left out: never. */
+  expiresInDays: z.number().int().min(1).max(365).nullable().optional(),
 });
 
 const updatePermissionSchema = z.object({
@@ -38,7 +40,11 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(403).send({ error: 'Only owner or admin can create share links' });
     }
 
-    const shareLink = await createShareLink(id, parsed.data.role);
+    const shareLink = await createShareLink(
+      id,
+      parsed.data.role,
+      parsed.data.expiresInDays ?? null,
+    );
     return reply.code(201).send({ share: shareLink });
   });
 
@@ -50,6 +56,9 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
     const result = await resolveShareToken(token, userId);
     if (!result) {
       return reply.code(404).send({ error: 'Invalid share link' });
+    }
+    if (result === 'expired') {
+      return reply.code(410).send({ error: 'It has expired. Ask whoever sent it for a new one.' });
     }
     // What they can do now: a link never lowers what ownership or a workspace
     // gives them. An upgrade (viewer → editor) applies to tabs already open.

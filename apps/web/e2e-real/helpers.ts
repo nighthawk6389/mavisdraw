@@ -1,3 +1,6 @@
+import { execFileSync } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { APIRequestContext, Browser, BrowserContext, Page } from '@playwright/test';
 import { expect } from '@playwright/test';
 
@@ -316,4 +319,31 @@ export async function connectGitHub(request: APIRequestContext, user: TestUser):
   });
   expect(done.status(), await done.text()).toBe(200);
   return ((await done.json()) as { connection: { id: string } }).connection.id;
+}
+
+/**
+ * Run one SQL statement against the suite's database, for what a test can't
+ * wait for (moving an expiry into the past). Uses the server's own Postgres
+ * client; the statement and its parameters travel as environment variables.
+ */
+export function runSql(statement: string, params: unknown[] = []): void {
+  const serverDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../server');
+  const script = [
+    "import postgres from 'postgres';",
+    'const sql = postgres(process.env.DATABASE_URL, { onnotice: () => {} });',
+    'await sql.unsafe(process.env.E2E_SQL, JSON.parse(process.env.E2E_SQL_PARAMS));',
+    'await sql.end();',
+  ].join(' ');
+  execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+    cwd: serverDir,
+    stdio: 'pipe',
+    env: {
+      ...process.env,
+      DATABASE_URL:
+        process.env.E2E_DATABASE_URL ??
+        'postgresql://mavisdraw:mavisdraw_dev@localhost:5432/mavisdraw',
+      E2E_SQL: statement,
+      E2E_SQL_PARAMS: JSON.stringify(params),
+    },
+  });
 }

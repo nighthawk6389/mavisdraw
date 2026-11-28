@@ -10,6 +10,7 @@ import {
   type PendingInvite,
   type PermissionResponse,
 } from '../../services/api';
+import { LINK_LIFETIMES, describeExpiry, isExpired } from './shareLinkExpiry';
 import { usePermissionStore } from '../../stores/permissionStore';
 import { toast } from '../../stores/toastStore';
 import EmbedSection from './EmbedSection';
@@ -27,6 +28,8 @@ export default function ShareDialog({ projectId, isOpen, onClose }: ShareDialogP
   const [permissions, setPermissions] = useState<PermissionResponse[]>([]);
   const [shareLink, setShareLink] = useState<string | null>(null);
   const [shareRole, setShareRole] = useState<'viewer' | 'editor'>('viewer');
+  // Links stop letting people join after a month unless chosen otherwise
+  const [shareLifetime, setShareLifetime] = useState<number | null>(30);
   const [isLoading, setIsLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +67,7 @@ export default function ShareDialog({ projectId, isOpen, onClose }: ShareDialogP
     setIsLoading(true);
     setError(null);
     try {
-      const response = await apiCreateShareLink(projectId, shareRole);
+      const response = await apiCreateShareLink(projectId, shareRole, shareLifetime);
       const link = `${window.location.origin}/share/${response.share.shareToken}`;
       setShareLink(link);
       loadPermissions();
@@ -265,6 +268,20 @@ export default function ShareDialog({ projectId, isOpen, onClose }: ShareDialogP
                 <option value="viewer">Can view</option>
                 <option value="editor">Can edit</option>
               </select>
+              <select
+                value={shareLifetime ?? 'never'}
+                onChange={(e) =>
+                  setShareLifetime(e.target.value === 'never' ? null : Number(e.target.value))
+                }
+                aria-label="Link expires"
+                className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {LINK_LIFETIMES.map((l) => (
+                  <option key={l.label} value={l.days ?? 'never'}>
+                    {l.label}
+                  </option>
+                ))}
+              </select>
               <button
                 onClick={handleCreateLink}
                 disabled={isLoading}
@@ -342,19 +359,29 @@ export default function ShareDialog({ projectId, isOpen, onClose }: ShareDialogP
           {/* Active share links */}
           {permissions.filter((p) => p.shareToken && !p.userId).length > 0 && (
             <div>
-              <h4 className="text-sm font-medium text-gray-700 mb-2">Active share links</h4>
+              <h4 className="text-sm font-medium text-gray-700 mb-1">Share links</h4>
+              <p className="mb-2 text-xs text-gray-500">
+                Revoking or expiring a link stops new people joining with it. People who already
+                joined keep access: remove them above.
+              </p>
               <ul className="space-y-2">
                 {permissions
                   .filter((p) => p.shareToken && !p.userId)
                   .map((permission) => (
                     <li
                       key={permission.id}
+                      data-testid="share-link-item"
                       className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-md"
                     >
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-gray-500">Link ({permission.role})</span>
                         <span className="text-xs text-gray-400 font-mono">
                           ...{permission.shareToken?.slice(-8)}
+                        </span>
+                        <span
+                          className={`text-xs ${isExpired(permission.expiresAt) ? 'text-red-600' : 'text-gray-500'}`}
+                        >
+                          {describeExpiry(permission.expiresAt)}
                         </span>
                       </div>
                       <button

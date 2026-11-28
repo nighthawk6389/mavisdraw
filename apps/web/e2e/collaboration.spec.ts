@@ -15,7 +15,9 @@ test.describe('Collaboration UI', () => {
     await expect(page.locator('[title="Connected"]')).toHaveCount(0);
   });
 
-  test('the Share dialog creates a link to copy and lists it until revoked', async ({ page }) => {
+  test('the Share dialog creates a link to copy, says when it expires, and lists it until revoked', async ({
+    page,
+  }) => {
     const permissions: Array<Record<string, unknown>> = [];
     let created: unknown = null;
     await page.route(`**/api/projects/${TEST_PROJECT.id}/permissions`, (route) =>
@@ -26,7 +28,8 @@ test.describe('Collaboration UI', () => {
     );
     await page.route(`**/api/projects/${TEST_PROJECT.id}/share`, (route) => {
       created = route.request().postDataJSON();
-      const share = { id: 'perm-1', shareToken: 'tok-0123456789abcdef', role: 'editor' };
+      const expiresAt = new Date(Date.now() + 7 * 24 * 3600_000 - 60_000).toISOString();
+      const share = { id: 'perm-1', shareToken: 'tok-0123456789abcdef', role: 'editor', expiresAt };
       permissions.push({ ...share, userId: null, email: null, name: null, createdAt: '' });
       return route.fulfill({
         status: 201,
@@ -46,14 +49,19 @@ test.describe('Collaboration UI', () => {
         has: page.locator('option', { hasText: 'Can edit' }),
       })
       .selectOption('editor');
+    // Links last a month unless chosen otherwise
+    const lifetime = page.getByLabel('Link expires');
+    await expect(lifetime).toHaveValue('30');
+    await lifetime.selectOption({ label: 'Expires in 7 days' });
     await page.getByRole('button', { name: 'Create Link' }).click();
 
     const origin = new URL(page.url()).origin;
     await expect(page.locator('input[readonly]')).toHaveValue(
       `${origin}/share/tok-0123456789abcdef`,
     );
-    expect(created).toEqual({ role: 'editor' });
+    expect(created).toEqual({ role: 'editor', expiresInDays: 7 });
     await expect(page.getByText('Link (editor)')).toBeVisible();
+    await expect(page.getByTestId('share-link-item')).toContainText('Expires in 7 days');
     await expect(page.getByText('...89abcdef')).toBeVisible();
 
     await page.getByRole('button', { name: 'Revoke' }).click();

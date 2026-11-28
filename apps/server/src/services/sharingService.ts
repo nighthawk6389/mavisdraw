@@ -11,15 +11,26 @@ export interface ShareLinkResult {
   shareToken: string;
   role: PermissionRole;
   projectId: string;
+  /** When it stops letting people join (null: never). */
+  expiresAt: string | null;
   createdAt: string;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** A link still lets people join (one without an expiry always does). */
+export function shareLinkOpen(expiresAt: Date | null, now = Date.now()): boolean {
+  return !expiresAt || expiresAt.getTime() > now;
 }
 
 export async function createShareLink(
   projectId: string,
   role: PermissionRole,
+  expiresInDays: number | null = null,
 ): Promise<ShareLinkResult> {
   const shareToken = nanoid(32);
   const now = new Date();
+  const expiresAt = expiresInDays ? new Date(now.getTime() + expiresInDays * DAY_MS) : null;
 
   const [permission] = await db
     .insert(projectPermissions)
@@ -28,6 +39,7 @@ export async function createShareLink(
       projectId,
       role,
       shareToken,
+      expiresAt,
       createdAt: now,
       updatedAt: now,
     })
@@ -38,6 +50,7 @@ export async function createShareLink(
     shareToken: permission.shareToken!,
     role: permission.role,
     projectId: permission.projectId,
+    expiresAt: permission.expiresAt?.toISOString() ?? null,
     createdAt: permission.createdAt.toISOString(),
   };
 }
@@ -45,12 +58,14 @@ export async function createShareLink(
 export async function resolveShareToken(
   shareToken: string,
   userId: string,
-): Promise<{ projectId: string; role: PermissionRole } | null> {
+): Promise<{ projectId: string; role: PermissionRole } | 'expired' | null> {
   const permission = await db.query.projectPermissions.findFirst({
     where: eq(projectPermissions.shareToken, shareToken),
   });
 
   if (!permission) return null;
+  // Past its expiry a link joins nobody new; those who joined keep access
+  if (!shareLinkOpen(permission.expiresAt)) return 'expired';
 
   // The owner following their own link gets nothing new (a share row would
   // list them as a viewer, and outlive a transfer of ownership)
@@ -106,6 +121,7 @@ export async function getProjectPermissions(projectId: string) {
     name: p.user?.name ?? null,
     role: p.role,
     shareToken: p.shareToken,
+    expiresAt: p.expiresAt?.toISOString() ?? null,
     createdAt: p.createdAt.toISOString(),
   }));
 }

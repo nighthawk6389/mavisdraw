@@ -420,16 +420,19 @@ export interface ShareResponse {
   shareToken: string;
   role: string;
   projectId: string;
+  /** When it stops letting people join (null: never). */
+  expiresAt: string | null;
   createdAt: string;
 }
 
 export async function apiCreateShareLink(
   projectId: string,
   role: 'viewer' | 'editor',
+  expiresInDays: number | null = null,
 ): Promise<{ share: ShareResponse }> {
   return apiFetch(`/api/projects/${projectId}/share`, {
     method: 'POST',
-    body: JSON.stringify({ role }),
+    body: JSON.stringify({ role, expiresInDays }),
   });
 }
 
@@ -446,6 +449,8 @@ export interface PermissionResponse {
   name: string | null;
   role: string;
   shareToken: string | null;
+  /** A share link's expiry (null: never, or not a link). */
+  expiresAt: string | null;
   createdAt: string;
 }
 

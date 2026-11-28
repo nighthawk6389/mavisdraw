@@ -215,6 +215,8 @@ export const projectPermissions = pgTable(
     email: varchar('email', { length: 255 }),
     role: varchar('role', { length: 20 }).notNull().default('viewer').$type<PermissionRole>(),
     shareToken: text('share_token'),
+    /** A share link stops letting people join after this (null: it doesn't expire). */
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

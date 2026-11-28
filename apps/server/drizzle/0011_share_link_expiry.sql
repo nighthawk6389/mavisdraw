@@ -1,0 +1,1 @@
+ALTER TABLE "project_permissions" ADD COLUMN "expires_at" timestamp with time zone;
