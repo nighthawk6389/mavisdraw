@@ -187,6 +187,8 @@ const SHAPE_TOOLS = new Set<Tool>([
 /** The eraser's reach around the pointer, and how finely its path is followed (screen px). */
 const ERASER_RADIUS_PX = 6;
 const ERASER_STEP_PX = 4;
+const IS_APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+
 /** Shapes that take a label inside them. */
 const LABELLED_TYPES = new Set(['rectangle', 'ellipse', 'diamond', 'triangle', 'cylinder', 'queue']);
 /** How far outside a shape's outline a connector end still attaches (screen px). */
@@ -452,6 +454,25 @@ export class InteractionManager {
     if (this.mode !== 'erasing') return [];
     const now = performance.now();
     return this.eraserTrail.filter((p) => now - p.t < ERASER_TRAIL_MS);
+  }
+
+  /**
+   * Leave the groups entered with a double-click or Ctrl/Cmd+click. Returns
+   * the whole groups of what was selected (to select instead), or null if
+   * no group was entered.
+   */
+  leaveGroups(): string[] | null {
+    if (this.enteredGroupIds.size === 0) return null;
+    this.enteredGroupIds.clear();
+    const elements = this.callbacks.getElements();
+    const byId = new Map(elements.map((e) => [e.id, e] as const));
+    const whole = new Set<string>();
+    for (const id of this.callbacks.getSelectedIds()) {
+      const el = byId.get(id);
+      if (!el) continue;
+      for (const member of getGroupElementIds(el, elements, this.enteredGroupIds)) whole.add(member);
+    }
+    return Array.from(whole);
   }
 
   /** A pointer gesture is under way (something Escape could cancel). */
@@ -747,7 +768,8 @@ export class InteractionManager {
 
       // Check element hit (with group awareness)
       // Ctrl/Cmd+click reaches into groups (Figma): the shape itself, not its group
-      const deep = !!(event.ctrlKey || event.metaKey);
+      // (Cmd on a Mac, where Ctrl+click is the context menu)
+      const deep = IS_APPLE ? !!event.metaKey : !!event.ctrlKey;
       const hitElement = deep
         ? hitTestElements(canvasPoint, elements)
         : hitTestElementsWithGroups(canvasPoint, elements, this.enteredGroupIds);

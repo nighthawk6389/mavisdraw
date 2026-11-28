@@ -111,7 +111,7 @@ test.describe('Sync integrity', () => {
     // Bob comes back up: the box must not reappear — not for him, not for Alice, not on the server
     await b.waitForTimeout(2500); // let Bob's autosave run while he was away
     await b.keyboard.press('Escape');
-    await b.keyboard.press('Backspace');
+    await b.keyboard.press('Alt+ArrowUp');
     await expect(b).toHaveURL(new RegExp(`/p/${project.id}$`));
     await isConnected(b);
     await b.waitForTimeout(1000);

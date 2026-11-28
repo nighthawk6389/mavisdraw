@@ -87,6 +87,8 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
   // Pointer tracking: last canvas position (paste anchor) and active touches (pinch)
   const lastPointerCanvasRef = useRef<Point | null>(null);
+  /** The pointer over the canvas, in screen pixels (null once it leaves). */
+  const lastPointerScreenRef = useRef<Point | null>(null);
   const activePointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinchRef = useRef<{ distance: number; midX: number; midY: number } | null>(null);
 
@@ -622,7 +624,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
   // ─── Leaving a diagram (any navigation path) ────────────────
   // Drill-down animates itself before navigating; for every other route
-  // (Backspace, breadcrumb, tree, ⌘K) remember where we were, refresh the
+  // (Ctrl/Cmd+↑, breadcrumb, tree, ⌘K) remember where we were, refresh the
   // portal preview, and when going up a level, zoom out of the portal.
 
   const previousDiagramRef = useRef<string | null>(null);
@@ -855,8 +857,11 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         const selected = computeElementList(false).filter((el) => ids.has(el.id));
         fitBounds(selected.length > 0 ? selected : computeElementList(false));
       },
+      // Where the pointer is now (the view may have moved since it last
+      // did), or the middle of the view when it's not over the canvas
       getPasteAnchor: () => {
-        if (lastPointerCanvasRef.current) return lastPointerCanvasRef.current;
+        const pointer = lastPointerScreenRef.current;
+        if (pointer) return renderer.getViewport().screenToCanvas(pointer.x, pointer.y);
         const { width: w, height: h } = containerSize();
         return renderer.getViewport().screenToCanvas(w / 2, h / 2);
       },
@@ -929,8 +934,13 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     for (const type of inputEvents) container.addEventListener(type, wake, { passive: true });
     window.addEventListener('keydown', wake);
     window.addEventListener('keyup', wake);
+    const pointerLeft = () => {
+      lastPointerScreenRef.current = null;
+    };
+    container.addEventListener('pointerleave', pointerLeft);
 
     return () => {
+      container.removeEventListener('pointerleave', pointerLeft);
       for (const type of inputEvents) container.removeEventListener(type, wake);
       window.removeEventListener('keydown', wake);
       window.removeEventListener('keyup', wake);
@@ -1294,7 +1304,8 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
       useElementsStore.getState().beginHistoryBatch();
       mgr.onPointerDown(pos.x, pos.y, {
-        button: e.button,
+        // On a Mac, Ctrl+click is a right-click (the context menu)
+        button: IS_APPLE && e.ctrlKey && e.button === 0 ? 2 : e.button,
         shiftKey: e.shiftKey,
         altKey: e.altKey,
         ctrlKey: e.ctrlKey,
@@ -1345,6 +1356,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
       const canvasPos = renderer.getViewport().screenToCanvas(pos.x, pos.y);
       lastPointerCanvasRef.current = canvasPos;
+      lastPointerScreenRef.current = pos;
       handleCollabMouseMove(canvasPos.x, canvasPos.y);
     },
     [getCanvasOffset, handleCollabMouseMove, applyCursor],
@@ -1421,7 +1433,12 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
   useEffect(() => {
     const canvas = interactiveCanvasRef.current;
     if (!canvas) return;
-    const interpreter = new WheelInterpreter('auto');
+    // 'auto': a mouse wheel zooms, a trackpad scrolls; or both scroll
+    const behaviour = () => (useUIStore.getState().mouseWheel === 'scroll' ? 'pan' : 'auto');
+    const interpreter = new WheelInterpreter(behaviour());
+    const unsubscribeWheel = useUIStore.subscribe((ui, prev) => {
+      if (ui.mouseWheel !== prev.mouseWheel) interpreter.setBehavior(behaviour());
+    });
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const mgr = interactionRef.current;
@@ -1441,7 +1458,10 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
       setContextMenu(null);
     };
     canvas.addEventListener('wheel', onWheel, { passive: false });
-    return () => canvas.removeEventListener('wheel', onWheel);
+    return () => {
+      unsubscribeWheel();
+      canvas.removeEventListener('wheel', onWheel);
+    };
   }, []);
 
   // ─── Image Drop ────────────────────────────────────────────
@@ -1649,7 +1669,13 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         }}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerUp}
+        onPointerCancel={(e) => {
+          // The system took the pointer away (a touch turned into a scroll,
+          // a palm): put back what the gesture changed, don't commit it
+          const mgr = interactionRef.current;
+          if (mgr?.isGestureActive()) mgr.cancelGesture();
+          handlePointerUp(e);
+        }}
         onContextMenu={handleContextMenu}
       />
       {comparing && (
@@ -1687,6 +1713,8 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 }
 
 // ─── Utility ──────────────────────────────────────────────────
+
+const IS_APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
 /** The same element, faded: about to be erased. One copy per version of it. */
 const fadedCopies = new WeakMap<MavisElement, MavisElement>();

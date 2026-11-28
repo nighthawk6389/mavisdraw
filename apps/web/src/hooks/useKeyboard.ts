@@ -59,6 +59,63 @@ export function nudgeSelection(dx: number, dy: number): void {
 }
 
 /**
+ * Up to the parent diagram: Ctrl/Cmd+↑ (Finder's "enclosing folder"), or
+ * Alt+↑ with nothing selected (Explorer's; with a selection, Alt+arrows
+ * duplicate it). Inside a nested diagram only.
+ */
+function wantsParentDiagram(event: KeyboardEvent, key: string, mod: boolean, selected: number): boolean {
+  if (key !== 'arrowup' || event.shiftKey) return false;
+  if (!(mod || (event.altKey && selected === 0))) return false;
+  return useDiagramStore.getState().diagramPath.length > 1;
+}
+
+/** Keys that menus, toolbars, lists and focused buttons use themselves. */
+const CONTROL_KEYS = new Set([
+  'arrowup',
+  'arrowdown',
+  'arrowleft',
+  'arrowright',
+  'home',
+  'end',
+  'pageup',
+  'pagedown',
+  'enter',
+  ' ',
+]);
+
+/**
+ * The key belongs to whatever has focus, not to the canvas: typing in a
+ * field, a key another component already handled, anything inside a modal
+ * dialog, a select's own keys, a menu's or toolbar's navigation keys, and
+ * Enter/Space on a focused button. Letters still reach the shortcuts after
+ * clicking a toolbar button, as people expect.
+ */
+export function shortcutsStandAside(event: KeyboardEvent): boolean {
+  if (event.defaultPrevented) return true;
+  const target = event.target as HTMLElement | null;
+  if (!target || !target.tagName) return false;
+  if (
+    target.tagName === 'INPUT' ||
+    target.tagName === 'TEXTAREA' ||
+    target.tagName === 'SELECT' ||
+    target.isContentEditable
+  ) {
+    return true;
+  }
+  if (target.closest('[aria-modal="true"]')) return true;
+  const key = event.key.toLowerCase();
+  if (!CONTROL_KEYS.has(key)) return false;
+  if (
+    target.closest(
+      '[role="menu"],[role="menubar"],[role="listbox"],[role="toolbar"],[role="tablist"],[role="radiogroup"],[role="tree"],[role="grid"]',
+    )
+  ) {
+    return true;
+  }
+  return (key === 'enter' || key === ' ') && !!target.closest('button,a[href],[role="button"],summary');
+}
+
+/**
  * Global editor shortcuts. Reads store state at keypress time so the
  * listener is bound once instead of on every selection change.
  * Copy/cut/paste are handled by useClipboard via real clipboard events.
@@ -68,10 +125,7 @@ export function useKeyboard(
 ) {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
-        return;
-      }
+      if (shortcutsStandAside(event)) return;
 
       const key = event.key.toLowerCase();
       const code = event.code;
@@ -89,7 +143,7 @@ export function useKeyboard(
           }
           return;
         }
-        if (key === 'backspace' && selectedIds.size === 0 && useDiagramStore.getState().diagramPath.length > 1) {
+        if (wantsParentDiagram(event, key, mod, selectedIds.size)) {
           event.preventDefault();
           useDiagramStore.getState().navigateUp();
           return;
@@ -97,8 +151,8 @@ export function useKeyboard(
         const allowed =
           (mod && ['a', 'k', '=', '+', '-', '0'].includes(key)) ||
           (event.shiftKey && !mod && (code === 'Digit1' || code === 'Digit2')) ||
-          (event.shiftKey && event.altKey && (code === 'KeyC' || code === 'KeyD')) ||
-          (mod && event.shiftKey && (key === 'e' || key === 't')) ||
+          (event.shiftKey && event.altKey && (code === 'KeyC' || code === 'KeyD' || code === 'KeyT')) ||
+          (mod && event.shiftKey && key === 'e') ||
           key === 'escape' ||
           (!mod && !event.altKey && ['v', 'h', 'c', 'm', ' '].includes(key));
         if (!allowed) return;
@@ -133,6 +187,14 @@ export function useKeyboard(
           comments.openThread(null);
           return;
         }
+        // Inside a group (entered with a double-click or Ctrl/Cmd+click):
+        // leave it, selecting the whole group (Excalidraw, Figma)
+        const groups = interactionManagerRef.current as { leaveGroups?: () => string[] | null } | null;
+        const whole = groups?.leaveGroups?.();
+        if (whole) {
+          useSelectionStore.getState().selectMultiple(whole);
+          return;
+        }
         useSelectionStore.getState().clearSelection();
         useToolStore.getState().setTool('select');
         return;
@@ -144,13 +206,18 @@ export function useKeyboard(
           handleKeyDown?: (e: KeyboardEvent) => boolean;
         } | null;
         if (mgr?.handleKeyDown?.(event)) return;
+        // (Backspace never leaves the diagram: a second press after a delete
+        // used to take people up a level)
         if (selectedIds.size > 0) {
           event.preventDefault();
           actions.deleteSelection();
-        } else if (key === 'backspace' && useDiagramStore.getState().diagramPath.length > 1) {
-          event.preventDefault();
-          useDiagramStore.getState().navigateUp();
         }
+        return;
+      }
+
+      if (wantsParentDiagram(event, key, mod, selectedIds.size)) {
+        event.preventDefault();
+        useDiagramStore.getState().navigateUp();
         return;
       }
 
@@ -286,7 +353,8 @@ export function useKeyboard(
       }
 
       // ── Panels & files ─────────────────────────────────────
-      if (mod && event.shiftKey && key === 't') {
+      // Shift+Alt+T: Ctrl/Cmd+Shift+T is the browsers' "reopen tab", never seen here
+      if (!mod && event.shiftKey && event.altKey && code === 'KeyT') {
         event.preventDefault();
         useUIStore.getState().toggleDiagramTree();
         return;

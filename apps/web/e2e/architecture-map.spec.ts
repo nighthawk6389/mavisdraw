@@ -201,7 +201,7 @@ test.describe('Living architecture map', () => {
       .toBe(true);
   });
 
-  test('Backspace zooms back out to the parent diagram', async ({ page }) => {
+  test('Ctrl/Cmd+↑ zooms back out to the parent diagram (Backspace doesn’t)', async ({ page }) => {
     await pasteText(page, MERMAID);
     await expect.poll(async () => (await h.els(page)).length).toBeGreaterThan(5);
     const rootId = await h.diagram(page);
@@ -221,7 +221,11 @@ test.describe('Living architecture map', () => {
     await expect.poll(() => h.diagram(page)).toBe(portal.targetDiagramId);
 
     await page.keyboard.press('Escape');
+    // Backspace with nothing selected stays put (it used to leave)
     await page.keyboard.press('Backspace');
+    await page.waitForTimeout(200);
+    expect(await h.diagram(page)).toBe(portal.targetDiagramId);
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowUp' : 'Control+ArrowUp');
     await expect.poll(() => h.diagram(page)).toBe(rootId);
   });
 });

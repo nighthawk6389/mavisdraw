@@ -77,7 +77,7 @@ test('a repository becomes a nested map, and the map is kept in line with the co
     .poll(async () => labels(await getActiveElements(page)))
     .toEqual(['db (1 file)', 'routes (2 files)', 'services (1 file)']);
   await page.keyboard.press('Escape');
-  await page.keyboard.press('Backspace');
+  await page.keyboard.press('Alt+ArrowUp');
 
   // The link to the code is saved with the project
   const saved = await context.request.get(`${API_URL}/api/projects/${project.id}`, {

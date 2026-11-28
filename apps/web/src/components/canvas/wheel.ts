@@ -66,9 +66,15 @@ export class WheelInterpreter {
     const dy = toPixels(e.deltaY, e.deltaMode);
     if (dx === 0 && dy === 0) return { kind: 'none' };
 
-    // Pinch-to-zoom (trackpads send ctrl+wheel) and Ctrl/⌘+wheel
+    // Pinch-to-zoom (trackpads send ctrl+wheel) and Ctrl/⌘+wheel. A mouse
+    // notch is one 10% step, like the plain wheel (its delta of ~100 used to
+    // double the zoom); a pinch's small deltas zoom smoothly
     if (e.ctrlKey || e.metaKey) {
-      const factor = Math.max(0.5, Math.min(2, 1 - dy * 0.01));
+      if (dy === 0) return { kind: 'none' };
+      // A notch is a big jump (lines, or ~100px); pinch steps are a few px
+      const notch = e.deltaMode !== 0 || Math.abs(dy) >= 50;
+      if (notch) return { kind: 'zoom', factor: dy > 0 ? 0.9 : 1.1 };
+      const factor = Math.max(0.5, Math.min(2, Math.exp(-dy * 0.01)));
       return { kind: 'zoom', factor };
     }
 

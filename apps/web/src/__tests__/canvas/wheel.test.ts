@@ -79,8 +79,15 @@ describe('WheelInterpreter', () => {
     const small = w.interpret(input({ deltaY: 5, ctrlKey: true }));
     expect(small.kind).toBe('zoom');
     if (small.kind === 'zoom') expect(small.factor).toBeCloseTo(0.95);
-    const huge = w.interpret(input({ deltaY: 500, ctrlKey: true }));
-    if (huge.kind === 'zoom') expect(huge.factor).toBe(0.5);
+    // Pinch steps stay smooth however they're reported
+    const step = w.interpret(input({ deltaY: 3, wheelDeltaY: -120, ctrlKey: true }));
+    if (step.kind === 'zoom') expect(step.factor).toBeCloseTo(Math.exp(-0.03));
+  });
+
+  it('Ctrl/⌘ + a mouse wheel notch is one 10% step, not a doubling', () => {
+    const w = new WheelInterpreter();
+    expect(w.interpret(input({ deltaY: 100, ctrlKey: true }))).toEqual({ kind: 'zoom', factor: 0.9 });
+    expect(w.interpret(input({ deltaY: -100, metaKey: true }))).toEqual({ kind: 'zoom', factor: 1.1 });
   });
 
   it('shift + mouse wheel pans horizontally', () => {

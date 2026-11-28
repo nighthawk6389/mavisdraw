@@ -204,7 +204,7 @@ See `.github/workflows/ci.yml` for the full configuration.
 | `Mod+A` / `Escape` | Select all / deselect |
 | `Mod+K` | Search: jump to any shape or diagram at any depth, or run a command |
 | `Enter` | Drill into the selected portal, or edit the selected shape's / connector's label |
-| `Backspace` (nothing selected) | Zoom back out to the parent diagram |
+| `Ctrl/Cmd+↑`, or `Alt+↑` with nothing selected | Zoom back out to the parent diagram |
 | Double-click a connector | Add or edit its label ("REST", "publishes"...) |
 | `Shift+Alt+T` | Tidy up: auto-layout the diagram (or the selection) along its connections |
 

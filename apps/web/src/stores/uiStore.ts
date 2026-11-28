@@ -10,6 +10,11 @@ interface UIState {
   showDiagramTree: boolean;
   /** The overview in the corner (M). */
   showMinimap: boolean;
+  /**
+   * What a mouse wheel does: zoom (Miro, the default) or scroll the canvas
+   * (Figma, Excalidraw). Trackpads always scroll, and pinch zooms.
+   */
+  mouseWheel: 'zoom' | 'scroll';
 
   // Dialogs
   showExportDialog: boolean;
@@ -43,6 +48,7 @@ interface UIState {
   setShowLibrary: (open: boolean) => void;
   toggleDiagramTree: () => void;
   toggleMinimap: () => void;
+  setMouseWheel: (mode: 'zoom' | 'scroll') => void;
   toggleExportDialog: () => void;
   toggleVersionHistory: () => void;
   toggleGitHubDialog: () => void;
@@ -60,6 +66,7 @@ interface UIState {
 
 /** Per-browser preferences (try/catch: storage can be blocked). */
 const MINIMAP_KEY = 'mavisdraw:minimap';
+const WHEEL_SCROLLS_KEY = 'mavisdraw:wheel-scrolls';
 function readFlag(key: string): boolean {
   try {
     return localStorage.getItem(key) === '1';
@@ -82,6 +89,7 @@ export const useUIStore = create<UIState>((set) => ({
   showLibrary: false,
   showDiagramTree: true,
   showMinimap: readFlag(MINIMAP_KEY),
+  mouseWheel: readFlag(WHEEL_SCROLLS_KEY) ? 'scroll' : 'zoom',
   showExportDialog: false,
   showVersionHistory: false,
   showGitHubDialog: false,
@@ -115,6 +123,11 @@ export const useUIStore = create<UIState>((set) => ({
       writeFlag(MINIMAP_KEY, !state.showMinimap);
       return { showMinimap: !state.showMinimap };
     });
+  },
+
+  setMouseWheel: (mode) => {
+    writeFlag(WHEEL_SCROLLS_KEY, mode === 'scroll');
+    set({ mouseWheel: mode });
   },
 
   toggleExportDialog: () => {

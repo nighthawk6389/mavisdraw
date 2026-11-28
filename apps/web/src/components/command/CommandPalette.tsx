@@ -180,6 +180,19 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
         run: () => useUIStore.getState().toggleMinimap(),
       },
       {
+        id: 'cmd-mouse-wheel',
+        kind: 'command',
+        title:
+          useUIStore.getState().mouseWheel === 'scroll'
+            ? 'Mouse wheel: zoom (it scrolls now)'
+            : 'Mouse wheel: scroll the canvas (it zooms now)',
+        hint: 'Ctrl/⌘ + wheel zooms either way',
+        run: () => {
+          const ui = useUIStore.getState();
+          ui.setMouseWheel(ui.mouseWheel === 'scroll' ? 'zoom' : 'scroll');
+        },
+      },
+      {
         id: 'cmd-grid',
         kind: 'command',
         title: 'Toggle grid',

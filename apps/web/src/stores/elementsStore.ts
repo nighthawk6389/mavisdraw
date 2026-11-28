@@ -38,6 +38,7 @@ import {
   isNoopEntry,
   recordChange,
 } from './history';
+import { useSelectionStore } from './selectionStore';
 
 export { getBindingEdgePoint } from './elementBindings';
 export type { HistoryEntry } from './history';
@@ -385,6 +386,17 @@ function applyElementUpdate(
   });
 }
 
+/** Select these again, as far as they still exist (labels count as their shape). */
+function restoreSelection(ids: string[] | undefined): void {
+  if (!ids) return;
+  const elements = useElementsStore.getState().elements;
+  const live = ids.filter((id) => {
+    const el = elements.get(id);
+    return !!el && !el.isDeleted;
+  });
+  useSelectionStore.getState().selectMultiple(live);
+}
+
 export const useElementsStore = create<ElementsState>((set, get) => ({
   elements: new Map<string, MavisElement>(),
   history: [],
@@ -564,6 +576,7 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
     if (top && atEnd && top.before.size === 0) {
       top.key = coalesceKey;
       top.time = now;
+      top.selectionBefore = Array.from(useSelectionStore.getState().selectedIds);
       return;
     }
 
@@ -574,7 +587,9 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
     }
 
     const trimmed = history.slice(0, historyIndex + 1);
-    trimmed.push(createEntry(coalesceKey, now));
+    const entry = createEntry(coalesceKey, now);
+    entry.selectionBefore = Array.from(useSelectionStore.getState().selectedIds);
+    trimmed.push(entry);
     if (trimmed.length > MAX_HISTORY) trimmed.shift();
     set({ history: trimmed, historyIndex: trimmed.length - 1 });
   },
@@ -611,12 +626,15 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
       return;
     }
     const entry = history[idx];
+    entry.selectionAfter = Array.from(useSelectionStore.getState().selectedIds);
     set((prev) => {
       const next = new Map(prev.elements);
       applyValues(next, entry.before, entry.after);
       return { elements: next, historyIndex: idx - 1 };
     });
     notifyHistoryApplied(Array.from(entry.before.keys()));
+    // What was selected before the change is selected again (Excalidraw, Figma)
+    restoreSelection(entry.selectionBefore);
   },
 
   redo: () => {
@@ -631,6 +649,7 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
       return { elements: next, historyIndex: idx };
     });
     notifyHistoryApplied(Array.from(entry.after.keys()));
+    restoreSelection(entry.selectionAfter);
   },
 
   canUndo: () => {

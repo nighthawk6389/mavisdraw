@@ -17,6 +17,10 @@ export interface HistoryEntry {
   key?: string;
   /** Last time this entry received a push (for coalescing windows). */
   time: number;
+  /** What was selected when the change started (undo selects it again). */
+  selectionBefore?: string[];
+  /** What was selected when it was undone (redo selects it again). */
+  selectionAfter?: string[];
 }
 
 export const MAX_HISTORY = 100;

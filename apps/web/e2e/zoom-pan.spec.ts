@@ -77,16 +77,24 @@ test.describe('Scroll-to-Zoom', () => {
     const before = await getViewport(page);
     await page.mouse.move(centerX, centerY);
 
-    // Simulate ctrl+wheel (trackpad pinch gesture)
+    // A trackpad pinch: many small ctrl+wheel deltas zoom smoothly
     await page.keyboard.down('Control');
-    await page.mouse.wheel(0, 50);
+    for (let i = 0; i < 10; i++) await page.mouse.wheel(0, 3);
     await page.keyboard.up('Control');
     await page.waitForTimeout(100);
 
-    const after = await getViewport(page);
-    expect(after.zoom).toBeLessThan(before.zoom);
-    // Fine-grained: factor = 1 - 50*0.01 = 0.5, clamped to 0.5 → zoom = 0.5
-    expect(after.zoom).toBeCloseTo(0.5, 1);
+    const pinched = await getViewport(page);
+    expect(pinched.zoom).toBeLessThan(before.zoom);
+    // e^(−0.03) per event, ten times ≈ 0.74
+    expect(pinched.zoom / before.zoom).toBeCloseTo(Math.exp(-0.3), 1);
+
+    // Ctrl + one mouse wheel notch is one 10% step (it used to halve the zoom)
+    await page.keyboard.down('Control');
+    await page.mouse.wheel(0, 100);
+    await page.keyboard.up('Control');
+    await page.waitForTimeout(100);
+    const notched = await getViewport(page);
+    expect(notched.zoom / pinched.zoom).toBeCloseTo(0.9, 2);
   });
 
   test('zoom does not produce console errors', async ({ page }) => {

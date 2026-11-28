@@ -95,7 +95,7 @@ test.describe('Nested diagrams persist', () => {
     await page.keyboard.press('e');
     await dragOnCanvas(page, { x: 300, y: 250 }, { x: 400, y: 320 });
     await page.keyboard.press('Escape');
-    await page.keyboard.press('Backspace'); // navigate up
+    await page.keyboard.press('Alt+ArrowUp'); // navigate up
     await expect.poll(() => activeDiagramId(page)).not.toBe(childId);
 
     await expect

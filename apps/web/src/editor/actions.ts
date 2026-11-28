@@ -7,6 +7,7 @@ import {
 import { useSelectionStore } from '../stores/selectionStore';
 import { useDiagramStore } from '../stores/diagramStore';
 import { useUIStore } from '../stores/uiStore';
+import { useLayerStore } from '../stores/layerStore';
 import { getCanvasController } from '../components/canvas/canvasController';
 import { unionVisualBounds } from '../components/canvas/HitTesting';
 
@@ -59,9 +60,28 @@ export function cut(): void {
 }
 
 /** Paste the in-app clipboard at the pointer (or viewport center). */
+/** Where the last paste went, and how many came after it in the same spot. */
+let lastPaste: { x: number; y: number; repeats: number } | null = null;
+
+/**
+ * Pasting again without moving goes 20 screen px further each time, so each
+ * copy can be seen (it used to land exactly on the last one).
+ */
+function steppedAnchor(at: Point | undefined): Point | undefined {
+  if (!at) return at;
+  if (lastPaste && Math.abs(lastPaste.x - at.x) < 1 && Math.abs(lastPaste.y - at.y) < 1) {
+    lastPaste.repeats += 1;
+  } else {
+    lastPaste = { x: at.x, y: at.y, repeats: 0 };
+  }
+  const zoom = getCanvasController()?.getViewport?.().zoom ?? 1;
+  const step = (20 / Math.max(0.1, zoom)) * lastPaste.repeats;
+  return { x: at.x + step, y: at.y + step };
+}
+
 export function pasteInternal(at: Point | undefined = pasteAnchor()): MavisElement[] {
   const diagramId = useDiagramStore.getState().activeDiagramId;
-  const pasted = useElementsStore.getState().pasteElements(diagramId, at);
+  const pasted = useElementsStore.getState().pasteElements(diagramId, steppedAnchor(at));
   if (pasted.length > 0) {
     useSelectionStore.getState().selectMultiple(topLevelIds(pasted));
   }
@@ -137,11 +157,20 @@ export function deleteSelection(): void {
   useSelectionStore.getState().clearSelection();
 }
 
+/**
+ * Everything you could click on: not what's on hidden or locked layers, and
+ * not locked shapes (Excalidraw). Ctrl/Cmd+A then Delete deleted shapes on
+ * hidden layers, and one locked shape took the handles off everything.
+ */
 export function selectAll(): void {
   const diagramId = useDiagramStore.getState().activeDiagramId;
+  const layers = useLayerStore.getState().layers;
+  const known = new Set(layers.map((l) => l.id));
+  const offLimits = new Set(layers.filter((l) => !l.isVisible || l.isLocked).map((l) => l.id));
   const ids: string[] = [];
   for (const el of useElementsStore.getState().elements.values()) {
-    if (el.isDeleted || el.diagramId !== diagramId) continue;
+    if (el.isDeleted || el.diagramId !== diagramId || el.isLocked) continue;
+    if (known.has(el.layerId) && offLimits.has(el.layerId)) continue;
     if (el.type === 'text' && el.containerId) continue;
     ids.push(el.id);
   }
