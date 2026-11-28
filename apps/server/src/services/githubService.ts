@@ -238,20 +238,29 @@ async function githubFetch<T>(
     },
   });
 
-  if (!response.ok) {
-    if (response.status === 401) {
-      throw new GitHubError('GitHub token is invalid or expired', 401);
-    }
-    if (response.status === 404) {
-      throw new GitHubError('GitHub resource not found', 404);
-    }
-    if (response.status === 403) {
-      throw new GitHubError('GitHub rate limit exceeded or access denied', 403);
-    }
-    throw new GitHubError(`GitHub API error: ${response.status}`, 502);
-  }
+  if (!response.ok) throw githubErrorFor(response.status, response.headers);
 
   return response.json() as Promise<T>;
+}
+
+/**
+ * What a failed GitHub response means. GitHub also answers 403 when it's
+ * rate-limiting (with no requests left, or a Retry-After): that's 429 here,
+ * so "no access" and "try again later" aren't confused.
+ */
+export function githubErrorFor(
+  status: number,
+  headers: { get(name: string): string | null },
+): GitHubError {
+  if (status === 401) return new GitHubError('GitHub token is invalid or expired', 401);
+  if (status === 404) return new GitHubError('GitHub resource not found', 404);
+  const limited =
+    status === 429 ||
+    (status === 403 &&
+      (headers.get('x-ratelimit-remaining') === '0' || headers.get('retry-after') !== null));
+  if (limited) return new GitHubError('GitHub rate limit exceeded: try again later', 429);
+  if (status === 403) return new GitHubError('GitHub access denied', 403);
+  return new GitHubError(`GitHub API error: ${status}`, 502);
 }
 
 /**

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { reportCheck } from '../services/prChecks.js';
+import { isTransientFailure, reportCheck } from '../services/prChecks.js';
+import { GitHubError, githubErrorFor } from '../services/githubService.js';
 import { GitHubApiError, type CheckRun, type InstallationClient } from '../services/githubApp.js';
 import type { ProjectImpact } from '../services/prDrift.js';
 
@@ -73,5 +74,33 @@ describe('the check on a pull request’s commit', () => {
     warn.mockRestore();
     const broken = client(new GitHubApiError(502, 'Bad gateway'));
     await expect(reportCheck(broken.gh, input([impact([])]))).rejects.toThrow('Bad gateway');
+  });
+});
+
+describe('re-verifying a map’s repository link', () => {
+  const headers = (h: Record<string, string> = {}) => ({
+    get: (name: string) => h[name.toLowerCase()] ?? null,
+  });
+
+  it('tells GitHub rate-limiting apart from no access (both can be 403)', () => {
+    expect(githubErrorFor(403, headers({ 'x-ratelimit-remaining': '0' })).statusCode).toBe(429);
+    expect(githubErrorFor(403, headers({ 'retry-after': '60' })).statusCode).toBe(429);
+    expect(githubErrorFor(429, headers()).statusCode).toBe(429);
+    expect(githubErrorFor(403, headers({ 'x-ratelimit-remaining': '4999' })).statusCode).toBe(403);
+    expect(githubErrorFor(404, headers()).statusCode).toBe(404);
+    expect(githubErrorFor(503, headers()).statusCode).toBe(502);
+  });
+
+  it('turns checks off only on a definite no, never because GitHub had a bad moment', () => {
+    // Keep the link and try again later
+    expect(isTransientFailure(new GitHubError('rate limited', 429))).toBe(true);
+    expect(isTransientFailure(new GitHubError('GitHub API error: 503', 502))).toBe(true);
+    expect(isTransientFailure(new TypeError('fetch failed'))).toBe(true);
+    // The linker's connection is gone, or their token was revoked
+    expect(isTransientFailure(new GitHubError('GitHub connection not found', 404))).toBe(false);
+    expect(isTransientFailure(new GitHubError('GitHub token is invalid or expired', 401))).toBe(
+      false,
+    );
+    expect(isTransientFailure(new GitHubError('GitHub access denied', 403))).toBe(false);
   });
 });

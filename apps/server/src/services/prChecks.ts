@@ -4,7 +4,7 @@ import { config, type GitHubAppConfig } from '../config.js';
 import { db } from '../db/client.js';
 import { diagramProposals, projects, type RepoSource } from '../db/schema.js';
 import { checkProjectAccess } from './diagramService.js';
-import { getDecryptedToken, repoAccess } from './githubService.js';
+import { GitHubError, getDecryptedToken, repoAccess } from './githubService.js';
 import { reportError } from '../observability.js';
 import { GitHubApiError, installationClient, type InstallationClient } from './githubApp.js';
 import { loadProjectScene } from './projectService.js';
@@ -71,9 +71,21 @@ async function projectsForRepo(host: string, owner: string, repo: string) {
 const REVERIFY_AFTER_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * Did checking fail because of GitHub or the network (down, rate-limited,
+ * timed out) rather than because the answer is no? Then the link stays as
+ * it is and is checked again next time.
+ */
+export function isTransientFailure(err: unknown): boolean {
+  if (err instanceof GitHubError) return err.statusCode === 429 || err.statusCode >= 500;
+  return true;
+}
+
+/**
  * Is the link still vouched for? Re-checked at most daily through the
  * linker's own GitHub connection: they must still push to the repository
- * and still own or administer the project. A link that fails is turned off.
+ * and still own or administer the project. A link that fails is turned
+ * off, but only on a definite answer: a GitHub outage or rate limit at the
+ * moment of checking keeps it (and it's checked again on the next PR).
  */
 async function stillVerified(
   project: { id: string; repoSource: RepoSource | null },
@@ -97,7 +109,11 @@ async function stillVerified(
       ok = !!(await repoAccess(token.accessToken, source.owner, source.repo, token.enterpriseUrl))
         ?.push;
     }
-  } catch {
+  } catch (err) {
+    if (isTransientFailure(err)) {
+      console.warn(`[pr-checks] couldn't re-verify ${project.id}'s repository link now:`, err);
+      return true;
+    }
     ok = false;
   }
   const { host: _host, verifiedAt: _verifiedAt, ...rest } = source;
