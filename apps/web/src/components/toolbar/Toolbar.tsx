@@ -35,7 +35,7 @@ interface ToolConfig {
 }
 
 const TOOLS: ToolConfig[] = [
-  { tool: 'select', icon: '\u25B3', label: 'Select', shortcut: 'V' },
+  { tool: 'select', icon: '\u25B3', label: 'Select · Alt+drag to lasso', shortcut: 'V' },
   { tool: 'hand', icon: '\u270B', label: 'Hand (pan)', shortcut: 'H' },
   { tool: 'rectangle', icon: '\u25A1', label: 'Rectangle', shortcut: 'R' },
   { tool: 'ellipse', icon: '\u25CB', label: 'Ellipse', shortcut: 'E' },

@@ -9,6 +9,7 @@ import {
   hitTestElementsWithGroups,
   getGroupElementIds,
   hitTestEraser,
+  hitTestLasso,
   hitTestAnchorPoint,
   findNearbyShapeForAnchors,
   hitTestEndpointHandle,
@@ -67,7 +68,8 @@ export type InteractionMode =
   | 'moving-waypoint'
   | 'pending-waypoint'
   | 'dragging-elbow-segment'
-  | 'erasing';
+  | 'erasing'
+  | 'lasso';
 
 /** Keyboard modifiers held during a pointer gesture. */
 export interface PointerModifiers {
@@ -313,6 +315,8 @@ export class InteractionManager {
   private erasingVersion = 0;
   private eraserTrail: Array<{ x: number; y: number; t: number }> = [];
   private lastEraserPoint: Point | null = null;
+  /** Lasso selection (Alt+drag on empty canvas): the loop drawn so far. */
+  private lassoPath: Point[] = [];
 
   // Double-click tracking
   private lastClickTime = 0;
@@ -407,6 +411,11 @@ export class InteractionManager {
     return { ids: this.erasing, version: this.erasingVersion };
   }
 
+  /** The lasso being drawn (canvas points), empty when none. */
+  getLassoPath(): Point[] {
+    return this.mode === 'lasso' ? this.lassoPath : [];
+  }
+
   /** The eraser's recent path (canvas points), drawn as a fading trail. */
   getEraserTrail(): Point[] {
     if (this.mode !== 'erasing') return [];
@@ -427,6 +436,7 @@ export class InteractionManager {
         return this.dragActive;
       case 'resizing':
       case 'selecting':
+      case 'lasso':
       case 'creating-from-anchor':
       case 'rebinding-endpoint':
       case 'moving-waypoint':
@@ -782,11 +792,16 @@ export class InteractionManager {
         return;
       }
 
-      // Start selection box
+      // Start selection box (Alt: a freeform lasso)
       this.marqueeBase = event.shiftKey ? new Set(selectedIds) : new Set();
       this.lastMarqueeKey = '';
       if (!event.shiftKey) {
         this.callbacks.clearSelection();
+      }
+      if (event.altKey) {
+        this.mode = 'lasso';
+        this.lassoPath = [canvasPoint];
+        return;
       }
       this.mode = 'selecting';
       this.callbacks.startSelectionBox(canvasPoint);
@@ -913,6 +928,17 @@ export class InteractionManager {
       case 'selecting': {
         this.callbacks.updateSelectionBox(canvasPoint);
         this.updateMarqueeSelection(canvasPoint);
+        break;
+      }
+
+      case 'lasso': {
+        const last = this.lassoPath[this.lassoPath.length - 1];
+        const zoom = Math.max(0.1, viewport.getViewport().zoom);
+        // A point every couple of screen pixels is plenty
+        if (!last || Math.hypot(canvasPoint.x - last.x, canvasPoint.y - last.y) * zoom >= 2) {
+          this.lassoPath = [...this.lassoPath, canvasPoint];
+          this.updateLassoSelection();
+        }
         break;
       }
 
@@ -1113,6 +1139,13 @@ export class InteractionManager {
     }
 
     switch (this.mode) {
+      case 'lasso': {
+        this.updateLassoSelection();
+        this.lassoPath = [];
+        this.mode = 'idle';
+        return;
+      }
+
       case 'erasing': {
         const ids = Array.from(this.erasing);
         this.clearEraser();
@@ -1504,7 +1537,10 @@ export class InteractionManager {
     if (mode === 'dragging-elbow-segment') {
       restorePoints(this.elbowSegmentArrowId, this.elbowSegmentOriginalPoints);
     }
-    if (mode === 'selecting') this.callbacks.selectMultiple(this.selectionAtPress);
+    if (mode === 'selecting' || mode === 'lasso') {
+      this.callbacks.selectMultiple(this.selectionAtPress);
+    }
+    this.lassoPath = [];
     if (mode === 'erasing') {
       // Nothing was deleted yet: the faded shapes just come back
       this.clearEraser();
@@ -1842,6 +1878,17 @@ export class InteractionManager {
   // ─── Marquee ───────────────────────────────────────────────
 
   /** Live marquee selection: what's under the rectangle is selected while dragging. */
+  /** Select what the lasso encloses (plus what was selected with Shift held). */
+  private updateLassoSelection(): void {
+    const ids = new Set(this.marqueeBase);
+    for (const el of hitTestLasso(this.lassoPath, this.callbacks.getElements())) ids.add(el.id);
+    const list = Array.from(ids);
+    const key = list.join(',');
+    if (key === this.lastMarqueeKey) return;
+    this.lastMarqueeKey = key;
+    this.callbacks.selectElementsInBox(list);
+  }
+
   private updateMarqueeSelection(canvasPoint: Point): void {
     const start = this.startCanvasPoint;
     const box = {

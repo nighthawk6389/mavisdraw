@@ -446,6 +446,60 @@ export function hitTestEraser(
   }
 }
 
+/** Ray casting: is the point inside the polygon (closed implicitly)? */
+export function pointInPolygon(point: Point, polygon: Point[]): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i];
+    const b = polygon[j];
+    if (
+      a.y > point.y !== b.y > point.y &&
+      point.x < ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x
+    ) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/** Points that outline an element: a line's points, or a (turned) shape's corners. */
+function outlinePoints(element: MavisElement): Point[] {
+  if (element.type === 'line' || element.type === 'arrow' || element.type === 'freedraw') {
+    const linear = element as LinearElement;
+    return (linear.points ?? []).map(([x, y]) => ({ x: element.x + x, y: element.y + y }));
+  }
+  const { x, y, width: w, height: h, angle } = element;
+  const corners = [
+    { x, y },
+    { x: x + w, y },
+    { x: x + w, y: y + h },
+    { x, y: y + h },
+  ];
+  if (!angle) return corners;
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  return corners.map((p) => ({
+    x: cx + (p.x - cx) * cos - (p.y - cy) * sin,
+    y: cy + (p.x - cx) * sin + (p.y - cy) * cos,
+  }));
+}
+
+/**
+ * Elements a lasso encloses: all of their outline inside the drawn loop.
+ * Labels come with their shapes, as with box selection.
+ */
+export function hitTestLasso(polygon: Point[], elements: MavisElement[]): MavisElement[] {
+  if (polygon.length < 3) return [];
+  return elements.filter((el) => {
+    if (el.isDeleted) return false;
+    if (el.type === 'text' && el.containerId) return false;
+    const points = outlinePoints(el);
+    return points.length > 0 && points.every((p) => pointInPolygon(p, polygon));
+  });
+}
+
 /**
  * Find the topmost element hit at a canvas-coordinate point.
  * Elements are ordered by layerIndex (last = top).

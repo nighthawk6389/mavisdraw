@@ -83,6 +83,8 @@ export interface RenderState {
   snapTarget?: { element: MavisElement; anchor: string } | null;
   /** The eraser's recent path, canvas coordinates. */
   eraserTrail?: Point[];
+  /** The lasso being drawn, canvas coordinates. */
+  lassoPath?: Point[];
 }
 
 /**
@@ -203,6 +205,21 @@ export class CanvasRenderer {
    * since the last frame are drawn again where possible; `full` redraws them
    * all (for changes the elements don't show, like a font that finished loading).
    */
+  private renderLasso(ctx: CanvasRenderingContext2D, path: Point[], zoom: number): void {
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(path[0].x, path[0].y);
+    for (let i = 1; i < path.length; i++) ctx.lineTo(path[i].x, path[i].y);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(59, 130, 246, 0.06)';
+    ctx.fill();
+    ctx.strokeStyle = '#3b82f6';
+    ctx.lineWidth = 1.5 / zoom;
+    ctx.setLineDash([6 / zoom, 4 / zoom]);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   private renderEraserTrail(ctx: CanvasRenderingContext2D, trail: Point[], zoom: number): void {
     ctx.save();
     ctx.lineCap = 'round';
@@ -598,6 +615,11 @@ export class CanvasRenderer {
     ctx.save();
     ctx.translate(vp.scrollX, vp.scrollY);
     ctx.scale(vp.zoom, vp.zoom);
+
+    // The lasso: the loop drawn so far, closed back to where it started
+    if (state.lassoPath && state.lassoPath.length > 1) {
+      this.renderLasso(ctx, state.lassoPath, vp.zoom);
+    }
 
     // The eraser's trail: a short, fading stroke behind the pointer
     if (state.eraserTrail && state.eraserTrail.length > 1) {

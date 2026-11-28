@@ -767,6 +767,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         state.hoveredAnchor = mgr?.getHoveredAnchor() ?? null;
         state.snapTarget = mgr?.getSnapTarget() ?? null;
         state.eraserTrail = mgr?.getEraserTrail() ?? [];
+        state.lassoPath = mgr?.getLassoPath() ?? [];
         return state;
       },
     );
