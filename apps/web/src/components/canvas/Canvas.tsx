@@ -978,8 +978,8 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         bindArrow: (arrowId, endpoint, targetId, gap) => {
           useElementsStore.getState().bindArrow(arrowId, endpoint, targetId, gap);
         },
-        unbindArrow: (arrowId, endpoint) => {
-          useElementsStore.getState().unbindArrow(arrowId, endpoint);
+        unbindArrow: (arrowId, endpoint, record) => {
+          useElementsStore.getState().unbindArrow(arrowId, endpoint, record);
         },
         moveElementWithBindings: (id, newX, newY) => {
           useElementsStore.getState().moveElementWithBindings(id, newX, newY);

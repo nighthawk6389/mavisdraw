@@ -2,7 +2,18 @@ import type { MavisElement, Point, Bounds, LinearElement } from '@mavisdraw/type
 import { getCubicControlPoints, cubicPoint, calculateElbowRoute, getConnectionSide, getSegmentOrientation } from '@mavisdraw/math';
 
 const HANDLE_SIZE = 8;
-const HIT_TOLERANCE = 5;
+/** How close to a line or an outline still counts as on it, in screen pixels. */
+const HIT_TOLERANCE_PX = 5;
+let HIT_TOLERANCE = HIT_TOLERANCE_PX;
+
+/**
+ * The view's zoom, so lines and outlines answer at the same distance on
+ * screen whatever the zoom (5 canvas units was 1px at 23%, 20px at 400%).
+ * Set by the canvas before it hit-tests a pointer event.
+ */
+export function setHitTestZoom(zoom: number): void {
+  HIT_TOLERANCE = HIT_TOLERANCE_PX / Math.max(0.1, zoom);
+}
 
 export type ResizeHandle =
   | 'top-left'
@@ -856,14 +867,17 @@ const BINDABLE_TYPES = new Set([
 ]);
 
 /**
- * Find the nearest shape within threshold that an arrow endpoint can bind to.
- * Returns the element and the distance from the point to the element's nearest edge.
+ * The shape an arrow endpoint here connects to, and how far outside its
+ * outline the end sits (`gap`). Anywhere over a shape connects to it
+ * (the topmost one, gap 0: the end goes onto the outline), as in Excalidraw
+ * and tldraw; otherwise the nearest outline within `threshold`.
  *
  * @param canvasX - X coordinate in canvas space
  * @param canvasY - Y coordinate in canvas space
- * @param elements - All visible elements
+ * @param elements - All visible elements, bottom to top
  * @param excludeIds - Element IDs to exclude (e.g., the arrow being drawn)
- * @param threshold - Max distance from shape edge to snap (default 20)
+ * @param threshold - How far outside an outline still connects, in canvas units
+ *   (callers pass a screen distance divided by the zoom)
  */
 export function findBindingTarget(
   canvasX: number,
@@ -882,6 +896,7 @@ export function findBindingTarget(
       continue;
     }
 
+    if (containsPoint(point, el)) return { element: el, gap: 0 };
     const dist = distanceToElementEdge(point, el);
     if (dist <= bestDist) {
       bestDist = dist;
@@ -890,6 +905,35 @@ export function findBindingTarget(
   }
 
   return best;
+}
+
+/** Is the point on or inside the shape's outline (turned shapes included)? */
+function containsPoint(point: Point, element: MavisElement): boolean {
+  const cx = element.x + element.width / 2;
+  const cy = element.y + element.height / 2;
+  let lx = point.x;
+  let ly = point.y;
+  if (element.angle) {
+    const cos = Math.cos(-element.angle);
+    const sin = Math.sin(-element.angle);
+    const dx = point.x - cx;
+    const dy = point.y - cy;
+    lx = cx + dx * cos - dy * sin;
+    ly = cy + dx * sin + dy * cos;
+  }
+  const hw = element.width / 2;
+  const hh = element.height / 2;
+  if (hw <= 0 || hh <= 0) return false;
+  const dx = Math.abs(lx - cx);
+  const dy = Math.abs(ly - cy);
+  switch (element.type) {
+    case 'ellipse':
+      return (dx * dx) / (hw * hw) + (dy * dy) / (hh * hh) <= 1;
+    case 'diamond':
+      return dx / hw + dy / hh <= 1;
+    default:
+      return dx <= hw && dy <= hh;
+  }
 }
 
 /**
@@ -1138,16 +1182,39 @@ export function getAnchorPoints(element: MavisElement): { position: AnchorPositi
   }));
 }
 
+/** How far outside the outline the connection dots sit (screen px). */
+export const ANCHOR_DOT_OFFSET_PX = 14;
+
 /**
- * Hit test whether a canvas point is near an anchor point of an element.
- * Returns the anchor position if hit, null otherwise.
+ * Where the connection dots are drawn: `offset` outside each anchor, away
+ * from the shape's centre. Off the outline, grabbing a shape by its edge
+ * moves it instead of starting a connector (Miro puts them outside too).
+ */
+export function getAnchorDots(
+  element: MavisElement,
+  offset: number,
+): { position: AnchorPosition; x: number; y: number }[] {
+  const cx = element.x + element.width / 2;
+  const cy = element.y + element.height / 2;
+  return getAnchorPoints(element).map((a) => {
+    const dx = a.x - cx;
+    const dy = a.y - cy;
+    const len = Math.hypot(dx, dy) || 1;
+    return { position: a.position, x: a.x + (dx / len) * offset, y: a.y + (dy / len) * offset };
+  });
+}
+
+/**
+ * Hit test whether a canvas point is near one of an element's connection
+ * dots (`offset` outside its anchors). Returns the anchor position if hit.
  */
 export function hitTestAnchorPoint(
   canvasPoint: Point,
   element: MavisElement,
   threshold: number = 10,
+  offset: number = 0,
 ): AnchorPosition | null {
-  const anchors = getAnchorPoints(element);
+  const anchors = getAnchorDots(element, offset);
   for (const anchor of anchors) {
     const dist = Math.hypot(canvasPoint.x - anchor.x, canvasPoint.y - anchor.y);
     if (dist <= threshold) {

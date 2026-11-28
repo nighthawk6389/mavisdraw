@@ -17,7 +17,8 @@ import { renderPortalSketchy, renderPortalClean } from '../elements/PortalRender
 import {
   ROTATION_HANDLE_RADIUS_PX,
   SELECTION_PADDING_PX,
-  getAnchorPoints,
+  getAnchorDots,
+  ANCHOR_DOT_OFFSET_PX,
   rotationHandleCenter,
   selectionFrame,
 } from './HitTesting';
@@ -2116,8 +2117,8 @@ export class CanvasRenderer {
     hoveredAnchor: string | null,
   ): void {
     const zoom = this.viewport.getViewport().zoom;
-    // Same anchors the hit-test uses (turned with rotated shapes)
-    const anchors = getAnchorPoints(element);
+    // Same dots the hit-test uses (turned with rotated shapes, just outside the outline)
+    const anchors = getAnchorDots(element, ANCHOR_DOT_OFFSET_PX / zoom);
 
     for (const anchor of anchors) {
       const isHovered = hoveredAnchor === anchor.position;

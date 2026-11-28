@@ -1,4 +1,5 @@
 import type { LinearElement, MavisElement, Point, TextElement } from '@mavisdraw/types';
+import { facingSides, sideMidpoint } from '@mavisdraw/math';
 
 /**
  * Pure helpers that keep relationships between elements consistent:
@@ -220,10 +221,45 @@ function glueEndpoints(
     points[index] = value;
     glued = true;
   };
+  const last = points.length - 1;
   const start = arrow.startBinding ? targetFor(arrow.startBinding.elementId) : null;
-  if (start && arrow.startBinding) place(0, points.length - 1, start, arrow.startBinding.gap);
   const end = arrow.endBinding ? targetFor(arrow.endBinding.elementId) : null;
-  if (end && arrow.endBinding) place(points.length - 1, 0, end, arrow.endBinding.gap);
+  // An auto-routed elbow connector leaves and arrives through the sides that
+  // face each other, so its route runs between the shapes, not through them
+  const autoElbow =
+    arrow.routingMode === 'elbow' && !(arrow.elbowManualRoute && points.length > 2);
+  // Which sides face depends on both shapes, and either end can change side
+  // when one of them moves: both are looked up, whichever one moved
+  const shapeOf = (binding: LinearElement['startBinding']) => {
+    const el = binding ? next.get(binding.elementId) : undefined;
+    return el && !el.isDeleted && el.type !== 'text' ? el : null;
+  };
+  const startShape = autoElbow && (start || end) ? shapeOf(arrow.startBinding) : null;
+  const endShape = autoElbow && (start || end) ? shapeOf(arrow.endBinding) : null;
+  if (autoElbow && (startShape || endShape) && !startShape?.angle && !endShape?.angle) {
+    const looseEnd = (index: number) => ({
+      x: arrow.x + points[index][0],
+      y: arrow.y + points[index][1],
+      width: 0,
+      height: 0,
+    });
+    const [fromSide, toSide] = facingSides(startShape ?? looseEnd(0), endShape ?? looseEnd(last));
+    const put = (index: number, value: [number, number]) => {
+      const local: [number, number] = [value[0] - arrow.x, value[1] - arrow.y];
+      if (local[0] !== points[index][0] || local[1] !== points[index][1]) moved = true;
+      points[index] = local;
+      glued = true;
+    };
+    if (startShape && arrow.startBinding) {
+      put(0, sideMidpoint(startShape, fromSide, arrow.startBinding.gap));
+    }
+    if (endShape && arrow.endBinding) put(last, sideMidpoint(endShape, toSide, arrow.endBinding.gap));
+  } else {
+    // Each end aims at its neighbouring point: a bent connector keeps the
+    // side it leaves from (for a straight one that's the other end)
+    if (start && arrow.startBinding) place(0, 1, start, arrow.startBinding.gap);
+    if (end && arrow.endBinding) place(last, last - 1, end, arrow.endBinding.gap);
+  }
   if (glued && (always || moved)) {
     const updated = bump(arrow, { points });
     next.set(arrow.id, updated);

@@ -409,19 +409,28 @@ function arrow(id: string, from: [number, number], to: [number, number]): Linear
 describe('connection dots', () => {
   it('a click on a shape’s dot selects the shape; a drag from it draws a connector', () => {
     const h = harness([rect('a', 200, 200, 200, 100)]);
-    // Hovering shows the dots; the top one is the middle of the top edge
+    // Hovering shows the dots, just outside the outline: the top one is 14px above its middle
     h.mgr.onPointerMove(300, 250);
-    h.mgr.onPointerMove(300, 201);
-    h.mgr.onPointerDown(300, 201, { button: 0, shiftKey: false });
-    h.mgr.onPointerMove(301, 202); // a wobble, not a drag
-    h.mgr.onPointerUp(301, 202);
+    h.mgr.onPointerMove(300, 186);
+    h.mgr.onPointerDown(300, 186, { button: 0, shiftKey: false });
+    h.mgr.onPointerMove(301, 187); // a wobble, not a drag
+    h.mgr.onPointerUp(301, 187);
     expect(h.selected()).toEqual(['a']);
     expect(h.all()).toHaveLength(1);
 
     const g = harness([rect('a', 200, 200, 200, 100)]);
-    g.mgr.onPointerMove(300, 201);
-    g.drag([300, 201], [300, 60]);
+    g.mgr.onPointerMove(300, 186);
+    g.drag([300, 186], [300, 60]);
     expect(g.all().map((e) => e.type)).toEqual(['rectangle', 'arrow']);
+  });
+
+  it('grabbing a shape by the middle of its edge moves it (the dot is outside)', () => {
+    const h = harness([rect('a', 200, 200, 200, 100)]);
+    h.mgr.onPointerMove(300, 250);
+    h.mgr.onPointerMove(300, 201);
+    h.drag([300, 201], [300, 251]);
+    expect(h.all()).toHaveLength(1);
+    expect(h.el('a').y).toBe(250);
   });
 
   it('answer at the same distance on screen at any zoom', () => {
@@ -485,5 +494,92 @@ describe('resizing a selection with a turned shape', () => {
     expect(b.width / b.height).toBeCloseTo(100 / 60, 5);
     expect(b.width).toBeGreaterThan(100);
     expect(h.el('a').width / h.el('a').height).toBeCloseTo(2, 5);
+  });
+});
+
+describe('connectors attach where people expect', () => {
+  it('an arrow drawn from inside one box to inside another attaches to both, highlighting the target on the way', () => {
+    const h = harness([rect('a', 100, 100, 160, 80), rect('b', 400, 100, 160, 80)], {
+      tool: 'arrow',
+    });
+    h.mgr.onPointerDown(180, 140, { button: 0, shiftKey: false });
+    h.mgr.onPointerMove(300, 140);
+    expect(h.mgr.getSnapTarget()).toBeNull();
+    h.mgr.onPointerMove(480, 140);
+    expect(h.mgr.getSnapTarget()?.element.id).toBe('b');
+    h.mgr.onPointerUp(480, 140);
+    const arrow = h.all().find((e) => e.type === 'arrow')!;
+    expect(h.callbacks.bindArrow).toHaveBeenCalledWith(arrow.id, 'end', 'b', 0);
+    expect(h.callbacks.bindArrow).toHaveBeenCalledWith(arrow.id, 'start', 'a', 0);
+    expect(h.mgr.getSnapTarget()).toBeNull();
+  });
+
+  it('attaches just outside a shape at the same distance on screen at any zoom', () => {
+    const h = harness([rect('b', 400, 100, 160, 80)], { tool: 'arrow' });
+    h.callbacks.getViewport().setViewport({ scrollX: 0, scrollY: 0, zoom: 0.25 });
+    // 12 screen px left of b's left edge (48 canvas units): still attaches
+    h.drag([0, 35], [400 * 0.25 - 12, 35]);
+    expect(h.callbacks.bindArrow).toHaveBeenCalledWith(expect.any(String), 'end', 'b', 48);
+  });
+
+  it('a click on an elbow connector’s segment changes nothing (only a drag reshapes it)', () => {
+    const elbow = {
+      ...arrow('e', [100, 100], [400, 300]),
+      routingMode: 'elbow',
+    } as LinearElement;
+    const h = harness([elbow], { selected: ['e'] });
+    // The middle (vertical) segment of the auto route
+    h.mgr.onPointerDown(250, 200, { button: 0, shiftKey: false });
+    h.mgr.onPointerUp(250, 200);
+    expect((h.el('e') as LinearElement).elbowManualRoute).toBeFalsy();
+    expect((h.el('e') as LinearElement).points).toHaveLength(2);
+    expect(h.callbacks.pushHistory).not.toHaveBeenCalled();
+  });
+
+  it('a connector dragged on its own comes away from its shapes and moves', () => {
+    const bound = {
+      ...arrow('c', [200, 130], [400, 130]),
+      startBinding: { elementId: 'a', gap: 0 },
+      endBinding: { elementId: 'b', gap: 0 },
+    } as LinearElement;
+    const h = harness([rect('a', 100, 100, 100, 60), rect('b', 400, 100, 100, 60), bound], {
+      selected: ['c'],
+    });
+    // Off the midpoint handle (that one adds a bend)
+    h.drag([250, 130], [250, 280]);
+    expect(h.callbacks.unbindArrow).toHaveBeenCalledWith('c', 'start', false);
+    expect(h.callbacks.unbindArrow).toHaveBeenCalledWith('c', 'end', false);
+  });
+
+  it('dragged with one of its shapes, a connector stays attached and stretches', () => {
+    const bound = {
+      ...arrow('c', [200, 130], [400, 130]),
+      startBinding: { elementId: 'a', gap: 0 },
+      endBinding: { elementId: 'b', gap: 0 },
+    } as LinearElement;
+    const h = harness([rect('a', 100, 100, 100, 60), rect('b', 400, 100, 100, 60), bound], {
+      selected: ['a', 'c'],
+    });
+    h.drag([150, 130], [150, 280]);
+    expect(h.callbacks.unbindArrow).not.toHaveBeenCalled();
+  });
+});
+
+describe('hitting thin lines', () => {
+  it('answers at the same distance on screen whatever the zoom', () => {
+    const line = arrow('l', [100, 100], [500, 100]);
+    const h = harness([line]);
+    const viewport = h.callbacks.getViewport();
+    // At 25%: 4 screen px off the line (16 canvas units) is still on it
+    viewport.setViewport({ scrollX: 0, scrollY: 0, zoom: 0.25 });
+    h.mgr.onPointerDown(75, 25 + 4, { button: 0, shiftKey: false });
+    h.mgr.onPointerUp(75, 29);
+    expect(h.selected()).toEqual(['l']);
+    // At 400%: 12 screen px off (3 canvas units) is... still near; 30 px off isn't
+    const g = harness([line]);
+    g.callbacks.getViewport().setViewport({ scrollX: 0, scrollY: 0, zoom: 4 });
+    g.mgr.onPointerDown(1200, 400 + 30, { button: 0, shiftKey: false });
+    g.mgr.onPointerUp(1200, 430);
+    expect(g.selected()).toEqual([]);
   });
 });

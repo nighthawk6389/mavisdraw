@@ -40,6 +40,46 @@ export function getConnectionSide(
   return 'right';
 }
 
+/** An axis-aligned box (a shape, or a loose end as a zero-size box). */
+export interface ElbowBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * The sides of two boxes that face each other, for an elbow connector
+ * between them: left/right when they sit mostly side by side, top/bottom
+ * when they're mostly one above the other. Leaving and arriving through
+ * those sides keeps the route in the space between the shapes instead of
+ * through them (draw.io, Excalidraw).
+ */
+export function facingSides(a: ElbowBox, b: ElbowBox): [ConnectionSide, ConnectionSide] {
+  const gapX = Math.max(b.x - (a.x + a.width), a.x - (b.x + b.width));
+  const gapY = Math.max(b.y - (a.y + a.height), a.y - (b.y + b.height));
+  const acx = a.x + a.width / 2;
+  const acy = a.y + a.height / 2;
+  const bcx = b.x + b.width / 2;
+  const bcy = b.y + b.height / 2;
+  if (gapX >= gapY) return bcx >= acx ? ['right', 'left'] : ['left', 'right'];
+  return bcy >= acy ? ['bottom', 'top'] : ['top', 'bottom'];
+}
+
+/** The middle of a box's side, `gap` outside it. */
+export function sideMidpoint(box: ElbowBox, side: ConnectionSide, gap = 0): [number, number] {
+  switch (side) {
+    case 'top':
+      return [box.x + box.width / 2, box.y - gap];
+    case 'bottom':
+      return [box.x + box.width / 2, box.y + box.height + gap];
+    case 'left':
+      return [box.x - gap, box.y + box.height / 2];
+    default:
+      return [box.x + box.width + gap, box.y + box.height / 2];
+  }
+}
+
 /** Margin (in local coords) to depart/approach from a shape side. */
 const MARGIN = 20;
 const ALIGN_THRESHOLD = 5;

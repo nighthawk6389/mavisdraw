@@ -261,7 +261,7 @@ interface ElementsState {
   /**
    * Unbind an arrow endpoint from its current target.
    */
-  unbindArrow: (arrowId: string, endpoint: 'start' | 'end') => void;
+  unbindArrow: (arrowId: string, endpoint: 'start' | 'end', record?: boolean) => void;
 
   /**
    * Move an element and keep its label and bound arrows attached.
@@ -378,6 +378,8 @@ function applyElementUpdate(
     next.set(id, merged);
     syncBoundElements(next, id);
     if (containerToSync) syncBoundElements(next, containerToSync);
+    // A connector switched to elbow (or back) attaches by the new rules
+    if ('routingMode' in updates) reglueArrowEndpoints(next, id);
 
     return { elements: next };
   });
@@ -803,12 +805,14 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
           updatedAt: Date.now(),
         } as MavisElement);
       }
+      // The end goes onto the outline now, not the next time the shape moves
+      reglueArrowEndpoints(next, arrowId);
 
       return { elements: next };
     });
   },
 
-  unbindArrow: (arrowId: string, endpoint: 'start' | 'end') => {
+  unbindArrow: (arrowId: string, endpoint: 'start' | 'end', record = true) => {
     const state = get();
     const arrow = state.elements.get(arrowId) as LinearElement | undefined;
     if (!arrow) return;
@@ -819,7 +823,8 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
     const targetId = binding.elementId;
     const otherBinding = endpoint === 'start' ? arrow.endBinding : arrow.startBinding;
 
-    state.pushHistory();
+    // Inside a gesture the change belongs to the gesture's own undo step
+    if (record) state.pushHistory();
     set((prev) => {
       const next = new Map(prev.elements);
 

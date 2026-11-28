@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getConnectionSide, calculateElbowRoute } from '../elbow';
+import { getConnectionSide, calculateElbowRoute, facingSides, sideMidpoint } from '../elbow';
 
 describe('getConnectionSide', () => {
   // Rectangle at (100, 100) with width=200, height=100
@@ -127,5 +127,38 @@ describe('calculateElbowRoute', () => {
       const dy = Math.abs(result[i + 1][1] - result[i][1]);
       expect(dx === 0 || dy === 0).toBe(true);
     }
+  });
+});
+
+describe('facingSides', () => {
+  const box = (x: number, y: number, w = 100, h = 60) => ({ x, y, width: w, height: h });
+
+  it('side by side: right of the left one to left of the right one', () => {
+    expect(facingSides(box(0, 0), box(300, 40))).toEqual(['right', 'left']);
+    expect(facingSides(box(300, 40), box(0, 0))).toEqual(['left', 'right']);
+  });
+
+  it('stacked: bottom of the upper one to top of the lower one', () => {
+    expect(facingSides(box(0, 0), box(40, 300))).toEqual(['bottom', 'top']);
+    expect(facingSides(box(40, 300), box(0, 0))).toEqual(['top', 'bottom']);
+  });
+
+  it('picks the axis with the bigger gap', () => {
+    // 250 apart sideways, 100 apart vertically: side by side
+    expect(facingSides(box(0, 0), box(350, 160))).toEqual(['right', 'left']);
+    // 50 apart sideways, 200 apart vertically: stacked
+    expect(facingSides(box(0, 0), box(150, 260))).toEqual(['bottom', 'top']);
+  });
+
+  it('a loose end is a point', () => {
+    expect(facingSides(box(0, 0), { x: 50, y: 400, width: 0, height: 0 })).toEqual([
+      'bottom',
+      'top',
+    ]);
+  });
+
+  it('gives the middle of a side, a gap outside it', () => {
+    expect(sideMidpoint(box(0, 0), 'right', 4)).toEqual([104, 30]);
+    expect(sideMidpoint(box(0, 0), 'top')).toEqual([50, 0]);
   });
 });

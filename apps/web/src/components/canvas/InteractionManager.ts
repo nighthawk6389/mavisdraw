@@ -16,6 +16,8 @@ import {
   hitTestMidpointHandle,
   hitTestWaypoint,
   getAnchorPoints,
+  ANCHOR_DOT_OFFSET_PX,
+  setHitTestZoom,
   hitTestElbowSegment,
   computeElbowPoints,
   getVisualBounds,
@@ -139,7 +141,8 @@ export interface InteractionCallbacks {
     targetId: string,
     gap: number,
   ) => void;
-  unbindArrow: (arrowId: string, endpoint: 'start' | 'end') => void;
+  /** `record: false`: part of the gesture's undo step, not one of its own. */
+  unbindArrow: (arrowId: string, endpoint: 'start' | 'end', record?: boolean) => void;
   moveElementWithBindings: (id: string, newX: number, newY: number) => void;
 
   // Text editing
@@ -184,6 +187,8 @@ const SHAPE_TOOLS = new Set<Tool>([
 /** The eraser's reach around the pointer, and how finely its path is followed (screen px). */
 const ERASER_RADIUS_PX = 6;
 const ERASER_STEP_PX = 4;
+/** How far outside a shape's outline a connector end still attaches (screen px). */
+const BINDING_PX = 16;
 /** Connection dots: where they answer a press, and how near a shape shows them (screen px). */
 const ANCHOR_HIT_PX = 10;
 const ANCHOR_PROXIMITY_PX = 30;
@@ -326,6 +331,8 @@ export class InteractionManager {
   private elbowSegmentIndex: number = -1;
   private elbowSegmentOrientation: 'horizontal' | 'vertical' = 'horizontal';
   private elbowSegmentOriginalPoints: [number, number][] = [];
+  /** The dragged elbow route is auto-routed: freeze it once the drag starts. */
+  private elbowSegmentFreeze = false;
 
   // Group navigation state
   private enteredGroupIds: Set<string> = new Set();
@@ -520,6 +527,7 @@ export class InteractionManager {
     this.snapContext = null;
     this.currentSmartGuides = [];
     const viewport = this.callbacks.getViewport();
+    setHitTestZoom(viewport.getViewport().zoom);
     const canvasPoint = viewport.screenToCanvas(screenX, screenY);
     this.startCanvasPoint = canvasPoint;
     this.startScreenPoint = { x: screenX, y: screenY };
@@ -650,42 +658,19 @@ export class InteractionManager {
 
             const segmentHit = hitTestElbowSegment(canvasPoint, linear, elementsMap);
             if (segmentHit) {
-              // Materialize computed route if arrow is auto-routed
-              if (!linear.elbowManualRoute || linear.points.length <= 2) {
-                const computedPoints = computeElbowPoints(linear, elementsMap);
-                this.callbacks.pushHistory();
-                this.callbacks.updateElement(linear.id, {
-                  points: computedPoints,
-                  elbowManualRoute: true,
-                } as Partial<LinearElement>);
-                this.callbacks.invalidateStatic();
-
-                // Re-read the updated element and re-run hit test
-                const updatedElements = this.callbacks.getElements();
-                const updatedArrow = updatedElements.find((e) => e.id === linear.id) as LinearElement | undefined;
-                if (!updatedArrow) return;
-
-                const updatedMap = new Map<string, MavisElement>();
-                for (const e of updatedElements) updatedMap.set(e.id, e);
-                const reHit = hitTestElbowSegment(canvasPoint, updatedArrow, updatedMap);
-                if (!reHit) return;
-
-                this.mode = 'dragging-elbow-segment';
-                this.elbowSegmentArrowId = updatedArrow.id;
-                this.elbowSegmentIndex = reHit.segmentIndex;
-                this.elbowSegmentOrientation = reHit.orientation;
-                this.elbowSegmentOriginalPoints = updatedArrow.points.map((p) => [...p] as [number, number]);
-                this.startCanvasPoint = canvasPoint;
-                return;
-              }
-
+              // The route as drawn; an auto-routed one is only frozen into
+              // these points (with its undo step) once the drag really starts,
+              // so a click on it changes nothing
+              const manual = !!linear.elbowManualRoute && linear.points.length > 2;
               this.mode = 'dragging-elbow-segment';
               this.elbowSegmentArrowId = linear.id;
               this.elbowSegmentIndex = segmentHit.segmentIndex;
               this.elbowSegmentOrientation = segmentHit.orientation;
-              this.elbowSegmentOriginalPoints = linear.points.map((p) => [...p] as [number, number]);
+              this.elbowSegmentOriginalPoints = (
+                manual ? linear.points : computeElbowPoints(linear, elementsMap)
+              ).map((p) => [...p] as [number, number]);
+              this.elbowSegmentFreeze = !manual;
               this.startCanvasPoint = canvasPoint;
-              this.callbacks.pushHistory();
               return;
             }
           }
@@ -694,7 +679,7 @@ export class InteractionManager {
 
       // Phase 3: Check anchor point hit for edge-initiated connections
       if (this.anchorTarget) {
-        const anchorHit = hitTestAnchorPoint(canvasPoint, this.anchorTarget, this.anchorHitRadius());
+        const anchorHit = hitTestAnchorPoint(canvasPoint, this.anchorTarget, this.anchorHitRadius(), this.anchorDotOffset());
         if (anchorHit) {
           const sourceElement = this.anchorTarget;
           const anchors = getAnchorPoints(sourceElement);
@@ -877,6 +862,7 @@ export class InteractionManager {
   onPointerMove(screenX: number, screenY: number, modifiers?: PointerModifiers): void {
     if (modifiers) this.setModifiers(modifiers);
     const viewport = this.callbacks.getViewport();
+    setHitTestZoom(viewport.getViewport().zoom);
     const canvasPoint = viewport.screenToCanvas(screenX, screenY);
     const deltaScreenX = screenX - this.lastScreenPoint.x;
     const deltaScreenY = screenY - this.lastScreenPoint.y;
@@ -899,7 +885,7 @@ export class InteractionManager {
           );
           this.anchorTarget = nearbyShape;
           if (nearbyShape) {
-            this.hoveredAnchor = hitTestAnchorPoint(canvasPoint, nearbyShape, this.anchorHitRadius()) ?? null;
+            this.hoveredAnchor = hitTestAnchorPoint(canvasPoint, nearbyShape, this.anchorHitRadius(), this.anchorDotOffset()) ?? null;
           } else {
             this.hoveredAnchor = null;
           }
@@ -929,6 +915,17 @@ export class InteractionManager {
           this.dragActive = true;
         }
         this.updateCreatingElement(canvasPoint);
+        // Show which shape the connector's end will attach to
+        if (this.creatingElement && 'points' in this.creatingElement) {
+          const linear = this.creatingElement as LinearElement;
+          const end = linear.points[linear.points.length - 1];
+          const target = this.bindingTargetAt(
+            linear.x + end[0],
+            linear.y + end[1],
+            new Set([linear.id]),
+          );
+          this.snapTarget = target ? { element: target.element, anchor: '' } : null;
+        }
         break;
       }
 
@@ -1053,22 +1050,11 @@ export class InteractionManager {
           (this.creatingElement as { seed: number }).seed = this.creatingSeed;
         }
 
-        // Check for snap target
-        const elements = this.callbacks.getElements();
+        // Show which shape the end will attach to (never the one it starts from)
         const excludeIds = new Set(this.anchorSourceElement ? [this.anchorSourceElement.id] : []);
-        const nearbyShape = findNearbyShapeForAnchors(
-          canvasPoint.x, canvasPoint.y, elements, excludeIds, this.anchorProximity(),
-        );
-        if (nearbyShape) {
-          const anchorHit = hitTestAnchorPoint(canvasPoint, nearbyShape, this.anchorHitRadius());
-          if (anchorHit) {
-            this.snapTarget = { element: nearbyShape, anchor: anchorHit };
-          } else {
-            this.snapTarget = nearbyShape ? { element: nearbyShape, anchor: '' } : null;
-          }
-        } else {
-          this.snapTarget = null;
-        }
+        if (this.creatingElement) excludeIds.add(this.creatingElement.id);
+        const target = this.bindingTargetAt(canvasPoint.x, canvasPoint.y, excludeIds);
+        this.snapTarget = target ? { element: target.element, anchor: '' } : null;
         break;
       }
 
@@ -1077,11 +1063,9 @@ export class InteractionManager {
         const arrow = elements.find((e) => e.id === this.rebindingArrowId) as LinearElement | undefined;
         if (!arrow) break;
 
-        // Check for snap target
-        const excludeIds = new Set([arrow.id]);
-        const nearbyShape = findNearbyShapeForAnchors(
-          canvasPoint.x, canvasPoint.y, elements, excludeIds, this.anchorProximity(),
-        );
+        // The shape this end would attach to
+        const nearbyShape = this.bindingTargetAt(canvasPoint.x, canvasPoint.y, new Set([arrow.id]))
+          ?.element;
         // Not binding to a shape: line the loose end up with things instead
         const endIndex = this.rebindingEnd === 'start' ? 0 : arrow.points.length - 1;
         const at = nearbyShape
@@ -1144,6 +1128,19 @@ export class InteractionManager {
       }
 
       case 'dragging-elbow-segment': {
+        if (!this.dragActive) {
+          if (!exceedsDragThreshold(this.startScreenPoint, { x: screenX, y: screenY }, this.pointerType)) {
+            break;
+          }
+          this.dragActive = true;
+          this.callbacks.pushHistory();
+          if (this.elbowSegmentFreeze) {
+            this.callbacks.updateElementSilent(this.elbowSegmentArrowId, {
+              points: this.elbowSegmentOriginalPoints,
+              elbowManualRoute: true,
+            } as Partial<LinearElement>);
+          }
+        }
         const elements = this.callbacks.getElements();
         const arrow = elements.find((e) => e.id === this.elbowSegmentArrowId) as LinearElement | undefined;
         if (!arrow) break;
@@ -1202,20 +1199,18 @@ export class InteractionManager {
           // For arrows, check binding at endpoints
           if ((tool === 'arrow' || tool === 'line') && 'points' in this.creatingElement) {
             const linear = this.creatingElement as LinearElement;
-            const elements = this.callbacks.getElements();
             const excludeIds = new Set([this.creatingElement.id]);
 
-            // Check end point binding
+            // Each end attaches to the shape it's over (or just outside)
             const endPt = linear.points[linear.points.length - 1];
-            const endCanvasX = linear.x + endPt[0];
-            const endCanvasY = linear.y + endPt[1];
-            const endTarget = findBindingTarget(endCanvasX, endCanvasY, elements, excludeIds);
-
-            // Check start point binding
+            const endTarget = this.bindingTargetAt(linear.x + endPt[0], linear.y + endPt[1], excludeIds);
             const startPt = linear.points[0];
-            const startCanvasX = linear.x + startPt[0];
-            const startCanvasY = linear.y + startPt[1];
-            const startTarget = findBindingTarget(startCanvasX, startCanvasY, elements, excludeIds);
+            const startTarget = this.bindingTargetAt(
+              linear.x + startPt[0],
+              linear.y + startPt[1],
+              excludeIds,
+            );
+            this.snapTarget = null;
 
             this.callbacks.addElement(this.creatingElement);
 
@@ -1348,11 +1343,10 @@ export class InteractionManager {
             );
           }
 
-          // Bind end if snapped to a target
+          // Bind end if snapped to a target (not back onto the shape it came from)
+          if (this.anchorSourceElement) excludeIds.add(this.anchorSourceElement.id);
           const endPt = linear.points[linear.points.length - 1];
-          const endCanvasX = linear.x + endPt[0];
-          const endCanvasY = linear.y + endPt[1];
-          const endTarget = findBindingTarget(endCanvasX, endCanvasY, elements, excludeIds);
+          const endTarget = this.bindingTargetAt(linear.x + endPt[0], linear.y + endPt[1], excludeIds);
           if (endTarget) {
             this.callbacks.bindArrow(
               this.creatingElement.id,
@@ -1397,11 +1391,12 @@ export class InteractionManager {
           // Unbind from old target
           this.callbacks.unbindArrow(arrow.id, this.rebindingEnd);
 
-          const excludeIds = new Set([arrow.id]);
           const idx = this.rebindingEnd === 'start' ? 0 : arrow.points.length - 1;
-          const ptX = arrow.x + arrow.points[idx][0];
-          const ptY = arrow.y + arrow.points[idx][1];
-          const newTarget = findBindingTarget(ptX, ptY, elements, excludeIds);
+          const newTarget = this.bindingTargetAt(
+            arrow.x + arrow.points[idx][0],
+            arrow.y + arrow.points[idx][1],
+            new Set([arrow.id]),
+          );
           if (newTarget) {
             this.callbacks.bindArrow(
               arrow.id,
@@ -1876,7 +1871,32 @@ export class InteractionManager {
 
     const moving = new Set(this.dragStartPositions.keys());
     for (const id of this.callbacks.getSelectedIds()) moving.add(id);
+    this.detachLoneConnectors(moving);
     this.snapContext = this.buildSnapContext(moving);
+  }
+
+  /**
+   * A connector dragged without either of the shapes it joins comes away
+   * from them and moves (Excalidraw, tldraw); with one of them, it stretches
+   * and stays attached. Escape puts the links back (the shapes' originals
+   * are kept with the gesture's).
+   */
+  private detachLoneConnectors(moving: Set<string>): void {
+    const elements = new Map(this.callbacks.getElements().map((e) => [e.id, e] as const));
+    for (const id of moving) {
+      const el = elements.get(id);
+      if (!el || (el.type !== 'arrow' && el.type !== 'line')) continue;
+      const linear = el as LinearElement;
+      const ends = [linear.startBinding, linear.endBinding].filter((b) => !!b);
+      if (ends.length === 0 || ends.some((b) => moving.has(b!.elementId))) continue;
+      if (!this.gestureOriginals.has(id)) this.gestureOriginals.set(id, linear);
+      for (const b of ends) {
+        const target = elements.get(b!.elementId);
+        if (target && !this.gestureOriginals.has(target.id)) this.gestureOriginals.set(target.id, target);
+      }
+      if (linear.startBinding) this.callbacks.unbindArrow(id, 'start', false);
+      if (linear.endBinding) this.callbacks.unbindArrow(id, 'end', false);
+    }
   }
 
   private applyDrag(canvasPoint: Point): void {
@@ -1970,9 +1990,27 @@ export class InteractionManager {
     this.callbacks.selectElementsInBox(list);
   }
 
+  /**
+   * The shape a connector end at this point attaches to: anywhere over a
+   * shape, or just outside it (a set distance on screen, at any zoom).
+   */
+  private bindingTargetAt(
+    x: number,
+    y: number,
+    exclude: Set<string>,
+  ): { element: MavisElement; gap: number } | null {
+    const zoom = Math.max(0.1, this.callbacks.getViewport().getViewport().zoom);
+    return findBindingTarget(x, y, this.callbacks.getElements(), exclude, BINDING_PX / zoom);
+  }
+
   /** Connection dots are drawn the same size at any zoom: so is where they answer. */
   private anchorHitRadius(): number {
     return ANCHOR_HIT_PX / Math.max(0.1, this.callbacks.getViewport().getViewport().zoom);
+  }
+
+  /** How far outside the outline the dots sit, in canvas units. */
+  private anchorDotOffset(): number {
+    return ANCHOR_DOT_OFFSET_PX / Math.max(0.1, this.callbacks.getViewport().getViewport().zoom);
   }
 
   /** How close to a shape the pointer has to be for its dots to show (screen pixels). */
