@@ -1,14 +1,17 @@
 /**
  * Caps on the email that people can make this server send to others
- * (invites, @mentions), so that nobody can use it to send mail in bulk or
- * to flood one inbox: per sender and per recipient, in rolling windows.
+ * (invites, @mentions, and password-reset and confirmation links anyone
+ * can ask for), so that nobody can use it to send mail in bulk or to flood
+ * one inbox: per sender and per recipient, in rolling windows. For resets
+ * and confirmations, asked for before anyone is signed in, the sender is
+ * the client's address.
  *
  * Over a cap, only the email is skipped: the invite link still works (the
  * inviter is shown it to send themselves) and in-app notifications still
  * arrive. Kept in this process's memory, like the other rate limits.
  */
 
-export type EmailKind = 'invite' | 'mention';
+export type EmailKind = 'invite' | 'mention' | 'reset' | 'verify';
 
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
@@ -18,11 +21,16 @@ interface Window {
   ms: number;
 }
 
-export const EMAIL_LIMITS: Record<EmailKind, { perSender: Window; perRecipient: Window }> = {
+export const EMAIL_LIMITS: Record<EmailKind, { perSender?: Window; perRecipient: Window }> = {
   // Inviting a team is a burst, but not hundreds an hour; one address gets a
   // few invitations a day, from anyone
   invite: { perSender: { max: 50, ms: HOUR }, perRecipient: { max: 5, ms: DAY } },
   mention: { perSender: { max: 60, ms: HOUR }, perRecipient: { max: 30, ms: HOUR } },
+  // Someone locked out tries a few times; nobody needs dozens of links a day
+  reset: { perSender: { max: 30, ms: HOUR }, perRecipient: { max: 5, ms: DAY } },
+  // Sent at sign-up, which is already rate-limited per client (and many
+  // people may sign up from one office's address): capped per inbox only
+  verify: { perRecipient: { max: 5, ms: DAY } },
 };
 
 const sent = new Map<string, number[]>();
@@ -56,12 +64,13 @@ export function allowEmail(
   const limits = EMAIL_LIMITS[kind];
   const bySender = `${kind}:from:${senderId}`;
   const byRecipient = `${kind}:to:${recipient.trim().toLowerCase()}`;
-  if (recent(bySender, limits.perSender.ms, now).length >= limits.perSender.max) return false;
-  if (recent(byRecipient, limits.perRecipient.ms, now).length >= limits.perRecipient.max) {
-    return false;
-  }
+  const { perSender, perRecipient } = limits;
+  if (perSender && recent(bySender, perSender.ms, now).length >= perSender.max) return false;
+  if (recent(byRecipient, perRecipient.ms, now).length >= perRecipient.max) return false;
   sweep(now);
-  for (const key of [bySender, byRecipient]) sent.set(key, [...(sent.get(key) ?? []), now]);
+  for (const key of perSender ? [bySender, byRecipient] : [byRecipient]) {
+    sent.set(key, [...(sent.get(key) ?? []), now]);
+  }
   return true;
 }
 

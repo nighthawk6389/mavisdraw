@@ -5,6 +5,7 @@ import { db } from '../db/client.js';
 import { users } from '../db/schema.js';
 import { sendMail, verifyEmail } from './mailer.js';
 import { claimInvitesForEmail } from './workspaceService.js';
+import { allowEmail } from './emailLimits.js';
 
 /**
  * Proving an email address is yours. Invites are sent to addresses, so an
@@ -57,16 +58,19 @@ export function readVerificationToken(
   return { userId: data.u, email: data.e };
 }
 
-/** Email a confirmation link. Resolves to whether it was handed to the mail provider. */
-export async function sendVerificationEmail(user: {
-  id: string;
-  email: string;
-  name: string;
-}): Promise<boolean> {
+/**
+ * Email a confirmation link. Resolves to whether it was handed to the mail
+ * provider (not if this address, or `requestedFrom`, asked for too many).
+ */
+export async function sendVerificationEmail(
+  user: { id: string; email: string },
+  requestedFrom: string,
+): Promise<boolean> {
+  if (!allowEmail('verify', requestedFrom, user.email)) return false;
   const link = `${config.appUrl}/verify-email?token=${encodeURIComponent(
     createVerificationToken(user.id, user.email),
   )}`;
-  return sendMail(verifyEmail({ to: user.email, name: user.name, link }));
+  return sendMail(verifyEmail({ to: user.email, link }));
 }
 
 /**
@@ -74,10 +78,7 @@ export async function sendVerificationEmail(user: {
  * waiting for it. Returns how many invites were claimed.
  */
 export async function markEmailVerified(userId: string, email: string): Promise<number> {
-  await db
-    .update(users)
-    .set({ emailVerifiedAt: new Date() })
-    .where(eq(users.id, userId));
+  await db.update(users).set({ emailVerifiedAt: new Date() }).where(eq(users.id, userId));
   return claimInvitesForEmail(userId, email);
 }
 

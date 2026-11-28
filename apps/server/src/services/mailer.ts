@@ -207,10 +207,13 @@ Reply: ${input.link}`;
   return { to: input.to, subject, text, html };
 }
 
-/** Confirm a new account's email address (needed before invites to it are granted). */
-export function passwordResetEmail(input: { to: string; name: string; link: string }): Email {
+/**
+ * A password reset link. No name: whoever registered the address chose it,
+ * and it may not be the person this goes to.
+ */
+export function passwordResetEmail(input: { to: string; link: string }): Email {
   const subject = 'Reset your MavisDraw password';
-  const text = `Hi ${input.name},
+  const text = `Hello,
 
 Someone (hopefully you) asked to reset the password of the MavisDraw account for ${input.to}:
 ${input.link}
@@ -219,16 +222,21 @@ The link works once, for an hour. Resetting signs out every session of this acco
 If you didn't ask, ignore this email: your password stays as it is.`;
   const html = layout(
     'Reset your password',
-    `<p>Hi ${escapeHtml(input.name)}, someone (hopefully you) asked to reset the password of the MavisDraw account for <strong>${escapeHtml(input.to)}</strong>.</p><p>The link works once, for an hour. Resetting signs out every session of this account.</p>`,
+    `<p>Someone (hopefully you) asked to reset the password of the MavisDraw account for <strong>${escapeHtml(input.to)}</strong>.</p><p>The link works once, for an hour. Resetting signs out every session of this account.</p>`,
     { label: 'Choose a new password', url: input.link },
     "If you didn't ask, ignore this email: your password stays as it is.",
   );
   return { to: input.to, subject, text, html };
 }
 
-export function verifyEmail(input: { to: string; name: string; link: string }): Email {
+/**
+ * Confirm a new account's email address (needed before invites to it are
+ * granted). No name: anyone can sign up with any address and any name, so
+ * the name would be words a stranger put in this inbox.
+ */
+export function verifyEmail(input: { to: string; link: string }): Email {
   const subject = 'Confirm your email for MavisDraw';
-  const text = `Hi ${input.name},
+  const text = `Hello,
 
 Confirm that ${input.to} is your email address:
 ${input.link}
@@ -237,7 +245,7 @@ Until you do, projects and workspaces shared with this address stay waiting for 
 If you didn't create a MavisDraw account, ignore this email.`;
   const html = layout(
     'Confirm your email',
-    `<p>Hi ${escapeHtml(input.name)}, confirm that <strong>${escapeHtml(input.to)}</strong> is your email address.</p><p>Until you do, projects and workspaces shared with this address stay waiting for you.</p>`,
+    `<p>Confirm that <strong>${escapeHtml(input.to)}</strong> is your email address.</p><p>Until you do, projects and workspaces shared with this address stay waiting for you.</p>`,
     { label: 'Confirm my email', url: input.link },
     "If you didn't create a MavisDraw account, you can ignore this email.",
   );

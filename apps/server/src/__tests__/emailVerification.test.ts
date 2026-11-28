@@ -51,14 +51,14 @@ describe('email confirmation links', () => {
     }
   });
 
-  it('are emailed with the link and what waits on it', () => {
+  it('are emailed with the link and what waits on it, and nothing a stranger typed', () => {
     const e = verifyEmail({
       to: 'ana@example.com',
-      name: 'Ana <script>',
       link: 'https://app.example.com/verify-email?token=t',
     });
     expect(e.subject).toBe('Confirm your email for MavisDraw');
     expect(e.text).toContain('https://app.example.com/verify-email?token=t');
-    expect(e.html).toContain('Ana &lt;script&gt;');
+    expect(e.text.startsWith('Hello,')).toBe(true);
+    expect(e.html).toContain('ana@example.com');
   });
 });

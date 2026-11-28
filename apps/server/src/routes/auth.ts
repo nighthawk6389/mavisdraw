@@ -66,7 +66,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       );
       // Invitations to this address wait until it's confirmed as theirs
       // (anyone can type any address into a sign-up form)
-      await sendVerificationEmail(user);
+      await sendVerificationEmail(user, request.ip);
 
       reply.setCookie('refreshToken', tokens.refreshToken, {
         httpOnly: true,
@@ -120,7 +120,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   app.post('/api/auth/forgot-password', passwordRoute, async (request, reply) => {
     const parsed = z.object({ email: z.string().email().max(255) }).safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'Enter a valid email address' });
-    await requestPasswordReset(parsed.data.email);
+    await requestPasswordReset(parsed.data.email, request.ip);
     return reply.send({ ok: true });
   });
 
@@ -174,7 +174,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       const user = await getUserById(request.user!.userId);
       if (!user) return reply.code(404).send({ error: 'User not found' });
       if (user.emailVerified) return reply.send({ sent: false, verified: true });
-      return reply.send({ sent: await sendVerificationEmail(user), verified: false });
+      return reply.send({ sent: await sendVerificationEmail(user, request.ip), verified: false });
     },
   );
 

@@ -76,4 +76,33 @@ test.describe('Email abuse', () => {
     expect(results[5].inviteUrl).toMatch(/\/invite\//);
     await expect.poll(async () => (await outboxTo(request, target)).length).toBe(5);
   });
+
+  test('one inbox gets only a few reset links a day, and mail never carries a stranger’s words', async ({
+    request,
+  }) => {
+    const victim = await signUp(request, 'Locked Out');
+    const resets = async () =>
+      (await outboxTo(request, victim.email)).filter((m) =>
+        /Reset your MavisDraw password/.test(m.subject),
+      ).length;
+    for (let i = 0; i < 8; i++) {
+      const res = await request.post(`${API_URL}/api/auth/forgot-password`, {
+        data: { email: victim.email },
+      });
+      expect(res.status()).toBe(200);
+    }
+    // Each answer comes after its email was handed over (or skipped)
+    expect(await resets()).toBe(5);
+
+    // Anyone can sign up with any address and any name: the confirmation
+    // email doesn't repeat the name
+    const email = `target-${uniq()}@e2e.mavisdraw.dev`;
+    const res = await request.post(`${API_URL}/api/auth/register`, {
+      data: { email, password: 'correct-horse-battery', name: 'Urgent: visit evil.example now' },
+    });
+    expect(res.status()).toBe(201);
+    const sent = await waitForEmail(request, email, /Confirm your email/);
+    expect(sent.text).not.toContain('evil.example');
+    expect(sent.html).not.toContain('evil.example');
+  });
 });

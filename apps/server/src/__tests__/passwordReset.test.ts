@@ -43,11 +43,7 @@ describe('password reset links', () => {
   });
 
   it('are emailed with the link, saying what resetting does', () => {
-    const e = passwordResetEmail({
-      to: 'a@example.com',
-      name: 'Ana',
-      link: 'https://x/reset?token=t',
-    });
+    const e = passwordResetEmail({ to: 'a@example.com', link: 'https://x/reset?token=t' });
     expect(e.subject).toBe('Reset your MavisDraw password');
     expect(e.text).toContain('https://x/reset?token=t');
     expect(e.text).toContain('signs out every session');

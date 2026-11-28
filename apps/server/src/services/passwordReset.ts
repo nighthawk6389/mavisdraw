@@ -8,6 +8,7 @@ import { isMailEnabled, passwordResetEmail, sendMail } from './mailer.js';
 import { readToken, signToken, SignedTokenError } from './signedToken.js';
 import { claimInvitesForEmail } from './workspaceService.js';
 import { endAccountAccess } from './accountAccess.js';
+import { allowEmail } from './emailLimits.js';
 
 /**
  * Resetting a forgotten password through a link sent to the account's
@@ -73,19 +74,15 @@ export async function createResetLinkFor(email: string): Promise<string | null> 
  * Email a reset link if the account exists. The answer is the same either
  * way, so the form can't be used to find out who has an account.
  */
-export async function requestPasswordReset(email: string): Promise<void> {
+export async function requestPasswordReset(email: string, requestedFrom: string): Promise<void> {
   if (!isMailEnabled()) return;
   const user = await db.query.users.findFirst({
     where: eq(users.email, email.trim().toLowerCase()),
   });
   if (!user) return;
-  await sendMail(
-    passwordResetEmail({
-      to: user.email,
-      name: user.name,
-      link: resetLink(createResetToken(user)),
-    }),
-  );
+  // Asked for too often (for this inbox, or from this client): no more mail today
+  if (!allowEmail('reset', requestedFrom, user.email)) return;
+  await sendMail(passwordResetEmail({ to: user.email, link: resetLink(createResetToken(user)) }));
 }
 
 /** Set the new password; every session (anyone's who had one) is signed out. */
