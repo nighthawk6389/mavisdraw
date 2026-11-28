@@ -376,14 +376,9 @@ export async function acceptInvite(token: string, userId: string, userEmail: str
       .set({ acceptedAt: new Date(), acceptedBy: userId })
       .where(eq(invites.id, invite.id));
   }
-  // The link went to that address, so opening it confirms the address is theirs
-  const user = await db.query.users.findFirst({
-    where: eq(users.id, userId),
-    columns: { emailVerifiedAt: true },
-  });
-  if (user && !user.emailVerifiedAt) {
-    await db.update(users).set({ emailVerifiedAt: new Date() }).where(eq(users.id, userId));
-    await claimInvitesForEmail(userId, userEmail);
-  }
+  // Accepting doesn't confirm the address: whoever sent the invite has the
+  // link too, and could otherwise confirm an account they registered with
+  // someone else's address (and so receive every invite sent to it). The
+  // address is confirmed by the emailed confirmation or reset link, or SSO.
   return { kind: invite.kind, targetId: invite.targetId };
 }

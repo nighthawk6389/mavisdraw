@@ -112,30 +112,44 @@ test.describe('Email confirmation', () => {
     await expect(page.getByRole('alert')).toContainText('This confirmation link is broken.');
   });
 
-  test('opening an invite link confirms the address it was sent to', async ({ browser }) => {
-    const ctxA = await browser.newContext();
-    const owner = await registerUser(ctxA, 'Olivia Owner');
-    const name = `Ops ${uniq()}`;
-    const project = { ...(await apiCreateProject(ctxA.request, owner, name)), name };
-    const email = `newhire-${uniq()}@example.com`;
-    const { inviteUrl } = await invite(ctxA.request, owner, project.id, email);
+  test('an invite link joins its project but doesn’t confirm the address: the inviter has it too', async ({
+    browser,
+  }) => {
+    // Someone registers an address that isn't theirs, and can't confirm it…
+    const email = `cfo-${uniq()}@example.com`;
+    const ctxM = await browser.newContext();
+    const squatter = await registerUser(ctxM, 'Mallory', 'm', { email, verify: false });
+    // …a real colleague invites that address (the link goes to the real inbox)…
+    const ctxO = await browser.newContext();
+    const owner = await registerUser(ctxO, 'Olivia Owner');
+    const boardName = `Board ${uniq()}`;
+    const board = await apiCreateProject(ctxO.request, owner, boardName);
+    await invite(ctxO.request, owner, board.id, email);
+    // …and the squatter, from a second account, invites the address to a
+    // project of their own, which hands them that invite's link
+    const ctxX = await browser.newContext();
+    const accomplice = await registerUser(ctxX, 'Mallory Two');
+    const baitName = `Bait ${uniq()}`;
+    const bait = await apiCreateProject(ctxX.request, accomplice, baitName);
+    const { inviteUrl } = await invite(ctxX.request, accomplice, bait.id, email);
 
-    const ctxN = await browser.newContext();
-    const n = await ctxN.newPage();
-    const user = await registerUser(ctxN, 'Nico', 'n', { email, verify: false });
-    await n.goto(inviteUrl!);
-    await expect(n).toHaveURL(/\/p\//, { timeout: 15_000 });
-    const me = await ctxN.request.get(`${API_URL}/api/auth/me`, {
-      headers: { Authorization: `Bearer ${user.accessToken}` },
+    const m = await ctxM.newPage();
+    await m.goto(inviteUrl!);
+    await expect(m).toHaveURL(/\/p\//, { timeout: 15_000 });
+    // The link's own project is joined, but the address isn't confirmed by
+    // it, so the colleague's invite keeps waiting for the real owner
+    const me = await ctxM.request.get(`${API_URL}/api/auth/me`, {
+      headers: { Authorization: `Bearer ${squatter.accessToken}` },
     });
     expect(((await me.json()) as { user: { emailVerified: boolean } }).user.emailVerified).toBe(
-      true,
+      false,
     );
-    await n.goto('/');
-    await expect(n.getByText(project.name)).toBeVisible();
-    await expect(n.getByTestId('confirm-email-banner')).toHaveCount(0);
+    const names = await projectNames(ctxM.request, squatter);
+    expect(names).toContain(baitName);
+    expect(names).not.toContain(boardName);
 
-    await ctxA.close();
-    await ctxN.close();
+    await ctxM.close();
+    await ctxO.close();
+    await ctxX.close();
   });
 });
