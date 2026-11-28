@@ -30,7 +30,8 @@ export default function EmptyCanvasHint() {
   const action =
     'rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-800';
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-6 z-20 flex justify-center px-4">
+    // Above the zoom controls (bottom right), so it never covers them
+    <div className="pointer-events-none absolute inset-x-0 bottom-14 z-20 flex justify-center px-4">
       <section
         aria-label="Start your map"
         data-testid="empty-canvas-hint"
