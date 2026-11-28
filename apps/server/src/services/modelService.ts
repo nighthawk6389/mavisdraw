@@ -1,7 +1,8 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import type { Document } from '@hocuspocus/server';
 import type {
+  MavisDrawScene,
   ComponentDetails,
   ProjectModel,
   StoredComponent,
@@ -56,9 +57,11 @@ export async function loadStoredModel(
 export async function getProjectModel(
   project: ProjectRef,
   documents: Map<string, Document>,
+  /** The project's scene, if the caller loaded it already (it's the expensive part). */
+  loaded?: MavisDrawScene,
 ): Promise<ProjectModel> {
   const [scene, stored] = await Promise.all([
-    loadProjectScene(project, documents),
+    loaded ?? loadProjectScene(project, documents),
     loadStoredModel(project.id),
   ]);
   const source = project.repoSource;
@@ -100,11 +103,24 @@ export async function saveComponentDetails(
 }
 
 /** A component that exists only in the model (not drawn anywhere yet). */
+/** Recorded components per project (drawn ones with details, and model-only ones). */
+export const MAX_RECORDED_COMPONENTS = 5000;
+
 export async function createModelComponent(
   projectId: string,
   input: ComponentDetails & { name: string },
   userId: string,
 ): Promise<string> {
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(modelComponents)
+    .where(eq(modelComponents.projectId, projectId));
+  if (count >= MAX_RECORDED_COMPONENTS) {
+    throw new ModelError(
+      `A project can record at most ${MAX_RECORDED_COMPONENTS} components. Remove some first.`,
+      409,
+    );
+  }
   const id = `c_${nanoid(12)}`;
   await saveComponentDetails(projectId, id, input, userId);
   return id;
@@ -209,6 +225,7 @@ export async function renameComponent(
   rooms: Rooms,
   userId: string,
 ): Promise<{ labels: number; diagrams: string[] }> {
+  // Read afresh: the labels to change are the ones there now
   const scene = await loadProjectScene(project, rooms.documents);
   const edits = renameEdits(scene, componentId, name);
   const ours = new Set(scene.diagrams.map((d) => d.id));

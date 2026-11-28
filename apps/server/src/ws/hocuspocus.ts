@@ -1,6 +1,11 @@
-import { Hocuspocus } from '@hocuspocus/server';
+import { Hocuspocus, type Document } from '@hocuspocus/server';
 import { verifyAccessToken } from '../services/authService.js';
-import { getDiagram, updateDiagram, checkProjectAccess } from '../services/diagramService.js';
+import {
+  getDiagramMeta,
+  getDiagramWithState,
+  updateDiagram,
+  checkProjectAccess,
+} from '../services/diagramService.js';
 import { withDiagramLock } from '../services/diagramLock.js';
 import type * as Y from 'yjs';
 import {
@@ -15,6 +20,19 @@ export const DOCUMENT_PREFIX = 'diagram:';
 
 export function documentNameFor(diagramId: string): string {
   return `${DOCUMENT_PREFIX}${diagramId}`;
+}
+
+/**
+ * The live room for a diagram, if one is open and has finished loading. A
+ * room is registered before its stored state is loaded into it: until then
+ * it's empty, and the database row is what it will hold, so readers use that.
+ */
+export function loadedRoom(
+  documents: Map<string, Document>,
+  diagramId: string,
+): Document | undefined {
+  const doc = documents.get(documentNameFor(diagramId));
+  return doc && !doc.isLoading ? doc : undefined;
 }
 
 /** Per-socket state shared with onAuthenticate through the connection context. */
@@ -163,7 +181,7 @@ export function createHocuspocusServer(): Hocuspocus {
       const payload = verifyAccessToken(token);
 
       const diagramId = documentName.replace(DOCUMENT_PREFIX, '');
-      const diagram = await getDiagram(diagramId);
+      const diagram = await getDiagramMeta(diagramId);
       if (!diagram) {
         throw new Error('Diagram not found');
       }
@@ -205,7 +223,7 @@ export function createHocuspocusServer(): Hocuspocus {
       const diagramId = documentName.replace(DOCUMENT_PREFIX, '');
       // A save or restore writing the stored state right now finishes first,
       // so the room starts from what it wrote (services/diagramContents.ts)
-      const diagram = await withDiagramLock(diagramId, () => getDiagram(diagramId));
+      const diagram = await withDiagramLock(diagramId, () => getDiagramWithState(diagramId));
       if (!diagram) return document;
 
       if (diagram.yjsState) {

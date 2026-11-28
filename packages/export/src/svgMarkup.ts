@@ -466,11 +466,29 @@ function transform(el: MavisElement): string {
 
 // ── Document ─────────────────────────────────────────────────
 
+/**
+ * Elements come as clients stored them: arrays the drawing reads are given
+ * a usable shape, so one malformed element can't fail the whole picture.
+ */
+function drawable(el: MavisElement): MavisElement {
+  const fix: Record<string, unknown> = {};
+  if (!Array.isArray(el.boundElements)) fix.boundElements = [];
+  if (el.type === 'line' || el.type === 'arrow' || el.type === 'freedraw') {
+    const points = (el as { points?: unknown }).points;
+    if (!Array.isArray(points) || !points.every((p) => Array.isArray(p) && p.length >= 2)) {
+      fix.points = Array.isArray(points)
+        ? points.filter((p) => Array.isArray(p) && p.length >= 2)
+        : [];
+    }
+  }
+  return Object.keys(fix).length > 0 ? ({ ...el, ...fix } as MavisElement) : el;
+}
+
 export function renderSvgMarkup(
   elements: MavisElement[],
   options: SvgMarkupOptions & { backgroundColor?: string } = {},
 ): string {
-  const live = elements.filter((el) => !el.isDeleted);
+  const live = elements.filter((el) => !el.isDeleted).map(drawable);
   const padding = options.padding ?? 24;
   const theme = options.theme ?? 'light';
   const pal = palette(theme, safeColor(options.backgroundColor, '#ffffff'));

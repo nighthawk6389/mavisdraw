@@ -1,9 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as Y from 'yjs';
 import type { Hocuspocus } from '@hocuspocus/server';
+import type { Document } from '@hocuspocus/server';
 import {
   applyAccessChange,
   createHocuspocusServer,
+  disconnectUser,
+  loadedRoom,
   persistOpenDocuments,
   reapplyProjectAccess,
 } from '../ws/hocuspocus.js';
@@ -12,6 +15,8 @@ import { updateDiagram } from '../services/diagramService.js';
 
 vi.mock('../services/diagramService.js', () => ({
   getDiagram: vi.fn(),
+  getDiagramMeta: vi.fn(),
+  getDiagramWithState: vi.fn(),
   updateDiagram: vi.fn(async () => ({})),
   checkProjectAccess: vi.fn(),
 }));
@@ -75,6 +80,20 @@ describe('persistOpenDocuments (graceful shutdown)', () => {
   });
 });
 
+describe('reading a live room', () => {
+  it('only once it has loaded: until then it is empty, and the stored row is what it holds', () => {
+    const loading = Object.assign(new Y.Doc(), { isLoading: true }) as unknown as Document;
+    const loaded = Object.assign(new Y.Doc(), { isLoading: false }) as unknown as Document;
+    const documents = new Map([
+      ['diagram:a', loading],
+      ['diagram:b', loaded],
+    ]);
+    expect(loadedRoom(documents, 'a')).toBeUndefined();
+    expect(loadedRoom(documents, 'b')).toBe(loaded);
+    expect(loadedRoom(documents, 'c')).toBeUndefined();
+  });
+});
+
 describe('applyAccessChange (permissions change while connected)', () => {
   function room(users: Array<{ id: string; projectId: string }>) {
     const doc = new Y.Doc() as Y.Doc & { connections: Map<unknown, { connection: unknown }> };
@@ -105,6 +124,22 @@ describe('applyAccessChange (permissions change while connected)', () => {
     expect(conns[0].webSocket.close).toHaveBeenCalledWith(4403, 'Access revoked');
     expect(conns[1].webSocket.close).not.toHaveBeenCalled();
     expect(doc.getMap('signals').get('permissions')).toBe(1);
+  });
+
+  it('an account taken back has every socket closed, in every project', () => {
+    const { doc, conns } = room([
+      { id: 'squatter', projectId: 'p1' },
+      { id: 'squatter', projectId: 'p2' },
+      { id: 'someone', projectId: 'p1' },
+    ]);
+    const server = { documents: new Map([['diagram:d1', doc]]) } as unknown as Pick<
+      Hocuspocus,
+      'documents'
+    >;
+    expect(disconnectUser(server, 'squatter')).toBe(2);
+    expect(conns[0].webSocket.close).toHaveBeenCalledWith(4403, 'Signed out');
+    expect(conns[1].webSocket.close).toHaveBeenCalledWith(4403, 'Signed out');
+    expect(conns[2].webSocket.close).not.toHaveBeenCalled();
   });
 
   it('makes a downgraded member read-only, and leaves other projects alone', () => {

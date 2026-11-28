@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { MavisElement } from '@mavisdraw/types';
 import { exportToSvg } from '../svg';
+import { renderSvgMarkup } from '../svgMarkup';
 
 const base = {
   diagramId: 'd',
@@ -98,5 +99,16 @@ describe('exporting SVG from the editor', () => {
     expect(sketchy).toContain('fill="#ffffff"');
     const transparent = exportToSvg([label], { ...options('clean'), includeBackground: false });
     expect(transparent).not.toContain('fill="#ffffff"');
+  });
+
+  it('draws the rest of the map when one stored element is malformed', () => {
+    const broken = [
+      { id: 'a', type: 'arrow', x: 0, y: 0, width: 10, height: 10, points: undefined },
+      { id: 'b', type: 'rectangle', x: 0, y: 0, width: 50, height: 30, boundElements: 'x' },
+      { id: 'c', type: 'freedraw', x: 0, y: 0, width: 5, height: 5, points: [[0, 0], null] },
+    ] as unknown as Parameters<typeof renderSvgMarkup>[0];
+    const svg = renderSvgMarkup(broken);
+    expect(svg.startsWith('<svg')).toBe(true);
+    expect(svg).toContain('<rect');
   });
 });

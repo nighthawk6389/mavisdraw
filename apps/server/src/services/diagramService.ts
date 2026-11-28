@@ -63,15 +63,44 @@ export async function createDiagram(input: CreateDiagramInput) {
   return diagram;
 }
 
+/**
+ * A diagram's row, without its CRDT state: that grows with every edit ever
+ * made (tombstones included) and only a live room starting needs it.
+ */
 export async function getDiagram(id: string) {
   return db.query.diagrams.findFirst({
     where: eq(diagrams.id, id),
+    columns: { yjsState: false },
   });
 }
 
+/** The whole row, CRDT state included: for a live room starting from it. */
+export async function getDiagramWithState(id: string) {
+  return db.query.diagrams.findFirst({ where: eq(diagrams.id, id) });
+}
+
+/** A diagram without its contents: enough to check access, title it or cache it. */
+export async function getDiagramMeta(id: string) {
+  return db.query.diagrams.findFirst({
+    where: eq(diagrams.id, id),
+    columns: { elements: false, yjsState: false },
+  });
+}
+
+/** Just a diagram's stored elements. */
+export async function getDiagramElements(id: string): Promise<unknown[]> {
+  const row = await db.query.diagrams.findFirst({
+    where: eq(diagrams.id, id),
+    columns: { elements: true },
+  });
+  return (row?.elements as unknown[] | undefined) ?? [];
+}
+
+/** Every diagram of a project with its elements (not its CRDT state). */
 export async function getDiagramsByProject(projectId: string) {
   return db.query.diagrams.findMany({
     where: eq(diagrams.projectId, projectId),
+    columns: { yjsState: false },
   });
 }
 

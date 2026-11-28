@@ -35,8 +35,11 @@ export interface McpDeps {
   appUrl: string;
   listProjects(userId: string): Promise<McpProject[]>;
   loadScene(projectId: string): Promise<MavisDrawScene>;
-  /** The project's architecture model (components across diagrams, details, dependencies). */
-  loadModel(projectId: string): Promise<ProjectModel>;
+  /**
+   * The project's architecture model (components across diagrams, details,
+   * dependencies). Pass the scene if it's loaded already: it's the costly part.
+   */
+  loadModel(projectId: string, scene?: MavisDrawScene): Promise<ProjectModel>;
   createProposal(input: {
     projectId: string;
     diagramId: string;
@@ -328,7 +331,7 @@ export function buildMcpServer(caller: McpCaller, deps: McpDeps): McpServer {
         const ids = scene.diagrams
           .filter((d) => keep.has(d.id))
           .map((d) => `- ${diagramPath(scene, d.id).join(' › ')}: \`${d.id}\``);
-        const model = await deps.loadModel(p.id);
+        const model = await deps.loadModel(p.id, scene);
         const shown = model.components.filter((c) =>
           c.appearances.some((a) => keep.has(a.diagramId)),
         );
@@ -451,17 +454,14 @@ export function buildMcpServer(caller: McpCaller, deps: McpDeps): McpServer {
     ({ project, component }) =>
       run(async () => {
         const p = resolveProject(await listProjects(), project);
-        const model = await deps.loadModel(p.id);
+        const scene = await deps.loadScene(p.id);
+        const model = await deps.loadModel(p.id, scene);
         let c: ModelComponent;
         try {
           c = resolveComponent(model, component);
         } catch (err) {
           // Maybe a code path: the component owning it
-          const owner = searchComponents(
-            withRepo(indexComponents(await deps.loadScene(p.id)), p.repo),
-            component,
-            1,
-          )[0];
+          const owner = searchComponents(withRepo(indexComponents(scene), p.repo), component, 1)[0];
           const mc = owner
             ? model.components.find((m) =>
                 m.appearances.some((a) => a.elementId === owner.elementId),
@@ -559,7 +559,7 @@ export function buildMcpServer(caller: McpCaller, deps: McpDeps): McpServer {
           const diagramId = resolveDiagram(scene, args.diagram);
           const components = indexComponents(scene).filter((c) => c.diagramId === diagramId);
           // Names and component ids can also mean components on other levels
-          const model = await deps.loadModel(p.id);
+          const model = await deps.loadModel(p.id, scene);
           const built = buildProposal(args as ProposalRequest, components, model);
           if (!built.ok) throw new ToolError(built.error);
           const { id } = await deps.createProposal({

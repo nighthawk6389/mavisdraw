@@ -45,13 +45,13 @@ export async function mcpRoutes(app: FastifyInstance): Promise<void> {
       if (!project) throw new Error(`Project ${projectId} vanished`);
       return loadProjectScene(project, app.hocuspocus.documents);
     },
-    async loadModel(projectId) {
+    async loadModel(projectId, scene) {
       const project = await db.query.projects.findFirst({
         where: eq(projects.id, projectId),
         columns: { id: true, rootDiagramId: true, repoSource: true },
       });
       if (!project) throw new Error(`Project ${projectId} vanished`);
-      return getProjectModel(project, app.hocuspocus.documents);
+      return getProjectModel(project, app.hocuspocus.documents, scene);
     },
     async createProposal({ projectId, diagramId, authorId, sourceLabel, proposal }) {
       const created = await createProposal({

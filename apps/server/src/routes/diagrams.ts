@@ -15,7 +15,7 @@ import {
   checkProjectAccess,
 } from '../services/diagramService.js';
 import { requireAuth } from '../middleware/auth.js';
-import { documentNameFor } from '../ws/hocuspocus.js';
+import { loadedRoom } from '../ws/hocuspocus.js';
 import {
   mergeElements,
   readLiveElements,
@@ -29,9 +29,13 @@ import {
 } from '../services/diagramContents.js';
 import type { Document } from '@hocuspocus/server';
 
-/** The open collaboration document for a diagram, if anyone is editing it live. */
+/**
+ * The open collaboration document for a diagram, if anyone is editing it
+ * live (and it has finished loading: until then the stored row is what it
+ * holds).
+ */
 function liveDocument(documents: Map<string, Document>, diagramId: string): Document | undefined {
-  return documents.get(documentNameFor(diagramId));
+  return loadedRoom(documents, diagramId);
 }
 
 /** Never send the CRDT blob to REST clients. */

@@ -6,9 +6,14 @@ import type { MavisElement } from '@mavisdraw/types';
 import { renderSvgMarkup } from '@mavisdraw/export/svg-markup';
 import { requireAuth } from '../middleware/auth.js';
 import { embedRateLimit } from '../middleware/rateLimit.js';
-import { checkProjectAccess, getDiagram, getDiagramSummaries } from '../services/diagramService.js';
+import {
+  checkProjectAccess,
+  getDiagramElements,
+  getDiagramMeta,
+  getDiagramSummaries,
+} from '../services/diagramService.js';
 import { getEmbed, publishEmbed, resolveEmbed, unpublishEmbed } from '../services/embedService.js';
-import { documentNameFor } from '../ws/hocuspocus.js';
+import { loadedRoom } from '../ws/hocuspocus.js';
 import { readLiveElements } from '../ws/ydocElements.js';
 
 const publishSchema = z.object({ rotate: z.boolean().optional() });
@@ -90,18 +95,19 @@ export async function embedRoutes(app: FastifyInstance): Promise<void> {
     if (!project) return null;
     const id = diagramId || project.rootDiagramId;
     if (!id) return null;
-    const diagram = await getDiagram(id);
+    // Contents are read only if something is drawn (not for a revalidation)
+    const diagram = await getDiagramMeta(id);
     if (!diagram || diagram.projectId !== project.id) return null;
-    const live = app.hocuspocus.documents.get(documentNameFor(diagram.id));
+    const live = loadedRoom(app.hocuspocus.documents, diagram.id);
     return {
       project,
       diagram,
       /** Changes whenever what would be drawn does (cheap: nothing is read or drawn). */
       version: `${diagram.updatedAt.toISOString()}:${live ? sha1(Y.encodeStateVector(live)) : ''}`,
-      elements: () =>
-        ((live ? readLiveElements(live) : diagram.elements) as MavisElement[]).filter(
-          (el) => !el.isDeleted,
-        ),
+      elements: async () =>
+        (
+          (live ? readLiveElements(live) : await getDiagramElements(diagram.id)) as MavisElement[]
+        ).filter((el) => !el.isDeleted),
     };
   };
 
@@ -150,7 +156,7 @@ export async function embedRoutes(app: FastifyInstance): Promise<void> {
           title: found.diagram.title,
           renderMode: found.diagram.renderMode,
           viewBackgroundColor: found.diagram.viewBackgroundColor,
-          elements: found.elements(),
+          elements: await found.elements(),
         },
       });
     },
@@ -172,7 +178,7 @@ export async function embedRoutes(app: FastifyInstance): Promise<void> {
     if (request.headers['if-none-match'] === etag) return svgHeaders(reply, etag).code(304).send();
     let svg = svgCache.get(key);
     if (svg === undefined) {
-      const elements = found.elements();
+      const elements = await found.elements();
       svg = renderSvgMarkup(elements, {
         theme,
         renderMode:

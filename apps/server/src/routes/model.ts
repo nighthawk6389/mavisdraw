@@ -18,6 +18,9 @@ import {
 } from '../services/modelService.js';
 import { signalDocument } from '../ws/hocuspocus.js';
 
+/** Component ids are element ids or `c_…`: short, without odd characters. */
+const validComponentId = (id: string) => /^[A-Za-z0-9_-]{1,128}$/.test(id);
+
 const kind = z.enum(MODEL_COMPONENT_KINDS as [string, ...string[]]);
 const optionalText = (max: number) => z.string().trim().max(max).nullable().optional();
 const details = {
@@ -130,11 +133,16 @@ export async function modelRoutes(app: FastifyInstance): Promise<void> {
       }
       const project = await projectFor(id, request.user!.userId, reply, true);
       if (!project) return reply;
-      const componentId = await createModelComponent(
-        id,
-        parsed.data as Parameters<typeof createModelComponent>[1],
-        request.user!.userId,
-      );
+      let componentId: string;
+      try {
+        componentId = await createModelComponent(
+          id,
+          parsed.data as Parameters<typeof createModelComponent>[1],
+          request.user!.userId,
+        );
+      } catch (err) {
+        return fail(reply, err);
+      }
       signal(id, ['model']);
       return reply
         .code(201)
@@ -148,6 +156,8 @@ export async function modelRoutes(app: FastifyInstance): Promise<void> {
     { preHandler: [requireAuth] },
     async (request, reply) => {
       const { id, componentId } = request.params as { id: string; componentId: string };
+      if (!validComponentId(componentId))
+        return reply.code(404).send({ error: 'Component not found' });
       const parsed = componentUpdate.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({ error: 'Invalid component', details: parsed.error.issues });
@@ -191,6 +201,8 @@ export async function modelRoutes(app: FastifyInstance): Promise<void> {
     { preHandler: [requireAuth] },
     async (request, reply) => {
       const { id, componentId } = request.params as { id: string; componentId: string };
+      if (!validComponentId(componentId))
+        return reply.code(404).send({ error: 'Component not found' });
       const project = await projectFor(id, request.user!.userId, reply, true);
       if (!project) return reply;
       await deleteComponentDetails(id, componentId);
