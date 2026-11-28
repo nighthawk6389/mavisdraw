@@ -9,7 +9,7 @@ import {
 import { useElementsStore, withoutHistory } from '../stores/elementsStore';
 import { useDiagramStore } from '../stores/diagramStore';
 import { recordSaved } from './saveTracker';
-import { applyDeferred } from './offlineJournal';
+import { applyDeferred, diagramConfirmed, journalNewDiagram } from './offlineJournal';
 
 /**
  * Keeps the diagram hierarchy in sync with the server:
@@ -82,6 +82,8 @@ export function ensureDiagramOnServer(diagram: Diagram): Promise<void> {
       title: diagram.title,
     });
     known.add(diagram.id);
+    // The offline journal no longer needs to keep it
+    diagramConfirmed(diagram.id);
   })().finally(() => creating.delete(diagram.id));
 
   creating.set(diagram.id, promise);
@@ -211,8 +213,39 @@ export async function goToDiagram(diagramId: string): Promise<boolean> {
 export function registerNewDiagram(diagram: Diagram): void {
   loaded.add(diagram.id);
   recordSaved(diagram.id, [], diagram.updatedAt);
+  // Until the server has it, the device does (drawn offline, it outlives the tab)
+  journalNewDiagram(diagram);
   ensureDiagramOnServer(diagram).catch((err) => {
     // Autosave retries the create on its next save of this diagram
     console.error('Failed to create nested diagram on the server:', err);
   });
+}
+
+/**
+ * Nested diagrams made on this device that the server never got (drawn
+ * offline, the tab closed before reconnecting): put back into the project,
+ * parents first, so the edits made in them have somewhere to go. Returns
+ * the ones put back (they're created on the server as usual).
+ */
+export function recreateDiagrams(journaled: Diagram[]): Diagram[] {
+  const recreated: Diagram[] = [];
+  let waiting = journaled.filter((d) => !useDiagramStore.getState().diagrams.has(d.id));
+  // A child can only come back once its parent is there
+  for (let progress = true; progress && waiting.length > 0; ) {
+    progress = false;
+    const still: Diagram[] = [];
+    for (const d of waiting) {
+      const diagrams = useDiagramStore.getState().diagrams;
+      if (d.parentDiagramId && !diagrams.has(d.parentDiagramId)) {
+        still.push(d);
+        continue;
+      }
+      useDiagramStore.setState({ diagrams: new Map(diagrams).set(d.id, d) });
+      registerNewDiagram(d);
+      recreated.push(d);
+      progress = true;
+    }
+    waiting = still;
+  }
+  return recreated;
 }

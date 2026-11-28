@@ -8,7 +8,9 @@ import {
   applyDeferred,
   applyJournal,
   decideRestore,
+  diagramConfirmed,
   discardJournals,
+  journalNewDiagram,
   readJournal,
   startJournal,
   stopJournal,
@@ -141,6 +143,81 @@ describe('journal', () => {
     const saved = (await readJournal(U, 'p2')).entries;
     expect(saved[0].element.x).toBe(99);
     stopJournal();
+  });
+
+  it('keeps a nested diagram made here until the server has it, with its latest title', async () => {
+    startJournal(U, 'p10');
+    const nested = {
+      id: 'nested-1',
+      projectId: 'p10',
+      parentDiagramId: D,
+      parentPortalId: 'portal-1',
+      title: 'Payments',
+      viewBackgroundColor: '#ffffff',
+      gridEnabled: true,
+      gridSize: 20,
+      renderMode: 'clean',
+      layers: [],
+      createdBy: U,
+      createdAt: 1,
+      updatedAt: 1,
+    } as const;
+    journalNewDiagram({ ...nested, layers: [] });
+    // Renamed before the tab closed: the journal stores it as it is now
+    const { useDiagramStore } = await import('../stores/diagramStore');
+    useDiagramStore.setState({
+      diagrams: new Map([['nested-1', { ...nested, layers: [], title: 'Billing' }]]),
+    });
+    window.dispatchEvent(new Event('pagehide'));
+    await vi.waitFor(async () =>
+      expect((await readJournal(U, 'p10')).diagrams.map((d) => d.title)).toEqual(['Billing']),
+    );
+    expect(backupFor('p10')).toContain('"Billing"');
+    // Once the server has it, nothing is left to keep
+    diagramConfirmed('nested-1');
+    window.dispatchEvent(new Event('pagehide'));
+    await vi.waitFor(async () => expect((await readJournal(U, 'p10')).diagrams).toEqual([]));
+    expect(backupFor('p10')).toBeNull();
+    stopJournal();
+    useDiagramStore.setState({ diagrams: new Map() });
+  });
+
+  it('a journal too big for the backup isn’t stringified whole on every move of a drag', () => {
+    vi.useFakeTimers();
+    try {
+      vi.advanceTimersByTime(1000);
+      const picture = box('pic', { version: 2 }) as MavisElement & { dataUrl?: string };
+      const huge = { ...picture, dataUrl: `data:image/png;base64,${'A'.repeat(2_000_000)}` };
+      const a = box('a', { version: 3 });
+      withoutHistory(() =>
+        useElementsStore.setState({
+          elements: new Map<string, MavisElement>([
+            ['a', a],
+            ['pic', huge as MavisElement],
+          ]),
+        }),
+      );
+      recordSaved(D, [a]);
+      startJournal(U, 'p9');
+      // An unsaved picture is in the journal…
+      useElementsStore.getState().updateElement('pic', { x: 1 });
+      expect(backupFor('p9')).toBeNull();
+      // …so a drag of another shape mustn't stringify it on every frame
+      const stringify = vi.spyOn(JSON, 'stringify');
+      for (let i = 0; i < 5; i++) {
+        useElementsStore.getState().updateElement('a', { x: 50 + i });
+        vi.advanceTimersByTime(100);
+      }
+      const bigCalls = stringify.mock.results.filter(
+        (r) => typeof r.value === 'string' && r.value.length > 1_000_000,
+      );
+      expect(bigCalls).toHaveLength(0);
+      expect(backupFor('p9')).toBeNull();
+      stringify.mockRestore();
+    } finally {
+      stopJournal();
+      vi.useRealTimers();
+    }
   });
 
   it('backs up every edit synchronously, so a tab killed without unload events keeps it', () => {

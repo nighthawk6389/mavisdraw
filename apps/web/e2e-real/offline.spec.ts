@@ -3,6 +3,7 @@ import {
   API_URL,
   apiCreateProject,
   apiGetDiagram,
+  apiListDiagrams,
   dragOnCanvas,
   dragPage,
   getActiveElements,
@@ -395,6 +396,65 @@ test.describe('Offline', () => {
     await expect
       .poll(async () => (await innerBoxes())[0]?.x as number, { timeout: 20_000 })
       .toBeGreaterThan((box.x as number) + 100);
+    await context.close();
+  });
+
+  test('a nested diagram made offline comes back with what was drawn in it', async ({
+    browser,
+  }) => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await noUnloadEvents(page);
+    const user = await registerUser(context, 'Offline Nester');
+    const project = await apiCreateProject(context.request, user, `Offline nest ${Date.now()}`);
+    await page.goto(`/p/${project.id}`);
+    await isConnected(page);
+
+    // Offline: a portal, and a box on the new level inside it
+    await goOffline(context, page);
+    await page.keyboard.press('o');
+    await dragOnCanvas(page, { x: 420, y: 300 }, { x: 560, y: 400 });
+    const portal = (await getActiveElements(page)).find((e) => e.type === 'portal')!;
+    const inner = portal.targetDiagramId as string;
+    const pc = await screenCenterOf(page, portal);
+    await page.mouse.dblclick(pc.x, pc.y);
+    await expect(page).toHaveURL(new RegExp(`/d/${inner}$`));
+    await page.keyboard.press('r');
+    await dragOnCanvas(page, { x: 150, y: 150 }, { x: 300, y: 250 });
+    await expect(page.getByTestId('offline-indicator')).toContainText('kept on this device');
+    await killTab(page);
+
+    // Back online: the level is recreated, and the box saved into it
+    await context.setOffline(false);
+    const again = await context.newPage();
+    await again.goto(`/p/${project.id}`);
+    await isConnected(again);
+    await expect
+      .poll(
+        async () =>
+          (await apiListDiagrams(context.request, user, project.id)).some((d) => d.id === inner),
+        { timeout: 20_000 },
+      )
+      .toBe(true);
+    await expect
+      .poll(
+        async () =>
+          ((await apiGetDiagram(context.request, user, inner)).diagram?.elements ?? []).filter(
+            (e) => e.type === 'rectangle' && !e.isDeleted,
+          ).length,
+        { timeout: 20_000 },
+      )
+      .toBe(1);
+    const portalAgain = (await getActiveElements(again)).find((e) => e.type === 'portal')!;
+    expect(portalAgain.targetDiagramId).toBe(inner);
+    const p2 = await screenCenterOf(again, portalAgain);
+    await again.mouse.dblclick(p2.x, p2.y);
+    await expect(again).toHaveURL(new RegExp(`/d/${inner}$`));
+    await expect
+      .poll(
+        async () => (await getActiveElements(again)).filter((e) => e.type === 'rectangle').length,
+      )
+      .toBe(1);
     await context.close();
   });
 });

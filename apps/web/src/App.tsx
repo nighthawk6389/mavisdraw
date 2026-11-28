@@ -68,6 +68,7 @@ import { captureStartupAction, runStartupAction, takeStartupAction } from './tem
 import {
   announceRestore,
   applyJournal,
+  diagramConfirmed,
   readJournal,
   startJournal,
   stopJournal,
@@ -76,9 +77,11 @@ import {
 import { usePermissionStore, type ProjectRole } from './stores/permissionStore';
 import { toast } from './stores/toastStore';
 import {
+  ensureDiagramOnServer,
   isDiagramLoaded,
   loadDiagramElements,
   markDiagramLoaded,
+  recreateDiagrams,
   resetDiagramSync,
   toDiagram,
 } from './services/diagramSync';
@@ -589,13 +592,28 @@ async function loadProject(projectId: string, diagramId: string | null): Promise
   const userId = useAuthStore.getState().user?.id;
   if (userId) {
     const journal = await readJournal(userId, projectId);
-    const saved = journal.entries.filter((e) => newDiagrams.has(e.diagramId));
-    const levels = Array.from(new Set(saved.map((e) => e.diagramId))).filter((d) => d !== rootId);
+    // Nested diagrams drawn here that never reached the server come back
+    // first, so the shapes drawn in them have somewhere to go
+    const recreated = recreateDiagrams(journal.diagrams);
+    const fresh = new Set(recreated.map((d) => d.id));
+    const known = useDiagramStore.getState().diagrams;
+    const saved = journal.entries.filter((e) => known.has(e.diagramId));
+    const levels = Array.from(new Set(saved.map((e) => e.diagramId))).filter(
+      (d) => d !== rootId && !fresh.has(d),
+    );
     // A level that doesn't load keeps its edits until it does
     const failed = new Set<string>();
     await Promise.all(levels.map((d) => loadDiagramElements(d).catch(() => failed.add(d))));
     const { pending, result } = applyJournal(saved, (d) => !failed.has(d));
-    startJournal(userId, projectId, pending, journal.adopted);
+    startJournal(userId, projectId, pending, journal.adopted, recreated);
+    // Created on the server meanwhile? Then the journal can let go of them
+    for (const d of recreated) {
+      ensureDiagramOnServer(d)
+        .then(() => diagramConfirmed(d.id))
+        .catch(() => {
+          // Still offline: autosave creates it with its first save
+        });
+    }
     announceRestore(result);
   }
 

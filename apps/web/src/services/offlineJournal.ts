@@ -1,6 +1,7 @@
 import { create } from 'zustand';
-import type { MavisElement } from '@mavisdraw/types';
+import type { Diagram, MavisElement } from '@mavisdraw/types';
 import { useElementsStore, isApplyingUnrecorded, withoutHistory } from '../stores/elementsStore';
+import { useDiagramStore } from '../stores/diagramStore';
 import { diffElementMaps, sameElementContent } from '../stores/history';
 import { toast } from '../stores/toastStore';
 import { savedVersions } from './saveTracker';
@@ -36,6 +37,11 @@ interface StoredJournal {
   /** When it was written (the newer of the two copies wins on read). */
   savedAt?: number;
   entries: JournalEntry[];
+  /**
+   * Nested diagrams made on this device the server hasn't confirmed yet
+   * (drawn offline): without them, their shapes would have nowhere to go.
+   */
+  diagrams?: Diagram[];
 }
 
 // ── Which tab ────────────────────────────────────────────────
@@ -122,17 +128,45 @@ const tabOf = (key: string) => key.slice(key.lastIndexOf(':') + 1);
  */
 const backupKey = (key: string) => `mavisdraw:${key}`;
 
+/**
+ * Each element's JSON length, measured once: the store replaces an element
+ * on every change (never mutates it), so during a drag only the shape being
+ * moved is measured again, not every pasted image in the journal.
+ */
+const jsonLengths = new WeakMap<object, number>();
+
+/** About how long the journal's JSON would be, without building it. */
+function approxJsonLength(list: Iterable<JournalEntry>): number {
+  let total = 64;
+  for (const entry of list) {
+    let n = jsonLengths.get(entry.element);
+    if (n === undefined) {
+      n = JSON.stringify(entry.element).length;
+      jsonLengths.set(entry.element, n);
+    }
+    total += n + 80;
+  }
+  return total;
+}
+
 /** Write this journal's backup; whether it now holds every entry. */
 function writeBackup(key: string): boolean {
   try {
-    if (entries.size === 0) {
+    if (journalEmpty()) {
       localStorage.removeItem(backupKey(key));
       return true;
+    }
+    // Big journals (inline images) stay in IndexedDB only: known before
+    // stringifying megabytes up to ten times a second only to drop them
+    if (approxJsonLength(entries.values()) > MAX_BACKUP_CHARS) {
+      localStorage.removeItem(backupKey(key));
+      return false;
     }
     const payload: StoredJournal = {
       v: 1,
       savedAt: Date.now(),
       entries: Array.from(entries.values()),
+      diagrams: currentDiagrams(),
     };
     const json = JSON.stringify(payload);
     // Big journals (inline images) stay in IndexedDB only
@@ -222,6 +256,15 @@ export const useJournalStore = create<{ pending: number }>(() => ({ pending: 0 }
 let journalKey: string | null = null;
 let ownerId: string | null = null;
 let entries = new Map<string, JournalEntry>();
+/** Nested diagrams made here and not yet confirmed by the server (by id). */
+let newDiagrams = new Map<string, Diagram>();
+
+/** As they are now (renamed since?), for storing. */
+const currentDiagrams = (): Diagram[] =>
+  Array.from(newDiagrams.values(), (d) => useDiagramStore.getState().diagrams.get(d.id) ?? d);
+
+/** Nothing to keep: no unsaved edits, and no diagram the server lacks. */
+const journalEmpty = () => entries.size === 0 && newDiagrams.size === 0;
 let unsubscribe: (() => void) | null = null;
 
 function publish(): void {
@@ -288,15 +331,34 @@ function persistSoon(): void {
 }
 
 async function persistNow(key: string): Promise<void> {
-  if (entries.size === 0) await kvDelete(key);
+  if (journalEmpty()) await kvDelete(key);
   else
     await kvSet(key, {
       v: 1,
       savedAt: Date.now(),
       entries: Array.from(entries.values()),
+      diagrams: currentDiagrams(),
     } satisfies StoredJournal);
   // Nothing left to save: the backup goes too
-  if (entries.size === 0) writeBackup(key);
+  if (journalEmpty()) writeBackup(key);
+}
+
+/**
+ * A nested diagram was made here: kept in the journal until the server
+ * confirms it (`diagramConfirmed`), so one drawn offline survives the tab.
+ */
+export function journalNewDiagram(diagram: Diagram): void {
+  if (!journalKey) return;
+  newDiagrams.set(diagram.id, diagram);
+  backupSoon();
+  persistSoon();
+}
+
+/** The server has this diagram now. */
+export function diagramConfirmed(diagramId: string): void {
+  if (!journalKey || !newDiagrams.delete(diagramId)) return;
+  backupSoon();
+  persistSoon();
 }
 
 function flushOnHide(event?: Event): void {
@@ -316,6 +378,8 @@ export function startJournal(
   projectId: string,
   restored: JournalEntry[] = [],
   adopted: string[] = [],
+  /** Nested diagrams recreated from the journal, still to reach the server. */
+  restoredDiagrams: Diagram[] = [],
 ): void {
   stopJournal();
   announceTab();
@@ -323,6 +387,7 @@ export function startJournal(
   journalKey = key;
   ownerId = userId;
   entries = new Map(restored.map((e) => [e.element.id, e]));
+  newDiagrams = new Map(restoredDiagrams.map((d) => [d.id, d]));
   publish();
   // Outside the throttle: the first edit after opening must back up at once
   lastBackup = 0;
@@ -378,6 +443,7 @@ export function stopJournal(): void {
   journalKey = null;
   ownerId = null;
   entries = new Map();
+  newDiagrams = new Map();
   publish();
 }
 
@@ -476,6 +542,8 @@ export interface RestoreResult {
 
 export interface SavedJournal {
   entries: JournalEntry[];
+  /** Nested diagrams made on this device that the server may not have. */
+  diagrams: Diagram[];
   /** The closed tabs' journals they came from (for `startJournal`). */
   adopted: string[];
 }
@@ -492,6 +560,7 @@ export async function readJournal(userId: string, projectId: string): Promise<Sa
   announceTab();
   const [all, open] = await Promise.all([readAll(prefixFor(userId, projectId)), openTabs()]);
   const byElement = new Map<string, JournalEntry>();
+  const diagrams = new Map<string, Diagram>();
   const adopted: string[] = [];
   for (const [key, journal] of all) {
     const tab = tabOf(key);
@@ -501,8 +570,16 @@ export async function readJournal(userId: string, projectId: string): Promise<Sa
       const other = byElement.get(entry.element.id);
       if (!other || newer(entry.element, other.element)) byElement.set(entry.element.id, entry);
     }
+    for (const d of journal.diagrams ?? []) {
+      const other = diagrams.get(d.id);
+      if (!other || d.updatedAt > other.updatedAt) diagrams.set(d.id, d);
+    }
   }
-  return { entries: Array.from(byElement.values()), adopted };
+  return {
+    entries: Array.from(byElement.values()),
+    diagrams: Array.from(diagrams.values()),
+    adopted,
+  };
 }
 
 /** Re-apply entries onto what's loaded; the rest are left out of `apply`. */
