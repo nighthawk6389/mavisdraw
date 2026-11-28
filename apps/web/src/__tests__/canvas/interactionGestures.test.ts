@@ -389,3 +389,101 @@ describe('resizing', () => {
     expect(h.el('a').width).toBe(400);
   });
 });
+
+function arrow(id: string, from: [number, number], to: [number, number]): LinearElement {
+  return {
+    ...rect(id, from[0], from[1], to[0] - from[0], to[1] - from[1]),
+    type: 'arrow',
+    points: [
+      [0, 0],
+      [to[0] - from[0], to[1] - from[1]],
+    ],
+    startBinding: null,
+    endBinding: null,
+    routingMode: 'straight',
+    startArrowhead: 'none',
+    endArrowhead: 'arrow',
+  };
+}
+
+describe('connection dots', () => {
+  it('a click on a shape’s dot selects the shape; a drag from it draws a connector', () => {
+    const h = harness([rect('a', 200, 200, 200, 100)]);
+    // Hovering shows the dots; the top one is the middle of the top edge
+    h.mgr.onPointerMove(300, 250);
+    h.mgr.onPointerMove(300, 201);
+    h.mgr.onPointerDown(300, 201, { button: 0, shiftKey: false });
+    h.mgr.onPointerMove(301, 202); // a wobble, not a drag
+    h.mgr.onPointerUp(301, 202);
+    expect(h.selected()).toEqual(['a']);
+    expect(h.all()).toHaveLength(1);
+
+    const g = harness([rect('a', 200, 200, 200, 100)]);
+    g.mgr.onPointerMove(300, 201);
+    g.drag([300, 201], [300, 60]);
+    expect(g.all().map((e) => e.type)).toEqual(['rectangle', 'arrow']);
+  });
+
+  it('answer at the same distance on screen at any zoom', () => {
+    const h = harness([rect('a', 200, 200, 200, 100)]);
+    h.callbacks.getViewport().setViewport({ scrollX: 0, scrollY: 0, zoom: 4 });
+    // 30 screen px (7.5 canvas units) below the top dot: on the shape, not the dot
+    h.mgr.onPointerMove(1200, 830);
+    h.drag([1200, 830], [1200, 1030]);
+    expect(h.all()).toHaveLength(1);
+    expect(h.el('a').y).toBe(250);
+  });
+});
+
+describe('deep select', () => {
+  it('Ctrl/Cmd+click picks one shape inside a group, even straight after a click', () => {
+    const a = { ...rect('a', 100, 100, 100, 60), groupIds: ['g'] };
+    const b = { ...rect('b', 300, 100, 100, 60), groupIds: ['g'] };
+    const h = harness([a, b]);
+    h.mgr.onPointerDown(150, 130, { button: 0, shiftKey: false });
+    h.mgr.onPointerUp(150, 130);
+    expect(h.selected().sort()).toEqual(['a', 'b']);
+    // Within the double-click window, at the same spot: still a pick, not a double-click
+    h.mgr.onPointerDown(150, 130, { button: 0, shiftKey: false, ctrlKey: true });
+    h.mgr.onPointerUp(150, 130);
+    expect(h.selected()).toEqual(['a']);
+    expect(h.callbacks.startTextEditing).not.toHaveBeenCalled();
+  });
+});
+
+describe('connector points snap', () => {
+  it('an arrow’s loose end lines up with a shape’s centre and shows a guide', () => {
+    const h = harness([rect('a', 100, 100, 100, 60), arrow('arr', [300, 300], [500, 300])], {
+      selected: ['arr'],
+    });
+    h.mgr.onPointerDown(500, 300, { button: 0, shiftKey: false });
+    h.mgr.onPointerMove(500, 200);
+    h.mgr.onPointerMove(500, 133);
+    const end = (h.el('arr') as LinearElement).points[1];
+    expect(300 + end[1]).toBe(130);
+    expect(h.mgr.getSmartGuides().some((g) => g.kind === 'align' && g.axis === 'y')).toBe(true);
+    h.mgr.onPointerUp(500, 133);
+  });
+
+  it('Ctrl/Cmd leaves the end where the pointer is', () => {
+    const h = harness([rect('a', 100, 100, 100, 60), arrow('arr', [300, 300], [500, 300])], {
+      selected: ['arr'],
+    });
+    h.drag([500, 300], [500, 133], { ctrlKey: true });
+    const end = (h.el('arr') as LinearElement).points[1];
+    expect(300 + end[1]).toBe(133);
+  });
+});
+
+describe('resizing a selection with a turned shape', () => {
+  it('scales uniformly, so the turned shape isn’t sheared', () => {
+    const turned = { ...rect('a', 200, 200, 200, 100), angle: Math.PI / 2 };
+    const h = harness([turned, rect('b', 500, 200, 100, 60)], { selected: ['a', 'b'] });
+    // The frame is (250,150)–(600,350); its bottom-right handle is at the padded corner
+    h.drag([604, 354], [804, 374]);
+    const b = h.el('b');
+    expect(b.width / b.height).toBeCloseTo(100 / 60, 5);
+    expect(b.width).toBeGreaterThan(100);
+    expect(h.el('a').width / h.el('a').height).toBeCloseTo(2, 5);
+  });
+});

@@ -184,6 +184,9 @@ const SHAPE_TOOLS = new Set<Tool>([
 /** The eraser's reach around the pointer, and how finely its path is followed (screen px). */
 const ERASER_RADIUS_PX = 6;
 const ERASER_STEP_PX = 4;
+/** Connection dots: where they answer a press, and how near a shape shows them (screen px). */
+const ANCHOR_HIT_PX = 10;
+const ANCHOR_PROXIMITY_PX = 30;
 /** How long the eraser's trail stays visible. */
 const ERASER_TRAIL_MS = 200;
 
@@ -332,6 +335,7 @@ export class InteractionManager {
   private erasingVersion = 0;
   private eraserTrail: Array<{ x: number; y: number; t: number }> = [];
   private lastEraserPoint: Point | null = null;
+  /** Pointer speed (screen px/ms, smoothed), and since when it's been fast. */
   /** Lasso selection (Alt+drag on empty canvas): the loop drawn so far. */
   private lassoPath: Point[] = [];
 
@@ -690,7 +694,7 @@ export class InteractionManager {
 
       // Phase 3: Check anchor point hit for edge-initiated connections
       if (this.anchorTarget) {
-        const anchorHit = hitTestAnchorPoint(canvasPoint, this.anchorTarget);
+        const anchorHit = hitTestAnchorPoint(canvasPoint, this.anchorTarget, this.anchorHitRadius());
         if (anchorHit) {
           const sourceElement = this.anchorTarget;
           const anchors = getAnchorPoints(sourceElement);
@@ -739,12 +743,21 @@ export class InteractionManager {
       }
 
       // Check element hit (with group awareness)
-      const hitElement = hitTestElementsWithGroups(canvasPoint, elements, this.enteredGroupIds);
+      // Ctrl/Cmd+click reaches into groups (Figma): the shape itself, not its group
+      const deep = !!(event.ctrlKey || event.metaKey);
+      const hitElement = deep
+        ? hitTestElements(canvasPoint, elements)
+        : hitTestElementsWithGroups(canvasPoint, elements, this.enteredGroupIds);
+      if (hitElement && deep) {
+        for (const g of hitElement.groupIds) this.enteredGroupIds.add(g);
+      }
       if (hitElement) {
         this.lastWaypointClick = null;
         // Check for double-click
         const now = Date.now();
+        // A Ctrl/Cmd+click picks inside a group: never half of a double-click
         const isDoubleClick =
+          !deep &&
           now - this.lastClickTime < InteractionManager.DOUBLE_CLICK_THRESHOLD &&
           this.lastClickId === hitElement.id &&
           Math.hypot(screenX - this.lastClickPoint.x, screenY - this.lastClickPoint.y) <=
@@ -882,11 +895,11 @@ export class InteractionManager {
         if (tool === 'select' || tool === 'arrow') {
           const selectedIds = this.callbacks.getSelectedIds();
           const nearbyShape = findNearbyShapeForAnchors(
-            canvasPoint.x, canvasPoint.y, elements, selectedIds,
+            canvasPoint.x, canvasPoint.y, elements, selectedIds, this.anchorProximity(),
           );
           this.anchorTarget = nearbyShape;
           if (nearbyShape) {
-            this.hoveredAnchor = hitTestAnchorPoint(canvasPoint, nearbyShape) ?? null;
+            this.hoveredAnchor = hitTestAnchorPoint(canvasPoint, nearbyShape, this.anchorHitRadius()) ?? null;
           } else {
             this.hoveredAnchor = null;
           }
@@ -1001,6 +1014,13 @@ export class InteractionManager {
       }
 
       case 'creating-from-anchor': {
+        // A wobble while clicking a connection dot isn't a connector
+        if (
+          !this.creatingElement &&
+          !exceedsDragThreshold(this.startScreenPoint, { x: screenX, y: screenY }, this.pointerType)
+        ) {
+          break;
+        }
         let width = canvasPoint.x - this.startCanvasPoint.x;
         let height = canvasPoint.y - this.startCanvasPoint.y;
         if (this.mods.shiftKey) {
@@ -1037,10 +1057,10 @@ export class InteractionManager {
         const elements = this.callbacks.getElements();
         const excludeIds = new Set(this.anchorSourceElement ? [this.anchorSourceElement.id] : []);
         const nearbyShape = findNearbyShapeForAnchors(
-          canvasPoint.x, canvasPoint.y, elements, excludeIds,
+          canvasPoint.x, canvasPoint.y, elements, excludeIds, this.anchorProximity(),
         );
         if (nearbyShape) {
-          const anchorHit = hitTestAnchorPoint(canvasPoint, nearbyShape);
+          const anchorHit = hitTestAnchorPoint(canvasPoint, nearbyShape, this.anchorHitRadius());
           if (anchorHit) {
             this.snapTarget = { element: nearbyShape, anchor: anchorHit };
           } else {
@@ -1057,20 +1077,22 @@ export class InteractionManager {
         const arrow = elements.find((e) => e.id === this.rebindingArrowId) as LinearElement | undefined;
         if (!arrow) break;
 
-        const newPoints = arrow.points.map((p) => [...p] as [number, number]);
-        if (this.rebindingEnd === 'start') {
-          newPoints[0] = [canvasPoint.x - arrow.x, canvasPoint.y - arrow.y];
-        } else {
-          newPoints[newPoints.length - 1] = [canvasPoint.x - arrow.x, canvasPoint.y - arrow.y];
-        }
-
-        this.callbacks.updateElementSilent(arrow.id, { points: newPoints } as Partial<LinearElement>);
-
         // Check for snap target
         const excludeIds = new Set([arrow.id]);
         const nearbyShape = findNearbyShapeForAnchors(
-          canvasPoint.x, canvasPoint.y, elements, excludeIds,
+          canvasPoint.x, canvasPoint.y, elements, excludeIds, this.anchorProximity(),
         );
+        // Not binding to a shape: line the loose end up with things instead
+        const endIndex = this.rebindingEnd === 'start' ? 0 : arrow.points.length - 1;
+        const at = nearbyShape
+          ? canvasPoint
+          : this.snapConnectorPoint(canvasPoint, this.originalArrow(arrow, this.rebindingOriginalPoints), endIndex);
+        if (nearbyShape) this.currentSmartGuides = [];
+
+        const newPoints = arrow.points.map((p) => [...p] as [number, number]);
+        newPoints[endIndex] = [at.x - arrow.x, at.y - arrow.y];
+
+        this.callbacks.updateElementSilent(arrow.id, { points: newPoints } as Partial<LinearElement>);
         if (nearbyShape) {
           this.snapTarget = { element: nearbyShape, anchor: '' };
           this.anchorTarget = nearbyShape;
@@ -1108,11 +1130,13 @@ export class InteractionManager {
         const arrow = elements.find((e) => e.id === this.movingWaypointArrowId) as LinearElement | undefined;
         if (!arrow) break;
 
+        const at = this.snapConnectorPoint(
+          canvasPoint,
+          this.originalArrow(arrow, this.waypointOriginalPoints),
+          this.movingWaypointIndex,
+        );
         const newPoints = arrow.points.map((p) => [...p] as [number, number]);
-        newPoints[this.movingWaypointIndex] = [
-          canvasPoint.x - arrow.x,
-          canvasPoint.y - arrow.y,
-        ];
+        newPoints[this.movingWaypointIndex] = [at.x - arrow.x, at.y - arrow.y];
 
         this.callbacks.updateElementSilent(arrow.id, { points: newPoints } as Partial<LinearElement>);
         this.callbacks.invalidateStatic();
@@ -1342,6 +1366,21 @@ export class InteractionManager {
           if (!this.callbacks.isToolLocked()) {
             this.callbacks.resetToSelect();
           }
+        } else if (this.anchorSourceElement) {
+          // A click on a connection dot, not a drag: the person meant the shape
+          const source = this.anchorSourceElement;
+          const groupIds = getGroupElementIds(source, this.callbacks.getElements(), this.enteredGroupIds);
+          if (this.mods.shiftKey) {
+            for (const id of groupIds) this.callbacks.addToSelection(id);
+          } else if (groupIds.length > 1) {
+            this.callbacks.selectMultiple(groupIds);
+          } else {
+            this.callbacks.select(source.id);
+          }
+          // ...so a second click there edits its label, like anywhere else on it
+          this.lastClickTime = Date.now();
+          this.lastClickId = source.id;
+          this.lastClickPoint = { x: screenX, y: screenY };
         }
         this.creatingElement = null;
         this.anchorSourceElement = null;
@@ -1458,6 +1497,11 @@ export class InteractionManager {
     const requested = this.contextMenuRequested;
     this.contextMenuRequested = false;
     return requested;
+  }
+
+  /** The connector as the gesture found it (its points before this drag). */
+  private originalArrow(arrow: LinearElement, points: [number, number][]): LinearElement {
+    return points.length > 0 ? { ...arrow, points } : arrow;
   }
 
   private clearEraser(): void {
@@ -1926,13 +1970,59 @@ export class InteractionManager {
     this.callbacks.selectElementsInBox(list);
   }
 
+  /** Connection dots are drawn the same size at any zoom: so is where they answer. */
+  private anchorHitRadius(): number {
+    return ANCHOR_HIT_PX / Math.max(0.1, this.callbacks.getViewport().getViewport().zoom);
+  }
+
+  /** How close to a shape the pointer has to be for its dots to show (screen pixels). */
+  private anchorProximity(): number {
+    return ANCHOR_PROXIMITY_PX / Math.max(0.1, this.callbacks.getViewport().getViewport().zoom);
+  }
+
   // ─── Snapping ──────────────────────────────────────────────
+
+  /**
+   * A connector's point being dragged (endpoint, bend): lined up with other
+   * shapes' edges and centres, and with the connector's own other points, so
+   * a bent line can be straightened by eye. Guides show what it lined up with.
+   */
+  private snapConnectorPoint(point: Point, arrow: LinearElement, movingIndex: number): Point {
+    this.currentSmartGuides = [];
+    if (!this.isSnapEnabled()) return point;
+    if (!this.snapContext) {
+      const own: Bounds[] = arrow.points
+        .filter((_, i) => i !== movingIndex)
+        .map(([x, y]) => ({ x: arrow.x + x, y: arrow.y + y, width: 0, height: 0 }));
+      const shapes = this.snapReferences(new Set([arrow.id])) ?? [];
+      this.snapContext = createSnapContext([...shapes, ...own]);
+    }
+    const hit = snapValues(this.snapContext, [point.x], [point.y], this.snapThreshold());
+    const snapped = {
+      x: point.x + (hit.x?.offset ?? 0),
+      y: point.y + (hit.y?.offset ?? 0),
+    };
+    if (hit.x || hit.y) {
+      this.currentSmartGuides = alignmentGuides(
+        this.snapContext,
+        { ...snapped, width: 0, height: 0 },
+        { x: !!hit.x, y: !!hit.y },
+      );
+    }
+    return snapped;
+  }
 
   /**
    * Snap targets: shapes on screen that aren't moving (connectors and labels
    * excluded). Null when snapping to objects is switched off.
    */
   private buildSnapContext(exclude: Set<string>): SnapContext | null {
+    const references = this.snapReferences(exclude);
+    return references ? createSnapContext(references) : null;
+  }
+
+  /** The boxes snapping lines up with (null when snapping to objects is off). */
+  private snapReferences(exclude: Set<string>): Bounds[] | null {
     if (this.callbacks.isObjectSnapEnabled?.() === false) return null;
     const visible = this.callbacks.getVisibleBounds?.() ?? null;
     const references: Bounds[] = [];
@@ -1943,7 +2033,7 @@ export class InteractionManager {
       if (visible && !boundsOverlap(b, visible)) continue;
       references.push(b);
     }
-    return createSnapContext(references);
+    return references;
   }
 
   // ─── Helpers ───────────────────────────────────────────────
@@ -2089,7 +2179,10 @@ export class InteractionManager {
     const allImages = originals.length > 0 && originals.every((el) => el.type === 'image');
     const allText = originals.length > 0 && originals.every(isFreeText);
     const noFlip = originals.some((el) => el.type === 'image' || isFreeText(el));
-    const keepAspect = this.mods.shiftKey || (allImages && isCorner) || allText;
+    // A turned shape among several can only be scaled exactly the same both
+    // ways (any other scale would shear it): such selections keep proportions
+    const anyTurned = originals.length > 1 && originals.some((el) => el.angle);
+    const keepAspect = this.mods.shiftKey || (allImages && isCorner) || allText || anyTurned;
     const fromCenter = this.mods.altKey;
 
     this.currentSmartGuides = [];
