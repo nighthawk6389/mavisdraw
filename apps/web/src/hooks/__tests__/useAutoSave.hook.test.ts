@@ -230,6 +230,30 @@ describe('useAutoSave', () => {
     expect(hook.saveStatus).toBe('saved');
   });
 
+  it('a diagram that can’t be saved doesn’t keep the other levels from saving', async () => {
+    const child = diagram(CHILD, { parentDiagramId: ROOT });
+    useDiagramStore.setState({
+      diagrams: new Map([
+        [ROOT, diagram(ROOT)],
+        [CHILD, child],
+      ]),
+    });
+    resetDiagramSync([ROOT, CHILD]);
+    recordSaved(CHILD, [], 1);
+    // The top level is refused every time (e.g. over the size limit)
+    updateDiagram.mockImplementation(async (id, body) => {
+      if (id === ROOT) throw new api.ApiError('Request body is too large', 413);
+      return { diagram: { elements: (body as SaveBody).elements ?? [] } as never, conflicts: [] };
+    });
+    await mount();
+    await setElements([box('on-root', 1), box('in-child', 1, { diagramId: CHILD })]);
+    await wait(1500);
+
+    expect(updateDiagram.mock.calls.map(([id]) => id)).toEqual([ROOT, CHILD]);
+    expect(idsSent(1)).toEqual(['in-child']);
+    expect(hook.saveStatus).toBe('error');
+  });
+
   it('an edit made while a save is in flight is saved right after it', async () => {
     let finish!: () => void;
     updateDiagram.mockImplementationOnce(

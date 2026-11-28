@@ -18,9 +18,19 @@ vi.mock('../services/diagramSync', async (importOriginal) => ({
   goToDiagram: vi.fn(async () => true),
   loadDiagramElements: vi.fn(async () => undefined),
 }));
-vi.mock('../components/agent/applyProposal', () => ({
-  applyProposal: vi.fn(async () => ({ added: 1, modified: 0, deleted: 0, connected: 1 })),
-}));
+vi.mock('../components/agent/applyProposal', async () => {
+  const { useElementsStore } = await import('../stores/elementsStore');
+  return {
+    // Its undo step is wherever history is right after it
+    applyProposal: vi.fn(async () => ({
+      added: 1,
+      modified: 0,
+      deleted: 0,
+      connected: 1,
+      step: useElementsStore.getState().historyIndex,
+    })),
+  };
+});
 
 const proposal = (id: string, extra: Partial<ProposalData> = {}): ProposalData => ({
   id,
@@ -115,6 +125,8 @@ describe('proposals', () => {
         proposalId: 'a',
         changes: [{ action: 'add', elementType: 'rectangle', label: 'Payments' }],
       }),
+      // Only onto that diagram: refused if the editor moved on meanwhile
+      { diagramId: 'd-api' },
     );
     expect(apiResolveProposal).toHaveBeenCalledWith('a', 'applied', expect.any(String));
     expect(vi.mocked(applyProposal).mock.invocationCallOrder[0]).toBeLessThan(
@@ -133,6 +145,22 @@ describe('proposals', () => {
     expect(store().proposals).toEqual([]);
     expect(toasts()).toContain(
       'Someone else applied this proposal a moment earlier, so yours was undone',
+    );
+    undo.mockRestore();
+  });
+
+  it('never undoes an edit made after it, when it turns out someone else applied it', async () => {
+    useProposalsStore.setState({ projectId: 'p1', proposals: [proposal('a')] });
+    const undo = vi.spyOn(useElementsStore.getState(), 'undo').mockImplementation(() => {});
+    vi.mocked(apiResolveProposal).mockImplementationOnce(async () => {
+      // The person draws something while the server is asked
+      useElementsStore.setState({ historyIndex: useElementsStore.getState().historyIndex + 1 });
+      throw new ApiError('taken', 409);
+    });
+    await store().apply('a');
+    expect(undo).not.toHaveBeenCalled();
+    expect(toasts()).toContain(
+      'Someone else applied this proposal a moment earlier: undo yours (Ctrl+Z) to avoid doubles',
     );
     undo.mockRestore();
   });

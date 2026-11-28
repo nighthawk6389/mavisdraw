@@ -22,6 +22,9 @@ import {
   unlinkComponent,
 } from '../../services/modelSync';
 
+/** A model fetched this recently is current enough for the panel. */
+const MODEL_FRESH_MS = 2000;
+
 type TextField = 'name' | 'description' | 'technology' | 'owner';
 
 const KIND_LABELS: Record<ModelComponentKind, string> = {
@@ -57,9 +60,11 @@ export default function ComponentPanel({ elementId, canEdit, embedded = false }:
   const component = model && key ? componentById(model, key) : undefined;
 
   // Opening the panel on a component: fetch what the server knows now (it
-  // reads live rooms, so copies pasted a moment ago are counted)
+  // reads live rooms, so copies pasted a moment ago are counted), unless
+  // that was just done (clicking from shape to shape shouldn't refetch the
+  // whole model each time)
   useEffect(() => {
-    if (key) void useModelStore.getState().refresh();
+    if (key) void useModelStore.getState().refreshIfOlder(MODEL_FRESH_MS);
   }, [key]);
 
   // A shape labelled moments ago reaches the model once it's saved: retry a

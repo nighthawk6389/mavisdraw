@@ -238,7 +238,14 @@ describe('applying AI proposals', () => {
       connections: [{ fromLabel: 'API', toLabel: 'Cache', label: 'reads' }],
     });
 
-    expect(result).toEqual({ added: 1, modified: 0, deleted: 0, connected: 1, recorded: 0 });
+    expect(result).toEqual({
+      added: 1,
+      modified: 0,
+      deleted: 0,
+      connected: 1,
+      recorded: 0,
+      step: useElementsStore.getState().historyIndex,
+    });
     const arrow = all().find((e) => e.type === 'arrow') as LinearElement;
     expect(arrow.diagramId).toBe(ROOT);
     expect(arrow.startBinding?.elementId).toBe(api.id);

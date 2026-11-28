@@ -60,6 +60,8 @@ export interface ApplyResult {
   connected: number;
   /** Relationships to components on other diagrams, recorded in the model. */
   recorded: number;
+  /** The undo step it made (the history index right after it), to take it back exactly. */
+  step: number;
 }
 
 function labelOf(el: MavisElement, elements: Map<string, MavisElement>): string | null {
@@ -81,10 +83,14 @@ function labelOf(el: MavisElement, elements: Map<string, MavisElement>): string 
  * All or nothing: if it fails part-way, nothing of it is left behind (a
  * proposal half applied would be applied again in full by the next try).
  */
-export async function applyProposal(proposal: DiagramProposal): Promise<ApplyResult> {
+export async function applyProposal(
+  proposal: DiagramProposal,
+  /** The diagram it's for: refused if the editor is on another one by now. */
+  options: { diagramId?: string } = {},
+): Promise<ApplyResult> {
   const newDiagrams: Diagram[] = [];
   try {
-    return await applyTo(proposal, newDiagrams);
+    return await applyTo(proposal, newDiagrams, options.diagramId);
   } catch (err) {
     // Nested diagrams made for its portals: not on the server yet, and unused
     for (const d of newDiagrams) useDiagramStore.getState().deleteDiagram(d.id);
@@ -92,9 +98,17 @@ export async function applyProposal(proposal: DiagramProposal): Promise<ApplyRes
   }
 }
 
-async function applyTo(proposal: DiagramProposal, newDiagrams: Diagram[]): Promise<ApplyResult> {
+async function applyTo(
+  proposal: DiagramProposal,
+  newDiagrams: Diagram[],
+  expectedDiagramId?: string,
+): Promise<ApplyResult> {
   const store = useElementsStore.getState();
   const diagramId = useDiagramStore.getState().activeDiagramId;
+  // The person may have moved on while the diagram was loading
+  if (expectedDiagramId && diagramId !== expectedDiagramId) {
+    throw new Error('the editor moved to another diagram first. Open it and apply again');
+  }
   const elements = store.elements;
 
   // Existing shapes in this diagram, addressable by id or (case-insensitive) label
@@ -257,6 +271,7 @@ async function applyTo(proposal: DiagramProposal, newDiagrams: Diagram[]): Promi
     deleted: 0,
     connected: 0,
     recorded: 0,
+    step: -1,
   };
   // Synchronous from here to the end of the batch: nothing else changes the
   // canvas meanwhile, so a failure can put it back exactly as it was
@@ -328,6 +343,8 @@ async function applyTo(proposal: DiagramProposal, newDiagrams: Diagram[]): Promi
   } finally {
     store.endHistoryBatch();
   }
+  // Read now: after the awaits below, the person may have made more steps
+  result.step = useElementsStore.getState().historyIndex;
 
   for (const d of newDiagrams) registerNewDiagram(useDiagramStore.getState().diagrams.get(d.id) ?? d);
 

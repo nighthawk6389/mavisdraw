@@ -187,23 +187,30 @@ export function useAutoSave(activeDiagramId: string | null) {
         if (dirty.length === 0) return;
 
         setSaveStatus('saving');
-        try {
-          // Parents before children so server-side parent checks pass
-          dirty.sort((a, b) => depth(a.diagram) - depth(b.diagram));
-          for (const { diagram, elements: els } of dirty) {
+        // Parents before children so server-side parent checks pass. Each
+        // diagram on its own: one that can't be saved (too large, gone, no
+        // longer ours) mustn't keep every other level's edits from saving
+        dirty.sort((a, b) => depth(a.diagram) - depth(b.diagram));
+        let failed = false;
+        for (const { diagram, elements: els } of dirty) {
+          try {
             await saveDiagram(diagram, els);
+          } catch (err) {
+            console.error(`Auto-save of diagram ${diagram.id} failed:`, err);
+            failed = true;
           }
-          setSaveStatus('saved');
-          if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
-          statusTimerRef.current = setTimeout(
-            () => setSaveStatus((s) => (s === 'saved' ? 'idle' : s)),
-            3000,
-          );
-        } catch (err) {
-          console.error('Auto-save failed:', err);
+        }
+        if (failed) {
+          // Shown until a later save gets everything through
           setSaveStatus('error');
           return;
         }
+        setSaveStatus('saved');
+        if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
+        statusTimerRef.current = setTimeout(
+          () => setSaveStatus((s) => (s === 'saved' ? 'idle' : s)),
+          3000,
+        );
       } while (againRef.current);
     };
 

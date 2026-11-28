@@ -22,9 +22,12 @@ const MARK_RETRIES_MS = [400, 1500];
  * Tell the server this proposal is applied. 'taken': someone else got there
  * first. 'unconfirmed': the server couldn't be reached to say so.
  */
-async function markApplied(id: string): Promise<'done' | 'taken' | 'unconfirmed'> {
+async function markApplied(
+  id: string,
   // The same key on every try: a retry after a lost answer is "done", not "taken"
-  const key = nanoid();
+  key = nanoid(),
+  retriesMs: readonly number[] = MARK_RETRIES_MS,
+): Promise<'done' | 'taken' | 'unconfirmed'> {
   for (let attempt = 0; ; attempt++) {
     try {
       await apiResolveProposal(id, 'applied', key);
@@ -33,10 +36,23 @@ async function markApplied(id: string): Promise<'done' | 'taken' | 'unconfirmed'
       if (err instanceof ApiError && err.statusCode === 409) return 'taken';
       // Refused (lost edit access, gone): not worth asking again
       if (err instanceof ApiError && err.statusCode < 500) throw err;
-      if (attempt >= MARK_RETRIES_MS.length) return 'unconfirmed';
-      await new Promise((r) => setTimeout(r, MARK_RETRIES_MS[attempt]));
+      if (attempt >= retriesMs.length) return 'unconfirmed';
+      await new Promise((r) => setTimeout(r, retriesMs[attempt]));
     }
   }
+}
+
+/**
+ * Keep telling the server, with the same key, until it hears: otherwise it
+ * stays "waiting" there, and someone could apply it a second time.
+ */
+const LATER_RETRIES_MS = [10_000, 30_000, 90_000, 300_000];
+function keepMarking(id: string, key: string): void {
+  void markApplied(id, key, LATER_RETRIES_MS)
+    .then((outcome) => {
+      if (outcome === 'unconfirmed') console.warn(`[proposals] ${id} still not marked applied`);
+    })
+    .catch((err) => console.warn(`[proposals] marking ${id} applied failed:`, err));
 }
 interface ProposalsState {
   projectId: string | null;
@@ -112,16 +128,19 @@ export const useProposalsStore = create<ProposalsState>((set, get) => ({
       // Loaded on first use: most sessions never apply a proposal
       const { applyProposal } = await import('../components/agent/applyProposal');
       // All or nothing: if it fails, the map is as it was and the proposal still waits
-      const result = await applyProposal({
-        proposalId: proposal.id,
-        description: proposal.description,
-        changes: proposal.changes,
-        connections: proposal.connections,
-        status: 'pending',
-      });
-      const appliedStep = useElementsStore.getState().historyIndex;
+      const result = await applyProposal(
+        {
+          proposalId: proposal.id,
+          description: proposal.description,
+          changes: proposal.changes,
+          connections: proposal.connections,
+          status: 'pending',
+        },
+        { diagramId: proposal.diagramId },
+      );
+      // Only ever its own step: if the person edited since, undo would take theirs
       const takeBack = () => {
-        if (useElementsStore.getState().historyIndex === appliedStep) {
+        if (useElementsStore.getState().historyIndex === result.step) {
           useElementsStore.getState().undo();
           return true;
         }
@@ -129,8 +148,9 @@ export const useProposalsStore = create<ProposalsState>((set, get) => ({
       };
 
       let marked: Awaited<ReturnType<typeof markApplied>>;
+      const key = nanoid();
       try {
-        marked = await markApplied(id);
+        marked = await markApplied(id, key);
       } catch (err) {
         takeBack();
         throw err;
@@ -157,8 +177,9 @@ export const useProposalsStore = create<ProposalsState>((set, get) => ({
         run: () => useElementsStore.getState().undo(),
       });
       if (marked === 'unconfirmed') {
+        keepMarking(id, key);
         toast(
-          'Applied, but the server couldn’t be told: others may still see it as waiting',
+          'Applied, but the server couldn’t be told yet: others may see it as waiting for a little while',
           'info',
         );
       }

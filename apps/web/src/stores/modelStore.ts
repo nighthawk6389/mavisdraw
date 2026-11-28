@@ -15,6 +15,8 @@ interface ModelState {
   load: (projectId: string) => Promise<void>;
   /** Refetch the current project's model (coalesced: one request at a time). */
   refresh: () => Promise<void>;
+  /** Refetch unless the model was fetched less than `maxAgeMs` ago. */
+  refreshIfOlder: (maxAgeMs: number) => Promise<void>;
   reset: () => void;
 }
 
@@ -52,8 +54,17 @@ export const useModelStore = create<ModelState>((set, get) => ({
       } finally {
         inFlight = null;
       }
+      // The project changed while this was fetching: the new one hasn't been
+      // fetched yet (its refresh joined this one)
+      const now = get().projectId;
+      if (now && now !== projectId) await get().refresh();
     })();
     return inFlight;
+  },
+
+  refreshIfOlder: async (maxAgeMs) => {
+    if (get().model && Date.now() - get().fetchedAt < maxAgeMs) return;
+    await get().refresh();
   },
 
   reset: () => set({ projectId: null, model: null, fetchedAt: 0 }),
