@@ -6,6 +6,27 @@ import { useUIStore } from '../../stores/uiStore';
 import { useThemeStore } from '../../stores/themeStore';
 import { LibraryIcon } from '../library/LibraryIcon';
 
+/** Lucide "eraser" (ISC). */
+function EraserIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21" />
+      <path d="M22 21H7" />
+      <path d="m5 11 9 9" />
+    </svg>
+  );
+}
+
 interface ToolConfig {
   tool: Tool;
   icon: React.ReactNode;
@@ -24,6 +45,7 @@ const TOOLS: ToolConfig[] = [
   { tool: 'line', icon: '\u2571', label: 'Line', shortcut: 'L' },
   { tool: 'arrow', icon: '\u2192', label: 'Arrow', shortcut: 'A' },
   { tool: 'freedraw', icon: '\u270E', label: 'Freedraw', shortcut: 'P' },
+  { tool: 'eraser', icon: <EraserIcon />, label: 'Eraser', shortcut: 'X' },
   { tool: 'text', icon: 'T', label: 'Text', shortcut: 'T' },
   { tool: 'portal', icon: '\u29C9', label: 'Portal', shortcut: 'O' },
   { tool: 'comment', icon: '\u{1F4AC}', label: 'Comment', shortcut: 'C' },

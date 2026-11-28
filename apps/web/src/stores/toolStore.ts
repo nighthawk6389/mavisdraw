@@ -10,6 +10,7 @@ export type Tool =
   | 'line'
   | 'arrow'
   | 'freedraw'
+  | 'eraser'
   | 'text'
   | 'portal'
   | 'hand'

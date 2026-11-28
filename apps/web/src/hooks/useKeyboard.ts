@@ -23,6 +23,7 @@ const KEY_TO_TOOL: Record<string, Tool> = {
   l: 'line',
   a: 'arrow',
   p: 'freedraw',
+  x: 'eraser',
   t: 'text',
   o: 'portal',
   c: 'comment',

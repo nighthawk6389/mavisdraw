@@ -8,6 +8,7 @@ import {
   findBindingTarget,
   hitTestElementsWithGroups,
   getGroupElementIds,
+  hitTestEraser,
   hitTestAnchorPoint,
   findNearbyShapeForAnchors,
   hitTestEndpointHandle,
@@ -65,7 +66,8 @@ export type InteractionMode =
   | 'rebinding-endpoint'
   | 'moving-waypoint'
   | 'pending-waypoint'
-  | 'dragging-elbow-segment';
+  | 'dragging-elbow-segment'
+  | 'erasing';
 
 /** Keyboard modifiers held during a pointer gesture. */
 export interface PointerModifiers {
@@ -120,6 +122,8 @@ export interface InteractionCallbacks {
   /** Many updates as one store change, no undo step of its own (drag, resize). */
   updateElementsSilent: (updates: ElementUpdate[]) => void;
   deleteSelectedElements: () => void;
+  /** Delete these elements as one undo step (the eraser). */
+  eraseElements?: (ids: string[]) => void;
   pushHistory: () => void;
   /** Copy elements in place, labels included (Alt-drag). Returns the copies. */
   duplicateElements?: (ids: string[]) => MavisElement[];
@@ -174,6 +178,12 @@ const SHAPE_TOOLS = new Set<Tool>([
   'text',
   'portal',
 ]);
+
+/** The eraser's reach around the pointer, and how finely its path is followed (screen px). */
+const ERASER_RADIUS_PX = 6;
+const ERASER_STEP_PX = 4;
+/** How long the eraser's trail stays visible. */
+const ERASER_TRAIL_MS = 200;
 
 /** Tools that draw a box: a click places one at its default size. */
 const BOX_TOOLS = new Set<Tool>(['rectangle', 'ellipse', 'diamond', 'cylinder', 'queue', 'portal']);
@@ -298,6 +308,12 @@ export class InteractionManager {
   // Group navigation state
   private enteredGroupIds: Set<string> = new Set();
 
+  /** Eraser: what the trail has passed over (shown faded, deleted on release). */
+  private erasing: Set<string> = new Set();
+  private erasingVersion = 0;
+  private eraserTrail: Array<{ x: number; y: number; t: number }> = [];
+  private lastEraserPoint: Point | null = null;
+
   // Double-click tracking
   private lastClickTime = 0;
   private lastClickId: string | null = null;
@@ -384,6 +400,18 @@ export class InteractionManager {
 
   getSnapTarget(): { element: MavisElement; anchor: string } | null {
     return this.snapTarget;
+  }
+
+  /** What the eraser will delete on release; `version` changes whenever the set does. */
+  getErasing(): { ids: ReadonlySet<string>; version: number } {
+    return { ids: this.erasing, version: this.erasingVersion };
+  }
+
+  /** The eraser's recent path (canvas points), drawn as a fading trail. */
+  getEraserTrail(): Point[] {
+    if (this.mode !== 'erasing') return [];
+    const now = performance.now();
+    return this.eraserTrail.filter((p) => now - p.t < ERASER_TRAIL_MS);
   }
 
   /** A pointer gesture is under way (something Escape could cancel). */
@@ -496,6 +524,16 @@ export class InteractionManager {
     const elements = this.callbacks.getElements();
     const selectedIds = this.callbacks.getSelectedIds();
     this.selectionAtPress = Array.from(selectedIds);
+
+    if (tool === 'eraser') {
+      this.mode = 'erasing';
+      this.erasing = new Set();
+      this.erasingVersion++;
+      this.eraserTrail = [{ ...canvasPoint, t: performance.now() }];
+      this.lastEraserPoint = canvasPoint;
+      this.eraseAlong(canvasPoint, canvasPoint);
+      return;
+    }
 
     if (tool === 'select' || tool === 'arrow') {
       // Phase 4 & 5: Check endpoint/waypoint/midpoint handles on selected linear elements
@@ -878,6 +916,18 @@ export class InteractionManager {
         break;
       }
 
+      case 'erasing': {
+        this.eraseAlong(this.lastEraserPoint ?? canvasPoint, canvasPoint);
+        this.lastEraserPoint = canvasPoint;
+        const now = performance.now();
+        this.eraserTrail.push({ ...canvasPoint, t: now });
+        // Only the last moments are drawn
+        while (this.eraserTrail.length > 2 && now - this.eraserTrail[0].t > ERASER_TRAIL_MS) {
+          this.eraserTrail.shift();
+        }
+        break;
+      }
+
       case 'drawing-freedraw': {
         this.freedrawPoints.push([canvasPoint.x, canvasPoint.y]);
         // Update running bounds incrementally (O(1) per frame)
@@ -1063,6 +1113,15 @@ export class InteractionManager {
     }
 
     switch (this.mode) {
+      case 'erasing': {
+        const ids = Array.from(this.erasing);
+        this.clearEraser();
+        this.mode = 'idle';
+        if (ids.length > 0) this.callbacks.eraseElements?.(ids);
+        this.callbacks.invalidateStatic();
+        return;
+      }
+
       case 'creating': {
         const tool = this.callbacks.getActiveTool();
         if (this.creatingElement) {
@@ -1351,6 +1410,70 @@ export class InteractionManager {
     return requested;
   }
 
+  private clearEraser(): void {
+    this.erasing = new Set();
+    this.erasingVersion++;
+    this.eraserTrail = [];
+    this.lastEraserPoint = null;
+  }
+
+  /**
+   * Mark what the eraser passes over between two points (Alt held: unmark).
+   * A label counts as its shape, a grouped shape takes its group, and a
+   * shape takes its label; locked shapes are left alone.
+   */
+  private eraseAlong(from: Point, to: Point): void {
+    const zoom = Math.max(0.1, this.callbacks.getViewport().getViewport().zoom);
+    const radius = ERASER_RADIUS_PX / zoom;
+    const step = ERASER_STEP_PX / zoom;
+    const elements = this.callbacks.getElements();
+    const map = new Map(elements.map((el) => [el.id, el] as const));
+    // Only what's near the segment is tested at each step
+    const minX = Math.min(from.x, to.x) - radius;
+    const maxX = Math.max(from.x, to.x) + radius;
+    const minY = Math.min(from.y, to.y) - radius;
+    const maxY = Math.max(from.y, to.y) + radius;
+    const near = elements.filter((el) => {
+      if (el.isDeleted || el.isLocked) return false;
+      const b = getVisualBounds(el);
+      return b.x <= maxX && b.x + b.width >= minX && b.y <= maxY && b.y + b.height >= minY;
+    });
+    if (near.length === 0) return;
+    const restoring = this.mods.altKey;
+    const steps = Math.max(1, Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / step));
+    let changed = false;
+    for (let i = 0; i <= steps; i++) {
+      const p = {
+        x: from.x + ((to.x - from.x) * i) / steps,
+        y: from.y + ((to.y - from.y) * i) / steps,
+      };
+      for (const el of near) {
+        if (!hitTestEraser(p, el, map, radius)) continue;
+        let target = el;
+        if (el.type === 'text' && el.containerId) {
+          const container = map.get(el.containerId);
+          if (container && !container.isDeleted) target = container;
+        }
+        if (target.isLocked) continue;
+        for (const id of getGroupElementIds(target, elements, this.enteredGroupIds)) {
+          const member = map.get(id);
+          if (!member || member.isLocked) continue;
+          const ids = [id, ...member.boundElements.filter((b) => b.type === 'text').map((b) => b.id)];
+          for (const eraseId of ids) {
+            if (restoring ? this.erasing.delete(eraseId) : !this.erasing.has(eraseId)) {
+              if (!restoring) this.erasing.add(eraseId);
+              changed = true;
+            }
+          }
+        }
+      }
+    }
+    if (changed) {
+      this.erasingVersion++;
+      this.callbacks.invalidateStatic();
+    }
+  }
+
   /**
    * Abort the current gesture and put everything back as it was before it
    * started (Escape, or a second finger turning it into a pinch). The open
@@ -1382,6 +1505,11 @@ export class InteractionManager {
       restorePoints(this.elbowSegmentArrowId, this.elbowSegmentOriginalPoints);
     }
     if (mode === 'selecting') this.callbacks.selectMultiple(this.selectionAtPress);
+    if (mode === 'erasing') {
+      // Nothing was deleted yet: the faded shapes just come back
+      this.clearEraser();
+      this.callbacks.invalidateStatic();
+    }
 
     this.mode = 'idle';
     this.dragActive = false;

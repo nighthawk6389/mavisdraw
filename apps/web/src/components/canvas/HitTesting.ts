@@ -94,11 +94,16 @@ function hitTestDiamond(local: Point, element: MavisElement): boolean {
 /**
  * Test if a point is near a polyline defined by points.
  */
-function hitTestPolyline(canvasPoint: Point, element: MavisElement, elementsMap?: Map<string, MavisElement>): boolean {
+function hitTestPolyline(
+  canvasPoint: Point,
+  element: MavisElement,
+  elementsMap?: Map<string, MavisElement>,
+  extra = 0,
+): boolean {
   const linear = element as LinearElement;
   if (!linear.points || linear.points.length < 2) return false;
 
-  const tolerance = HIT_TOLERANCE + element.strokeWidth / 2;
+  const tolerance = HIT_TOLERANCE + element.strokeWidth / 2 + extra;
 
   if (linear.routingMode === 'curved') {
     return hitTestCurvedLine(canvasPoint, linear, tolerance);
@@ -383,6 +388,61 @@ export function hitTestElement(canvasPoint: Point, element: MavisElement, elemen
       return hitTestText(local, element);
     default:
       return hitTestRectangle(local, element);
+  }
+}
+
+/** Shapes whose inside is part of them even without a fill (cards, pictures). */
+const SOLID_TYPES = new Set(['image', 'portal', 'text']);
+
+/**
+ * Does the eraser, at `point` with `radius` (canvas units), touch this
+ * element? Lines and drawings where the trail crosses them; a shape on its
+ * outline, or anywhere inside if it's filled (brushing through an empty
+ * frame to reach what's in it doesn't erase the frame).
+ */
+export function hitTestEraser(
+  point: Point,
+  element: MavisElement,
+  elementsMap: Map<string, MavisElement> | undefined,
+  radius: number,
+): boolean {
+  if (element.isDeleted) return false;
+  if (element.type === 'line' || element.type === 'arrow' || element.type === 'freedraw') {
+    return hitTestPolyline(point, element, elementsMap, radius);
+  }
+  const filled = SOLID_TYPES.has(element.type) || element.backgroundColor !== 'transparent';
+  const local = toLocalCoords(point, element);
+  const reach = HIT_TOLERANCE + element.strokeWidth / 2 + radius;
+  const { width: w, height: h } = element;
+  switch (element.type) {
+    case 'ellipse': {
+      const rx = w / 2;
+      const ry = h / 2;
+      const dx = local.x - rx;
+      const dy = local.y - ry;
+      const inside = (ox: number, oy: number) =>
+        ox > 0 && oy > 0 && (dx * dx) / (ox * ox) + (dy * dy) / (oy * oy) <= 1;
+      if (!inside(rx + reach, ry + reach)) return false;
+      return filled || !inside(rx - reach, ry - reach);
+    }
+    case 'diamond':
+    case 'triangle': {
+      const hw = w / 2;
+      const hh = h / 2;
+      const d = (ox: number, oy: number) =>
+        ox > 0 && oy > 0 && Math.abs(local.x - hw) / ox + Math.abs(local.y - hh) / oy <= 1;
+      if (!d(hw + reach, hh + reach)) return false;
+      return filled || !d(hw - reach, hh - reach);
+    }
+    default: {
+      const inOuter =
+        local.x >= -reach && local.x <= w + reach && local.y >= -reach && local.y <= h + reach;
+      if (!inOuter) return false;
+      if (filled) return true;
+      const inInner =
+        local.x > reach && local.x < w - reach && local.y > reach && local.y < h - reach;
+      return !inInner;
+    }
   }
 }
 

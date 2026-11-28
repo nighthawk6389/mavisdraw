@@ -81,6 +81,8 @@ export interface RenderState {
   hoveredAnchor?: string | null;
   rebindingPreview?: { element: LinearElement; endpoint: 'start' | 'end' } | null;
   snapTarget?: { element: MavisElement; anchor: string } | null;
+  /** The eraser's recent path, canvas coordinates. */
+  eraserTrail?: Point[];
 }
 
 /**
@@ -201,6 +203,24 @@ export class CanvasRenderer {
    * since the last frame are drawn again where possible; `full` redraws them
    * all (for changes the elements don't show, like a font that finished loading).
    */
+  private renderEraserTrail(ctx: CanvasRenderingContext2D, trail: Point[], zoom: number): void {
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#9ca3af';
+    // Older parts thinner and fainter
+    for (let i = 1; i < trail.length; i++) {
+      const age = i / trail.length;
+      ctx.globalAlpha = 0.15 + 0.45 * age;
+      ctx.lineWidth = (2 + 6 * age) / zoom;
+      ctx.beginPath();
+      ctx.moveTo(trail[i - 1].x, trail[i - 1].y);
+      ctx.lineTo(trail[i].x, trail[i].y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   /** Dark theme on or off: images are drawn to come out right under the canvas's inversion. */
   setDarkMode(dark: boolean): void {
     if (dark === this.darkMode) return;
@@ -578,6 +598,11 @@ export class CanvasRenderer {
     ctx.save();
     ctx.translate(vp.scrollX, vp.scrollY);
     ctx.scale(vp.zoom, vp.zoom);
+
+    // The eraser's trail: a short, fading stroke behind the pointer
+    if (state.eraserTrail && state.eraserTrail.length > 1) {
+      this.renderEraserTrail(ctx, state.eraserTrail, vp.zoom);
+    }
 
     // Hover highlight
     if (state.hoveredId && !state.selectedIds.has(state.hoveredId)) {

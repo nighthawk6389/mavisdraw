@@ -202,7 +202,14 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
   const computeElementList = useCallback((excludeLockedLayers: boolean): MavisElement[] => {
     const cacheRef = excludeLockedLayers ? interactListRef : renderListRef;
     const layers = useLayerStore.getState().layers;
-    const key = [useElementsStore.getState().elements, activeDiagramIdRef.current, layers];
+    // What the eraser has passed over is drawn faded (only in what's drawn)
+    const erasing = excludeLockedLayers ? null : (interactionRef.current?.getErasing() ?? null);
+    const key = [
+      useElementsStore.getState().elements,
+      activeDiagramIdRef.current,
+      layers,
+      erasing?.version ?? 0,
+    ];
     const cached = cacheRef.current;
     if (cached.key.length === key.length && key.every((k, i) => k === cached.key[i])) {
       return cached.result;
@@ -217,7 +224,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
       // Elements on layers this client doesn't know about stay visible
       if (known.has(el.layerId) && hidden.has(el.layerId)) continue;
       if (excludeLockedLayers && locked.has(el.layerId)) continue;
-      els.push(el);
+      els.push(erasing?.ids.has(el.id) ? fadedForEraser(el) : el);
     }
     const result = sortByStacking(els);
     cacheRef.current = { key, result };
@@ -759,6 +766,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         state.anchorTarget = mgr?.getAnchorTarget() ?? null;
         state.hoveredAnchor = mgr?.getHoveredAnchor() ?? null;
         state.snapTarget = mgr?.getSnapTarget() ?? null;
+        state.eraserTrail = mgr?.getEraserTrail() ?? [];
         return state;
       },
     );
@@ -948,6 +956,11 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
             width: bottomRight.x - topLeft.x,
             height: bottomRight.y - topLeft.y,
           };
+        },
+        eraseElements: (ids) => {
+          deleteElements(ids);
+          const selected = useSelectionStore.getState().selectedIds;
+          if (ids.some((id) => selected.has(id))) clearSelection();
         },
         deleteSelectedElements: () => {
           const ids = Array.from(useSelectionStore.getState().selectedIds);
@@ -1420,6 +1433,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     if (activeTool === 'hand') return 'cursor-grab';
     if (activeTool === 'select') return 'cursor-default';
     if (activeTool === 'text') return 'cursor-text';
+    if (activeTool === 'eraser') return 'cursor-eraser';
     return 'cursor-crosshair';
   };
 
@@ -1521,6 +1535,17 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 }
 
 // ─── Utility ──────────────────────────────────────────────────
+
+/** The same element, faded: about to be erased. One copy per version of it. */
+const fadedCopies = new WeakMap<MavisElement, MavisElement>();
+function fadedForEraser(el: MavisElement): MavisElement {
+  let faded = fadedCopies.get(el);
+  if (!faded) {
+    faded = { ...el, opacity: Math.round(el.opacity * 0.3) } as MavisElement;
+    fadedCopies.set(el, faded);
+  }
+  return faded;
+}
 
 function getContentBounds(elements: MavisElement[]): {
   x: number;
