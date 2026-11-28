@@ -82,6 +82,18 @@ project=$(curl -fsS -H "$auth" -H 'Content-Type: application/json' -d '{"name":"
 [ -n "$project" ] || fail "create a project"
 ok "project created"
 
+# Coding agents find how to sign in at this address, port included (they're
+# turned away from /api/mcp with a pointer to it)
+meta=$(curl -fsS "$BASE/.well-known/oauth-protected-resource/api/mcp") \
+  || fail "agent sign-in metadata through the proxy"
+case "$meta" in
+  *"\"resource\":\"$BASE/api/mcp\""*) ;;
+  *) fail "agent sign-in metadata names another address: $meta" ;;
+esac
+curl -fsS "$BASE/.well-known/oauth-authorization-server" | grep -q "\"issuer\":\"$BASE\"" \
+  || fail "the sign-in server's metadata names another address"
+ok "coding agents find how to sign in, at this address"
+
 # The live-collaboration socket upgrades through the proxy
 status=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 --http1.1 \
   -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' \

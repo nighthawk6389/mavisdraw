@@ -30,9 +30,20 @@ rand() {
 }
 
 domain=""
+http_port=""
 case "$url" in
-  https://*) domain=$(printf '%s' "$url" | sed -E 's#^https://([^/:]+).*#\1#') ;;
+  https://*)
+    domain=$(printf '%s' "$url" | sed -E 's#^https://([^/:]+).*#\1#')
+    # Caddy serves HTTPS on 80/443; the plain-HTTP app port stays on this machine
+    http_port="127.0.0.1:8080"
+    ;;
 esac
+
+port_setting=""
+if [ -n "$http_port" ]; then
+  port_setting="# Behind Caddy, the plain-HTTP port of the app answers only on this machine
+HTTP_PORT=$http_port"
+fi
 
 umask 077
 cat > .env <<ENV
@@ -44,6 +55,7 @@ cat > .env <<ENV
 APP_URL=$url
 # For HTTPS with the bundled Caddy (docker compose --profile https up -d)
 DOMAIN=$domain
+$port_setting
 
 POSTGRES_PASSWORD=$(rand 24)
 JWT_SECRET=$(rand 32)
