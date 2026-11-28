@@ -4,6 +4,7 @@ import type { DiagramTreeNode } from '../../stores/diagramStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useElementsStore } from '../../stores/elementsStore';
 import type { MavisElement } from '@mavisdraw/types';
+import { diffElementMaps } from '../../stores/history';
 
 interface TreeNodeProps {
   node: DiagramTreeNode;
@@ -178,16 +179,41 @@ function TreeNode({
   );
 }
 
-/** "diagramId:count|…" for live elements — stable while only positions change. */
+let countedFrom: Map<string, MavisElement> | null = null;
+let countedKey = '';
+
+/** Which diagram an element counts towards, if any. */
+const countsFor = (el: MavisElement | undefined) => (el && !el.isDeleted ? el.diagramId : null);
+
+/**
+ * "diagramId:count|…" for live elements — stable while only positions
+ * change. Evaluated on every store change (each pointer move of a drag), so
+ * it starts from the last answer and the changes since (the diff undo
+ * history already worked out for this update), counting again only when
+ * something was added, removed or moved to another diagram.
+ */
 export function elementCountsKey(elements: Map<string, MavisElement>): string {
+  if (elements === countedFrom) return countedKey;
+  if (countedFrom) {
+    const before = countedFrom;
+    const same = diffElementMaps(before, elements).every(
+      (id) => countsFor(before.get(id)) === countsFor(elements.get(id)),
+    );
+    if (same) {
+      countedFrom = elements;
+      return countedKey;
+    }
+  }
   const counts: Record<string, number> = {};
   for (const el of elements.values()) {
     if (!el.isDeleted) counts[el.diagramId] = (counts[el.diagramId] ?? 0) + 1;
   }
-  return Object.keys(counts)
+  countedFrom = elements;
+  countedKey = Object.keys(counts)
     .sort()
     .map((id) => `${id}:${counts[id]}`)
     .join('|');
+  return countedKey;
 }
 
 function parseCountsKey(key: string): Map<string, number> {

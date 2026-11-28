@@ -83,7 +83,7 @@ Still open:
     - **The refresh cookie is `SameSite=Lax` across Render's two sites,** so it isn't sent cross-site. The fix is to serve the API from the app's origin on Render too (a rewrite of `/api`), as the self-hosted image does. `SameSite=None` would expose sign-out and refresh to CSRF, and Safari blocks it anyway.
     - **Per-process state** (single instance only) is by design for now; see Architecture.
 
-### Third independent review (2026-11-27, `edcb5e1..HEAD`, focus `730bf7e..HEAD`)
+### Third independent review (2026-11-27, `edcb5e1..HEAD`, focus `730bf7e..HEAD`) — all fixed
 
 High, fixed (each with an e2e test that fails without the fix):
 1. ~~**Any signed-in user could overwrite labels in other people's projects**~~: a rename patched whatever diagram each element *said* it was on. `loadProjectScene` now puts every element on the diagram it was stored in, and renames only patch the project's own diagrams (`e2e-real/authorization.spec.ts`).
@@ -91,29 +91,27 @@ High, fixed (each with an e2e test that fails without the fix):
 3. ~~**SSO linked to an existing unconfirmed account and left the squatter's way in**~~: such an account is now taken back like a reset: password removed, sessions, tokens and agents ended, open sockets closed (`e2e-real/sso.spec.ts`).
 4. ~~**A password reset left access tokens and signed-in agents working**~~: a reset ends sessions, personal tokens, signed-in agents, approved-but-uncollected agent sign-ins and open sockets (`services/accountAccess.ts`). Access tokens already issued (15-minute JWTs, checked without the database) are refused too, per process (`services/accessRevocation.ts`): after a restart, ones issued in the 15 minutes before it work until they expire.
 
-Not fixed yet:
+Medium and low, fixed (each with a test that fails without the fix where one could be written):
+5. ~~SSO accepted a missing `email_verified`~~: the provider has to say `true`, unless the operator sets `OIDC_TRUST_EMAIL=true` (Entra ID leaves the claim out; docs/sso.md).
+6. ~~The pre-auth socket cap stopped counting after the first document authenticated~~: data for documents not authenticated on a socket is budgeted per document name (`ws/socketBudget.ts`, `e2e-real/socket-limits.spec.ts`).
+7. ~~A nested diagram created offline was lost with its contents~~: the journal keeps diagrams made on the device until the server confirms them, and recreates them (parents first) on the next open.
+8. ~~Behind the bundled nginx on `:8080`, sign-in addresses lost the port~~: nginx passes `$http_host`; checked with nginx in front of the API and in the self-host smoke test.
+9. ~~Scene reads loaded `yjs_state`, several times per request~~: only a room starting loads the CRDT state; MCP tools reuse the scene they loaded; embeds read contents only when drawing; the component panel refetches the model at most every 2 s.
+10. ~~Server reads treated a loading room as empty~~: they use the stored row until the room has loaded (`loadedRoom`).
+11. ~~Reset and confirmation emails weren't capped~~: 5 a day per inbox (resets also 30 an hour per client); neither repeats the name someone typed.
+12. ~~One diagram failing to save stopped the others~~: each is saved on its own.
+13. ~~A transient GitHub error unlinked a map's PR checks~~: only a definite no does; rate limits (403 with no requests left) are told apart from no access.
+14. ~~Applying a proposal could undo the wrong step or land on another level~~: it records its own step, refuses if the editor moved to another diagram, and keeps marking it applied in the background if the server couldn't be told.
+15. ~~The model never loaded after switching projects mid-fetch~~: fixed in `modelStore`.
+16. ~~Authorize errors and Cancel redirected to any registered address~~: errors before consent are shown; Cancel only hands back to an agent on this computer or an app.
+17. ~~Unused client registrations were deleted even if once used~~: clients record their last use; only never-used ones go after a day.
+18. ~~The journal backup stringified everything before checking its size~~: element sizes are measured once and the backup skipped when too big.
+19. ~~SSO couldn't complete on Render's two sites~~: the callback hands a one-time code to the app in the fragment.
+20. ~~HTTPS self-hosting also served plain HTTP on every interface~~: `setup.sh` binds it to localhost for https addresses.
+21. ~~Model API inputs~~: ids are length-checked, recorded components capped at 5,000 per project, and malformed stored elements (no `boundElements`/`points`) are given a usable shape before modelling or drawing.
+22. ~~Layer bitmaps and element counts~~: the bitmaps are freed 5 s after the last frame that used them; the diagram tree's counts are recounted only when something is added, removed or moved between diagrams.
 
-Medium:
-5. OIDC accepts a missing `email_verified` (only `false` is refused).
-6. The pre-auth WebSocket cap stops counting once any document on the socket authenticates; messages for other, unauthenticated document names queue without bound in Hocuspocus.
-7. A nested diagram created offline is lost with its contents (the journal keeps elements, not new diagrams, and drops entries for unknown diagrams).
-8. Behind the bundled nginx on a non-default port (`:8080`), the agent sign-in metadata, its `resource` check and the OIDC callback lose the port (`$host` has none; use `$http_host`).
-9. Model, MCP and PR-check reads load every diagram row with `yjs_state`, several times per request; the component panel refetches the model on every selection.
-10. Server-side reads (scene, embeds, diagram GET) treat a room that's still loading as an empty diagram.
-11. Reset and verification emails aren't covered by the per-recipient email caps; `/register` mails a free-text name to any address.
-
-Low:
-12. One diagram that fails to save stops autosave for the others (`useAutoSave` loop).
-13. A transient GitHub error during the daily re-verify unlinks a map's PR checks.
-14. Applying a proposal can undo the wrong step, or land on another level, if the person edits or navigates during its awaits.
-15. The model store never loads after switching projects while a fetch is in flight.
-16. `/api/oauth/authorize` errors and the consent page's Cancel redirect to an address any registered client chose.
-17. Unused client registrations are deleted after a day even if they once had a connection, which can strand an agent's cached client id.
-18. The journal's synchronous backup stringifies the whole journal up to 10×/s before checking its size.
-19. SSO can't complete on Render's two-site layout (the refresh cookie isn't sent cross-site).
-20. With the HTTPS profile, the web container still serves plain HTTP on `:8080` on every interface.
-21. Model API inputs: no length check on `:componentId`, no cap on model-only components, and elements without `boundElements`/`points` cause 500s.
-22. The layer cache keeps two full-size bitmaps after the first drag; `elementCountsKey` walks every element on every store change.
+Left as it was: a server-origin write landing during a room's final store could leave a debounce timer on a destroyed document (the reviewer couldn't pin it down; the window is milliseconds).
 
 ### Roadmap Phase 3 items not done yet
 

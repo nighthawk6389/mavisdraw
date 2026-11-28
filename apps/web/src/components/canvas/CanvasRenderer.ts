@@ -29,6 +29,9 @@ import { cylinderPaths, iconById, iconPlacement, queuePaths } from '@mavisdraw/e
 import type { Viewport } from '@mavisdraw/types';
 import { getCubicControlPoints, calculateElbowRoute, getConnectionSide } from '@mavisdraw/math';
 
+/** How long the layer bitmaps outlive the last frame that used them. */
+const LAYER_KEEP_MS = 5000;
+
 /** Alignment / equal-spacing guides shown while moving, drawing or resizing. */
 export type SmartGuide = SnapGuide;
 
@@ -116,6 +119,8 @@ export class CanvasRenderer {
     drawnOutside: number;
   } | null = null;
   private layerBitmaps: { below: LayerBitmap; above: LayerBitmap } | null = null;
+  /** Lets go of the layer bitmaps (two screen-sized canvases) once drags stop. */
+  private releaseLayersTimer: ReturnType<typeof setTimeout> | null = null;
   /** The rough.js canvas that draws into each context (bitmaps have their own). */
   private roughByCtx = new Map<CanvasRenderingContext2D, RoughCanvas>();
   private needsInteractiveRedraw = true;
@@ -302,6 +307,8 @@ export class CanvasRenderer {
     this.imageCache.clear();
     this.layerCache = null;
     this.layerBitmaps = null;
+    if (this.releaseLayersTimer) clearTimeout(this.releaseLayersTimer);
+    this.releaseLayersTimer = null;
     this.roughByCtx.clear();
   }
 
@@ -360,6 +367,7 @@ export class CanvasRenderer {
         if (!reusable) this.buildLayerCache(elements, state, hot, span, width, height);
         this.drawWithLayerCache(elements, state, width, height);
         this.lastStaticPath = reusable ? 'cached' : 'build';
+        this.releaseLayersLater();
         return;
       }
     }
@@ -442,6 +450,20 @@ export class CanvasRenderer {
   }
 
   /** The two bitmaps, sized like the static canvas (made on first use). */
+  /**
+   * The bitmaps only pay off while something is being dragged: a few
+   * seconds after the last frame that used them, they're freed (the next
+   * drag makes them again).
+   */
+  private releaseLayersLater(): void {
+    if (this.releaseLayersTimer) clearTimeout(this.releaseLayersTimer);
+    this.releaseLayersTimer = setTimeout(() => {
+      this.releaseLayersTimer = null;
+      this.layerCache = null;
+      this.layerBitmaps = null;
+    }, LAYER_KEEP_MS);
+  }
+
   private bitmaps(): { below: LayerBitmap; above: LayerBitmap } {
     const make = (): LayerBitmap => {
       const canvas = document.createElement('canvas');
