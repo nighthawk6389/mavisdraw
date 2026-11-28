@@ -35,10 +35,13 @@ import { admitWaiting, releaseWaiting } from './ws/preAuthLimit.js';
 
 /** Largest single WebSocket message (a big pasted image is a few MB). */
 const WS_MAX_PAYLOAD = 16 * 1024 * 1024;
-/** Bytes a socket may send before any document on it has authenticated. */
+/** Bytes a socket may have queued for documents it hasn't authenticated (all of them together). */
 const WS_PRE_AUTH_LIMIT = 256 * 1024;
 const WS_AUTH_TIMEOUT_MS = 15_000;
+/** Documents a socket may have waiting to authenticate at once. */
+const WS_MAX_PENDING_DOCUMENTS = 20;
 import type { Hocuspocus } from '@hocuspocus/server';
+import { PendingBudget, documentNameOf, messageBytes } from './ws/socketBudget.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -116,17 +119,26 @@ export async function buildApp() {
       waiting = false;
       releaseWaiting(address);
     };
-    const gate: SocketGate = { authenticated: false, onAuthenticated: stopWaiting };
-    let preAuthBytes = 0;
+    // Data for documents not (yet) authenticated on this socket is queued by
+    // Hocuspocus, so it's budgeted per document, the first one and every
+    // later one alike
+    const budget = new PendingBudget(WS_PRE_AUTH_LIMIT, WS_MAX_PENDING_DOCUMENTS);
+    const gate: SocketGate = {
+      authenticated: false,
+      onAuthenticated: stopWaiting,
+      documents: new Set(),
+      onDocumentAuthenticated: (name) => budget.release(name),
+    };
     const authTimer = setTimeout(() => {
       if (!gate.authenticated) socket.close(4401, 'Authentication timeout');
     }, WS_AUTH_TIMEOUT_MS);
     socket.on('message', (data: Buffer | ArrayBuffer | Buffer[]) => {
-      if (gate.authenticated) return;
-      preAuthBytes += Array.isArray(data)
-        ? data.reduce((n, b) => n + b.byteLength, 0)
-        : data.byteLength;
-      if (preAuthBytes > WS_PRE_AUTH_LIMIT) socket.close(1009, 'Too much data before authentication');
+      const bytes = messageBytes(data);
+      const name = documentNameOf(bytes) ?? '';
+      if (gate.documents.has(name)) return;
+      if (!budget.add(name, bytes.byteLength)) {
+        socket.close(1009, 'Too much data before authentication');
+      }
     });
     socket.on('close', () => {
       clearTimeout(authTimer);

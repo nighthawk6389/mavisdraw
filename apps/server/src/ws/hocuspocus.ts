@@ -22,6 +22,10 @@ export interface SocketGate {
   authenticated: boolean;
   /** Called once, when a document on the socket first authenticates. */
   onAuthenticated?: () => void;
+  /** Documents authenticated on this socket (their messages aren't counted against the budget). */
+  documents: Set<string>;
+  /** Called each time a document on the socket authenticates. */
+  onDocumentAuthenticated?: (documentName: string) => void;
 }
 
 type ProjectRole = 'owner' | 'admin' | 'editor' | 'viewer';
@@ -171,11 +175,15 @@ export function createHocuspocusServer(): Hocuspocus {
 
       // Viewers can watch live but their updates are rejected server-side
       connection.readOnly = access === 'viewer';
-      // The socket may now send document data freely (see the pre-auth cap)
+      // The socket may now send this document's data freely (see the pre-auth budget)
       const gate = (context as { gate?: SocketGate }).gate;
-      if (gate && !gate.authenticated) {
-        gate.authenticated = true;
-        gate.onAuthenticated?.();
+      if (gate) {
+        gate.documents.add(documentName);
+        gate.onDocumentAuthenticated?.(documentName);
+        if (!gate.authenticated) {
+          gate.authenticated = true;
+          gate.onAuthenticated?.();
+        }
       }
 
       return {
@@ -186,6 +194,11 @@ export function createHocuspocusServer(): Hocuspocus {
           projectId: diagram.projectId,
         },
       };
+    },
+
+    async onDisconnect({ documentName, context }) {
+      // Opening it again on this socket has to authenticate again first
+      (context as { gate?: SocketGate }).gate?.documents.delete(documentName);
     },
 
     async onLoadDocument({ document, documentName }) {
