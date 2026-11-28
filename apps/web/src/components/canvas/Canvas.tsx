@@ -36,6 +36,7 @@ import { ViewportManager } from './ViewportManager';
 import ContextMenu, { type ContextMenuState } from './ContextMenu';
 import ZoomControls from './ZoomControls';
 import type { MavisElement, TextElement, PortalElement, RenderMode, Point } from '@mavisdraw/types';
+import { useThemeStore } from '../../stores/themeStore';
 
 interface TextEditState {
   elementId: string;
@@ -120,6 +121,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
   const endSelectionBox = useSelectionStore((s) => s.endSelectionBox);
 
   const renderMode = useUIStore((s) => s.renderMode);
+  const theme = useThemeStore((s) => s.theme);
   const showGrid = useUIStore((s) => s.showGrid);
   const gridSize = useUIStore((s) => s.gridSize);
 
@@ -692,6 +694,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
     const renderer = new CanvasRenderer(staticCanvas, interactiveCanvas);
     rendererRef.current = renderer;
+    renderer.setDarkMode(useThemeStore.getState().theme === 'dark');
 
     const { width, height } = container.getBoundingClientRect();
     renderer.resize(width, height);
@@ -1017,6 +1020,11 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
   useEffect(() => {
     rendererRef.current?.invalidateStatic();
   }, [renderMode, showGrid, gridSize, layers]);
+
+  // The dark theme inverts the canvas; images are drawn to survive that
+  useEffect(() => {
+    rendererRef.current?.setDarkMode(theme === 'dark');
+  }, [theme]);
 
   useEffect(
     () =>
@@ -1468,12 +1476,12 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     >
       <canvas
         ref={staticCanvasRef}
-        className="absolute inset-0"
+        className="mavis-canvas-layer absolute inset-0"
         style={{ pointerEvents: 'none' }}
       />
       <canvas
         ref={interactiveCanvasRef}
-        className="absolute inset-0"
+        className="mavis-canvas-layer absolute inset-0"
         style={{ touchAction: 'none' }}
         onPointerDown={handlePointerDown}
         onMouseDown={(e) => {
@@ -1500,6 +1508,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
       {textEditState && textEditorStyle && (
         <div
           ref={textEditorRef}
+          className="mavis-canvas-editor"
           contentEditable
           suppressContentEditableWarning
           style={textEditorStyle}

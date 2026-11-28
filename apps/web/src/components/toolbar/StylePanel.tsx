@@ -680,7 +680,7 @@ function ColorPicker({
         {PRESET_COLORS.map((color) => (
           <button
             key={color}
-            className={`w-5 h-5 rounded border ${
+            className={`mavis-color w-5 h-5 rounded border ${
               value === color ? 'border-blue-500 ring-1 ring-blue-300' : 'border-gray-200'
             }`}
             style={{ backgroundColor: color }}
@@ -709,13 +709,13 @@ function ColorPicker({
           type="color"
           value={value === 'transparent' ? '#ffffff' : value}
           onChange={(e) => onChange(e.target.value)}
-          className="w-6 h-6 cursor-pointer border-0 p-0"
+          className="mavis-color w-6 h-6 cursor-pointer border-0 p-0"
         />
         <input
           type="text"
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="flex-1 text-xs border border-gray-200 rounded px-1 py-0.5"
+          className="min-w-0 flex-1 text-xs border border-gray-200 rounded px-1 py-0.5"
           placeholder="#hex"
         />
       </div>

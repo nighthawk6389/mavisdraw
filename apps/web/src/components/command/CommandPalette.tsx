@@ -11,6 +11,7 @@ import { loadDiagramElements } from '../../services/diagramSync';
 import { getCanvasController } from '../canvas/canvasController';
 import * as actions from '../../editor/actions';
 import { shortcut } from '../../utils/platform';
+import { useThemeStore } from '../../stores/themeStore';
 
 interface Result {
   id: string;
@@ -160,6 +161,13 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
           const ui = useUIStore.getState();
           ui.setRenderMode(ui.renderMode === 'sketchy' ? 'clean' : 'sketchy');
         },
+      },
+      {
+        id: 'cmd-theme',
+        kind: 'command',
+        title: 'Toggle dark mode',
+        hint: shortcut('Shift+Alt+D'),
+        run: () => useThemeStore.getState().toggle(),
       },
       {
         id: 'cmd-grid',

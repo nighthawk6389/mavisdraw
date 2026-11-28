@@ -121,6 +121,11 @@ export class CanvasRenderer {
   private layerBitmaps: { below: LayerBitmap; above: LayerBitmap } | null = null;
   /** Lets go of the layer bitmaps (two screen-sized canvases) once drags stop. */
   private releaseLayersTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * The dark theme inverts the canvas for display (styles/dark.css): images
+   * are drawn inverted so they show as they are.
+   */
+  private darkMode = false;
   /** The rough.js canvas that draws into each context (bitmaps have their own). */
   private roughByCtx = new Map<CanvasRenderingContext2D, RoughCanvas>();
   private needsInteractiveRedraw = true;
@@ -196,6 +201,14 @@ export class CanvasRenderer {
    * since the last frame are drawn again where possible; `full` redraws them
    * all (for changes the elements don't show, like a font that finished loading).
    */
+  /** Dark theme on or off: images are drawn to come out right under the canvas's inversion. */
+  setDarkMode(dark: boolean): void {
+    if (dark === this.darkMode) return;
+    this.darkMode = dark;
+    this.needsStaticRedraw = true;
+    this.needsFullStaticRedraw = true;
+  }
+
   invalidateStatic(full = false): void {
     this.needsStaticRedraw = true;
     if (full) this.needsFullStaticRedraw = true;
@@ -1602,7 +1615,15 @@ export class CanvasRenderer {
     }
 
     if (img.complete && img.naturalWidth > 0) {
-      ctx.drawImage(img, 0, 0, width, height);
+      if (this.darkMode) {
+        // Inverted here, inverted back by the dark theme: a photo stays a photo
+        ctx.save();
+        ctx.filter = 'invert(100%) hue-rotate(180deg)';
+        ctx.drawImage(img, 0, 0, width, height);
+        ctx.restore();
+      } else {
+        ctx.drawImage(img, 0, 0, width, height);
+      }
     } else {
       // Draw placeholder while loading
       ctx.save();

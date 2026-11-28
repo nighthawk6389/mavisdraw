@@ -6,6 +6,7 @@ import { useSelectionStore } from '../stores/selectionStore';
 import { useElementsStore } from '../stores/elementsStore';
 import { useDiagramStore } from '../stores/diagramStore';
 import { useUIStore } from '../stores/uiStore';
+import { useThemeStore } from '../stores/themeStore';
 import { openImportDialog } from '../components/export/ImportHandler';
 import { getCanvasController } from '../components/canvas/canvasController';
 import * as actions from '../editor/actions';
@@ -88,7 +89,7 @@ export function useKeyboard(
         const allowed =
           (mod && ['a', 'k', '=', '+', '-', '0'].includes(key)) ||
           (event.shiftKey && !mod && (code === 'Digit1' || code === 'Digit2')) ||
-          (event.shiftKey && event.altKey && code === 'KeyC') ||
+          (event.shiftKey && event.altKey && (code === 'KeyC' || code === 'KeyD')) ||
           (mod && event.shiftKey && (key === 'e' || key === 't')) ||
           key === 'escape' ||
           (!mod && !event.altKey && ['v', 'h', 'c', ' '].includes(key));
@@ -256,6 +257,13 @@ export function useKeyboard(
       if (event.shiftKey && event.altKey && code === 'KeyT') {
         event.preventDefault();
         void actions.tidyUp();
+        return;
+      }
+
+      // Shift+Alt+D = dark / light theme (Excalidraw's shortcut)
+      if (event.shiftKey && event.altKey && code === 'KeyD') {
+        event.preventDefault();
+        useThemeStore.getState().toggle();
         return;
       }
 

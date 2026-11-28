@@ -1,0 +1,162 @@
+// Writes src/styles/dark.css: the dark theme, as overrides of the colour
+// utilities the app uses (each mapped on its own, so `text-blue-700` can turn
+// light while `bg-blue-700` stays a dark button). Run after adding colours:
+//   node scripts/make-dark-theme.mjs
+import { writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+const surface = {
+  page: '#121214',
+  panel: '#1c1c20',
+  raised: '#26262b',
+  line: '#3a3a42',
+  lineStrong: '#4b4b55',
+};
+const tint = (rgb, a) => `rgb(${rgb} / ${a})`;
+const BLUE = '59 130 246';
+const RED = '239 68 68';
+const GREEN = '34 197 94';
+const AMBER = '245 158 11';
+const INDIGO = '99 102 241';
+const PURPLE = '168 85 247';
+const ORANGE = '249 115 22';
+
+/** utility → [property, value] */
+const map = {
+  // Surfaces
+  'bg-white': ['background-color', surface.panel],
+  'bg-white/95': ['background-color', 'rgb(28 28 32 / 0.95)'],
+  'bg-white/90': ['background-color', 'rgb(28 28 32 / 0.9)'],
+  'bg-white/80': ['background-color', 'rgb(28 28 32 / 0.8)'],
+  'bg-gray-50': ['background-color', surface.page],
+  'bg-gray-100': ['background-color', surface.raised],
+  'bg-gray-200': ['background-color', surface.line],
+  'bg-gray-300': ['background-color', surface.lineStrong],
+  'bg-gray-400': ['background-color', '#6b6b76'],
+  'bg-gray-800': ['background-color', '#33333a'],
+  'bg-gray-900': ['background-color', '#0b0b0d'],
+  'bg-black/30': ['background-color', 'rgb(0 0 0 / 0.55)'],
+  // Text
+  'text-gray-900': ['color', '#f4f4f5'],
+  'text-gray-800': ['color', '#e4e4e7'],
+  'text-gray-700': ['color', '#d4d4d8'],
+  'text-gray-600': ['color', '#b4b4bc'],
+  'text-gray-500': ['color', '#9a9aa4'],
+  'text-gray-400': ['color', '#7c7c86'],
+  'text-gray-300': ['color', '#5c5c66'],
+  'text-black': ['color', '#f4f4f5'],
+  // Lines
+  'border-gray-100': ['border-color', surface.raised],
+  'border-gray-200': ['border-color', surface.line],
+  'border-gray-300': ['border-color', surface.lineStrong],
+  'border-white': ['border-color', surface.panel],
+  'divide-gray-100': ['border-color', surface.raised],
+  'divide-gray-200': ['border-color', surface.line],
+  // Blue (accent)
+  'bg-blue-50': ['background-color', tint(BLUE, 0.14)],
+  'bg-blue-100': ['background-color', tint(BLUE, 0.24)],
+  'text-blue-500': ['color', '#60a5fa'],
+  'text-blue-600': ['color', '#60a5fa'],
+  'text-blue-700': ['color', '#93c5fd'],
+  'text-blue-800': ['color', '#bfdbfe'],
+  'text-blue-900': ['color', '#dbeafe'],
+  'border-blue-200': ['border-color', tint(BLUE, 0.4)],
+  'border-blue-300': ['border-color', tint(BLUE, 0.55)],
+  'ring-blue-100': ['--tw-ring-color', tint(BLUE, 0.25)],
+  'ring-blue-200': ['--tw-ring-color', tint(BLUE, 0.35)],
+  'ring-blue-300': ['--tw-ring-color', tint(BLUE, 0.5)],
+  // Red
+  'bg-red-50': ['background-color', tint(RED, 0.14)],
+  'bg-red-100': ['background-color', tint(RED, 0.24)],
+  'text-red-500': ['color', '#f87171'],
+  'text-red-600': ['color', '#f87171'],
+  'text-red-700': ['color', '#fca5a5'],
+  'text-red-800': ['color', '#fecaca'],
+  'border-red-200': ['border-color', tint(RED, 0.4)],
+  // Green
+  'bg-green-50': ['background-color', tint(GREEN, 0.14)],
+  'bg-green-100': ['background-color', tint(GREEN, 0.24)],
+  'text-green-600': ['color', '#4ade80'],
+  'text-green-700': ['color', '#86efac'],
+  'text-green-800': ['color', '#bbf7d0'],
+  'text-green-900': ['color', '#dcfce7'],
+  'border-green-200': ['border-color', tint(GREEN, 0.4)],
+  // Amber
+  'bg-amber-50': ['background-color', tint(AMBER, 0.14)],
+  'bg-amber-100': ['background-color', tint(AMBER, 0.24)],
+  'text-amber-700': ['color', '#fcd34d'],
+  'text-amber-800': ['color', '#fde68a'],
+  'text-amber-900': ['color', '#fef3c7'],
+  'text-amber-950': ['color', '#fffbeb'],
+  'border-amber-200': ['border-color', tint(AMBER, 0.4)],
+  'text-yellow-700': ['color', '#fde047'],
+  // Indigo, purple, orange
+  'bg-indigo-100': ['background-color', tint(INDIGO, 0.24)],
+  'text-indigo-700': ['color', '#a5b4fc'],
+  'bg-purple-50': ['background-color', tint(PURPLE, 0.14)],
+  'bg-purple-100': ['background-color', tint(PURPLE, 0.24)],
+  'text-purple-700': ['color', '#d8b4fe'],
+  'bg-orange-50': ['background-color', tint(ORANGE, 0.14)],
+  'text-orange-600': ['color', '#fb923c'],
+};
+
+const esc = (cls) => cls.replace(/[:/.[\]]/g, (c) => `\\${c}`);
+const rules = [];
+for (const [cls, [prop, value]] of Object.entries(map)) {
+  const decl = `${prop}: ${value}`;
+  const isDivide = cls.startsWith('divide-');
+  const base = isDivide
+    ? `.dark .${esc(cls)} > :not([hidden]) ~ :not([hidden])`
+    : `.dark .${esc(cls)}`;
+  rules.push(`${base} { ${decl}; }`);
+  if (isDivide) continue;
+  rules.push(`.dark .${esc(`hover:${cls}`)}:hover { ${decl}; }`);
+  rules.push(`.dark .${esc(`focus:${cls}`)}:focus { ${decl}; }`);
+  rules.push(`.dark .group:hover .${esc(`group-hover:${cls}`)} { ${decl}; }`);
+}
+
+const css = `/*
+ * Dark theme (html.dark), generated by scripts/make-dark-theme.mjs: every
+ * colour utility the app uses has its own dark counterpart. A colour class
+ * that isn't listed there stays as it is in the dark theme: add it to the
+ * script and run it again.
+ *
+ * The canvas is drawn as stored (the colours people chose) and inverted for
+ * display, the way Excalidraw does it, so a black stroke reads as white on a
+ * dark board; images are inverted back when drawn (CanvasRenderer).
+ */
+
+:root.dark {
+  color-scheme: dark;
+  background-color: ${surface.page};
+}
+
+/* Tailwind's default border colour, at no specificity (utilities still win) */
+:where(.dark) *,
+:where(.dark) ::before,
+:where(.dark) ::after {
+  border-color: ${surface.line};
+}
+
+/* Colour swatches show colours as the inverted board does */
+.dark .mavis-canvas-layer,
+.dark .mavis-canvas-editor,
+.dark .mavis-color {
+  filter: invert(93%) hue-rotate(180deg);
+}
+
+/* The login and reset pages' backdrop */
+.dark .from-blue-50 {
+  --tw-gradient-from: #0f172a var(--tw-gradient-from-position);
+  --tw-gradient-to: rgb(15 23 42 / 0) var(--tw-gradient-to-position);
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+}
+.dark .to-indigo-100 {
+  --tw-gradient-to: #1e1b4b var(--tw-gradient-to-position);
+}
+
+${rules.join('\n')}
+`;
+
+writeFileSync(fileURLToPath(new URL('../src/styles/dark.css', import.meta.url)), css);
+console.log(`dark.css: ${Object.keys(map).length} utilities`);

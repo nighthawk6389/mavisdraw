@@ -3,6 +3,7 @@ import ToolButton from './ToolButton';
 import { useToolStore, type Tool } from '../../stores/toolStore';
 import { usePermissionStore } from '../../stores/permissionStore';
 import { useUIStore } from '../../stores/uiStore';
+import { useThemeStore } from '../../stores/themeStore';
 import { LibraryIcon } from '../library/LibraryIcon';
 
 interface ToolConfig {
@@ -27,6 +28,26 @@ const TOOLS: ToolConfig[] = [
   { tool: 'portal', icon: '\u29C9', label: 'Portal', shortcut: 'O' },
   { tool: 'comment', icon: '\u{1F4AC}', label: 'Comment', shortcut: 'C' },
 ];
+
+/** Its own component: switching themes re-renders this button, not every tool. */
+function ThemeToggle() {
+  const theme = useThemeStore((s) => s.theme);
+  const toggle = useThemeStore((s) => s.toggle);
+  const label = theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+  return (
+    <button
+      type="button"
+      data-testid="theme-toggle"
+      className="w-10 h-10 flex items-center justify-center rounded-lg text-base text-gray-600 hover:bg-gray-100 transition-colors duration-150 group relative"
+      onClick={toggle}
+      aria-label={`${label} (Shift+Alt+D)`}
+      aria-pressed={theme === 'dark'}
+      title={`${label} (Shift+Alt+D)`}
+    >
+      {theme === 'dark' ? '\u2600' : '\u263E'}
+    </button>
+  );
+}
 
 export default function Toolbar() {
   // One field each: the whole stores change for things the toolbar doesn't show
@@ -174,6 +195,9 @@ export default function Toolbar() {
           Toggle layer panel
         </span>
       </button>
+
+      {/* Light / dark (Shift+Alt+D) */}
+      <ThemeToggle />
 
       {/* Tool lock indicator */}
       {isToolLocked && (
