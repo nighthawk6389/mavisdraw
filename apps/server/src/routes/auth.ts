@@ -21,6 +21,7 @@ import {
   sendVerificationEmail,
   VerificationError,
 } from '../services/emailVerification.js';
+import { sweepAbandonedSignups } from '../services/unconfirmedAccounts.js';
 import { requireAuth } from '../middleware/auth.js';
 import { authRateLimit } from '../middleware/rateLimit.js';
 import { disconnectUser } from '../ws/hocuspocus.js';
@@ -67,6 +68,10 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       // Invitations to this address wait until it's confirmed as theirs
       // (anyone can type any address into a sign-up form)
       await sendVerificationEmail(user, request.ip);
+      // Sign-ups nobody confirmed for a month go (at most hourly)
+      void sweepAbandonedSignups().catch((err) =>
+        request.log.warn({ err }, 'Removing abandoned sign-ups failed'),
+      );
 
       reply.setCookie('refreshToken', tokens.refreshToken, {
         httpOnly: true,

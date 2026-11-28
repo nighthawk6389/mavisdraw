@@ -6,6 +6,7 @@ import { db } from '../db/client.js';
 import { users, sessions } from '../db/schema.js';
 import { config } from '../config.js';
 import { issuedTokenRevoked } from './accessRevocation.js';
+import { releaseAbandonedAddress } from './unconfirmedAccounts.js';
 
 const JWT_SECRET = config.jwtSecret;
 const JWT_ACCESS_EXPIRY = '15m';
@@ -57,7 +58,9 @@ export async function registerUser(
   const existing = await db.query.users.findFirst({
     where: eq(users.email, email.toLowerCase()),
   });
-  if (existing) {
+  // An address held by a sign-up nobody confirmed for a month, with nothing
+  // in it, goes to whoever signs up with it now
+  if (existing && !(await releaseAbandonedAddress(email))) {
     throw new AuthError('Email already registered', 409);
   }
 

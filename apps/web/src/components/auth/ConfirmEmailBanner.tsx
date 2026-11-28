@@ -58,7 +58,8 @@ export default function ConfirmEmailBanner() {
       <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 text-sm text-amber-900 sm:px-6 lg:px-8">
         <span>
           Confirm your email: we sent a link to <strong>{user.email}</strong>. Projects and
-          workspaces shared with this address will appear once you do.
+          workspaces shared with this address will appear once you do. An account that isn’t
+          confirmed within 30 days, and has nothing in it, is removed.
         </span>
         {resent === 'sent' ? (
           <span className="text-amber-700">Sent. Check your inbox.</span>

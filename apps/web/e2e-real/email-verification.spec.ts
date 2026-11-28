@@ -64,6 +64,9 @@ test.describe('Email confirmation', () => {
     await b.goto('/');
     const banner = b.getByTestId('confirm-email-banner');
     await expect(banner).toContainText(`we sent a link to ${email}`);
+    await expect(banner).toContainText(
+      'isn’t confirmed within 30 days, and has nothing in it, is removed',
+    );
     await expect(b.getByText(project.name)).toHaveCount(0);
     await banner.getByRole('button', { name: 'Send it again' }).click();
     await expect(banner).toContainText('Sent. Check your inbox.');
