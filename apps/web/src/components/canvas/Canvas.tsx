@@ -35,6 +35,7 @@ import { elementWorldBounds } from './CanvasRenderer';
 import { ViewportManager } from './ViewportManager';
 import ContextMenu, { type ContextMenuState } from './ContextMenu';
 import ZoomControls from './ZoomControls';
+import Minimap from './Minimap';
 import type { MavisElement, TextElement, PortalElement, RenderMode, Point } from '@mavisdraw/types';
 import { useThemeStore } from '../../stores/themeStore';
 
@@ -1485,6 +1486,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
   return (
     <div
       ref={containerRef}
+      data-canvas-container
       className={`relative flex-1 overflow-hidden ${getCursorClass()}`}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
@@ -1516,6 +1518,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
       )}
       <CommentLayer />
       <CursorOverlay />
+      <Minimap />
       <ZoomControls />
       {contextMenu && (
         <ContextMenu state={contextMenu} onClose={() => setContextMenu(null)} />

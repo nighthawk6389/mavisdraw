@@ -8,6 +8,8 @@ interface UIState {
   /** The shape and icon library (architecture shapes, cloud services). */
   showLibrary: boolean;
   showDiagramTree: boolean;
+  /** The overview in the corner (M). */
+  showMinimap: boolean;
 
   // Dialogs
   showExportDialog: boolean;
@@ -40,6 +42,7 @@ interface UIState {
   toggleLayerPanel: () => void;
   setShowLibrary: (open: boolean) => void;
   toggleDiagramTree: () => void;
+  toggleMinimap: () => void;
   toggleExportDialog: () => void;
   toggleVersionHistory: () => void;
   toggleGitHubDialog: () => void;
@@ -55,11 +58,30 @@ interface UIState {
   setGridSize: (size: number) => void;
 }
 
+/** Per-browser preferences (try/catch: storage can be blocked). */
+const MINIMAP_KEY = 'mavisdraw:minimap';
+function readFlag(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === '1';
+  } catch {
+    return false;
+  }
+}
+function writeFlag(key: string, on: boolean): void {
+  try {
+    if (on) localStorage.setItem(key, '1');
+    else localStorage.removeItem(key);
+  } catch {
+    // Lasts for this visit only
+  }
+}
+
 export const useUIStore = create<UIState>((set) => ({
   showStylePanel: true,
   showLayerPanel: false,
   showLibrary: false,
   showDiagramTree: true,
+  showMinimap: readFlag(MINIMAP_KEY),
   showExportDialog: false,
   showVersionHistory: false,
   showGitHubDialog: false,
@@ -86,6 +108,13 @@ export const useUIStore = create<UIState>((set) => ({
 
   toggleDiagramTree: () => {
     set((state) => ({ showDiagramTree: !state.showDiagramTree }));
+  },
+
+  toggleMinimap: () => {
+    set((state) => {
+      writeFlag(MINIMAP_KEY, !state.showMinimap);
+      return { showMinimap: !state.showMinimap };
+    });
   },
 
   toggleExportDialog: () => {

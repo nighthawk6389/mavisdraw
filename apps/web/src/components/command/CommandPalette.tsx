@@ -170,6 +170,13 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
         run: () => useThemeStore.getState().toggle(),
       },
       {
+        id: 'cmd-minimap',
+        kind: 'command',
+        title: 'Toggle overview map',
+        hint: 'M',
+        run: () => useUIStore.getState().toggleMinimap(),
+      },
+      {
         id: 'cmd-grid',
         kind: 'command',
         title: 'Toggle grid',

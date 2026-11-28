@@ -93,7 +93,7 @@ export function useKeyboard(
           (event.shiftKey && event.altKey && (code === 'KeyC' || code === 'KeyD')) ||
           (mod && event.shiftKey && (key === 'e' || key === 't')) ||
           key === 'escape' ||
-          (!mod && !event.altKey && ['v', 'h', 'c', ' '].includes(key));
+          (!mod && !event.altKey && ['v', 'h', 'c', 'm', ' '].includes(key));
         if (!allowed) return;
       }
 
@@ -299,6 +299,11 @@ export function useKeyboard(
 
       // Tool shortcuts (only without modifiers)
       if (!mod && !event.altKey && !event.shiftKey) {
+        // M: the overview map
+        if (key === 'm') {
+          useUIStore.getState().toggleMinimap();
+          return;
+        }
         // Q keeps the current drawing tool active after each shape (Excalidraw, tldraw)
         if (key === 'q') {
           useToolStore.getState().toggleToolLock();

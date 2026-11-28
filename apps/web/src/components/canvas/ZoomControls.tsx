@@ -1,5 +1,6 @@
 import React from 'react';
 import { useViewportStore } from '../../stores/viewportStore';
+import { useUIStore } from '../../stores/uiStore';
 import { getCanvasController } from './canvasController';
 import { shortcut } from '../../utils/platform';
 
@@ -10,6 +11,7 @@ const buttonClass =
 export default function ZoomControls() {
   const zoom = useViewportStore((s) => s.zoom);
   const percent = Math.round(zoom * 100);
+  const showMinimap = useUIStore((s) => s.showMinimap);
 
   return (
     <div
@@ -45,6 +47,20 @@ export default function ZoomControls() {
         +
       </button>
       <div className="h-5 w-px bg-gray-200" aria-hidden="true" />
+      <button
+        type="button"
+        className={`${buttonClass} ${showMinimap ? 'text-blue-600' : ''}`}
+        aria-label="Overview map"
+        aria-pressed={showMinimap}
+        title="Overview map (M)"
+        data-testid="minimap-toggle"
+        onClick={() => useUIStore.getState().toggleMinimap()}
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
+          <rect x="4" y="5" width="5" height="4" rx="0.5" fill="currentColor" opacity="0.6" />
+        </svg>
+      </button>
       <button
         type="button"
         className={buttonClass}
