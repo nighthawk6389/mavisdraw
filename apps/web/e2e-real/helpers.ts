@@ -2,6 +2,8 @@ import type { APIRequestContext, Browser, BrowserContext, Page } from '@playwrig
 import { expect } from '@playwright/test';
 
 export const API_URL = `http://localhost:${process.env.E2E_API_PORT ?? '3101'}`;
+/** The API serving the built app on its own address, as on Render (WEB_DIST). */
+export const SINGLE_SITE_URL = `http://localhost:${process.env.E2E_SINGLE_PORT ?? '3103'}`;
 
 export interface TestUser {
   email: string;

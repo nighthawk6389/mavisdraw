@@ -7,6 +7,8 @@
  * defaults keep `pnpm dev` working with no setup.
  */
 
+import { resolve as resolvePath } from 'node:path';
+
 export interface GitHubHostConfig {
   /** Web origin, e.g. https://github.com or https://github.acme.com */
   url: string;
@@ -25,6 +27,12 @@ export interface Config {
   logLevel: string;
   /** Public URL of the web app (links in emails). */
   appUrl: string;
+  /**
+   * The built web app (apps/web/dist) when this server serves it too, so
+   * app and API share one address (Render); null when something else serves
+   * the app (nginx in the self-hosted image, Vite in development).
+   */
+  webDist: string | null;
   /**
    * Send the session cookie only over HTTPS. Follows APP_URL (a self-hosted
    * instance on plain http:// would otherwise lose its session on reload);
@@ -243,7 +251,17 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     problems.push('MAIL_FROM must be set (e.g. "MavisDraw <notifications@yourdomain.com>")');
   }
 
-  const appUrl = (env.APP_URL ?? env.CORS_ORIGIN ?? 'http://localhost:3000').replace(/\/+$/, '');
+  // Serving the app too: its address is this server's (Render says what that
+  // is). CORS_ORIGIN then only names another site allowed to call the API (a
+  // static site left from a two-site setup), never where the app is
+  const webDist = env.WEB_DIST?.trim() ? resolvePath(env.WEB_DIST.trim()) : null;
+  const appAddress = webDist
+    ? (env.APP_URL ?? env.RENDER_EXTERNAL_URL)
+    : (env.APP_URL ?? env.CORS_ORIGIN);
+  if (webDist && isProduction && !appAddress) {
+    problems.push('WEB_DIST needs APP_URL: the address people open the app at');
+  }
+  const appUrl = (appAddress ?? 'http://localhost:3000').replace(/\/+$/, '');
 
   // ── Single sign-on (OpenID Connect) ──────────────────────
   let oidc: OidcConfig | null = null;
@@ -290,10 +308,14 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     databaseUrl: required('DATABASE_URL', DEV.databaseUrl),
     jwtSecret: secret('JWT_SECRET', DEV.jwtSecret),
     cookieSecret: secret('COOKIE_SECRET', DEV.cookieSecret),
-    corsOrigin: required('CORS_ORIGIN', 'http://localhost:3000'),
+    // The app on this server's own address needs no CORS
+    corsOrigin: webDist
+      ? (env.CORS_ORIGIN ?? appUrl)
+      : required('CORS_ORIGIN', 'http://localhost:3000'),
     trustProxy,
     logLevel: env.LOG_LEVEL ?? 'info',
     appUrl,
+    webDist,
     cookieSecure:
       env.COOKIE_SECURE !== undefined
         ? env.COOKIE_SECURE.trim().toLowerCase() === 'true'

@@ -100,6 +100,54 @@ describe('configuration', () => {
     );
   });
 
+  it('serving the app too (WEB_DIST), its address is this server’s own (Render)', () => {
+    const production = {
+      NODE_ENV: 'production',
+      JWT_SECRET: strong,
+      COOKIE_SECRET: strong,
+      DATABASE_URL: 'postgres://db/x',
+      TRUST_PROXY: '1',
+    };
+    const render = loadConfig({
+      ...production,
+      WEB_DIST: 'apps/web/dist',
+      RENDER_EXTERNAL_URL: 'https://mavisdraw-api.onrender.com',
+    });
+    expect(render.problems).toEqual([]);
+    expect(render.config.webDist).toMatch(/\/apps\/web\/dist$/);
+    expect(render.config.appUrl).toBe('https://mavisdraw-api.onrender.com');
+    expect(render.config.corsOrigin).toBe('https://mavisdraw-api.onrender.com');
+    expect(render.config.cookieSecure).toBe(true);
+    expect(render.config.github.redirectUri).toBe(
+      'https://mavisdraw-api.onrender.com/oauth/github/callback.html',
+    );
+    // A custom domain wins
+    expect(
+      loadConfig({
+        ...production,
+        WEB_DIST: 'apps/web/dist',
+        RENDER_EXTERNAL_URL: 'https://mavisdraw-api.onrender.com',
+        APP_URL: 'https://draw.acme.com',
+      }).config.appUrl,
+    ).toBe('https://draw.acme.com');
+    // A CORS_ORIGIN left from the two-site setup still may call the API, but
+    // emailed links go to where the app is now
+    const moved = loadConfig({
+      ...production,
+      WEB_DIST: 'apps/web/dist',
+      RENDER_EXTERNAL_URL: 'https://mavisdraw-api.onrender.com',
+      CORS_ORIGIN: 'https://mavisdraw-web.onrender.com',
+    });
+    expect(moved.config.appUrl).toBe('https://mavisdraw-api.onrender.com');
+    expect(moved.config.corsOrigin).toBe('https://mavisdraw-web.onrender.com');
+    // Somewhere else, it has to be told
+    expect(loadConfig({ ...production, WEB_DIST: 'dist' }).problems.join()).toMatch(/APP_URL/);
+    // Not serving the app: Render's address is the API's, not the app's
+    const apiOnly = loadConfig({ ...production, RENDER_EXTERNAL_URL: 'https://api.onrender.com' });
+    expect(apiOnly.config.webDist).toBeNull();
+    expect(apiOnly.problems.join()).toMatch(/CORS_ORIGIN/);
+  });
+
   it('parses TRUST_PROXY', () => {
     expect(parseTrustProxy(undefined)).toBe(false);
     expect(parseTrustProxy('true')).toBe(true);

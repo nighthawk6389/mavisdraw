@@ -32,6 +32,7 @@ import {
   type SocketGate,
 } from './ws/hocuspocus.js';
 import { admitWaiting, releaseWaiting } from './ws/preAuthLimit.js';
+import { loadWebApp, registerWebApp } from './webApp.js';
 
 /** Largest single WebSocket message (a big pasted image is a few MB). */
 const WS_MAX_PAYLOAD = 16 * 1024 * 1024;
@@ -213,6 +214,9 @@ export async function buildApp() {
   await app.register(githubAppRoutes);
   await app.register(modelRoutes);
   await app.register(ssoRoutes);
+
+  // The web app on this same address (Render), when it's not served elsewhere
+  if (config.webDist) registerWebApp(app, loadWebApp(config.webDist));
 
   return app;
 }
