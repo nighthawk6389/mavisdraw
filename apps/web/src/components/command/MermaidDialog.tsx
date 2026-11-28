@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { importMermaidText } from '../../import/diagramAsCode';
 import { getCanvasController } from '../canvas/canvasController';
+import { useModalDialog } from '../ui/useModalDialog';
 
 const EXAMPLE = `flowchart LR
   user((Customer)) -->|HTTPS| web[Web App]
@@ -16,6 +17,8 @@ export default function MermaidDialog({ onClose }: { onClose: () => void }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const areaRef = useRef<HTMLTextAreaElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalDialog(dialogRef, onClose);
 
   useEffect(() => areaRef.current?.focus(), []);
 
@@ -39,6 +42,8 @@ export default function MermaidDialog({ onClose }: { onClose: () => void }) {
       }}
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby="mermaid-dialog-title"

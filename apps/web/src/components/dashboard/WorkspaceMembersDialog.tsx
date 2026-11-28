@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import {
   apiInviteToWorkspace,
   apiRemoveWorkspaceMember,
@@ -11,6 +11,7 @@ import {
   type WorkspaceRole,
 } from '../../services/api';
 import { useAuthStore } from '../../stores/authStore';
+import { useModalDialog } from '../ui/useModalDialog';
 
 /** Who's in a workspace; invite by email; change roles. */
 export default function WorkspaceMembersDialog({
@@ -22,6 +23,8 @@ export default function WorkspaceMembersDialog({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalDialog(dialogRef, onClose);
   const me = useAuthStore((s) => s.user?.id);
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
   const [invites, setInvites] = useState<PendingInvite[]>([]);
@@ -101,7 +104,10 @@ export default function WorkspaceMembersDialog({
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
+        aria-modal="true"
         aria-label={`${workspace.name} members`}
         className="w-full max-w-lg rounded-xl bg-white shadow-xl"
         onClick={(e) => e.stopPropagation()}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   apiCreateShareLink,
   apiInviteToProject,
@@ -13,6 +13,7 @@ import {
 import { usePermissionStore } from '../../stores/permissionStore';
 import { toast } from '../../stores/toastStore';
 import EmbedSection from './EmbedSection';
+import { useModalDialog } from '../ui/useModalDialog';
 
 interface ShareDialogProps {
   projectId: string;
@@ -21,6 +22,8 @@ interface ShareDialogProps {
 }
 
 export default function ShareDialog({ projectId, isOpen, onClose }: ShareDialogProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalDialog(dialogRef, onClose, isOpen);
   const [permissions, setPermissions] = useState<PermissionResponse[]>([]);
   const [shareLink, setShareLink] = useState<string | null>(null);
   const [shareRole, setShareRole] = useState<'viewer' | 'editor'>('viewer');
@@ -136,10 +139,18 @@ export default function ShareDialog({ projectId, isOpen, onClose }: ShareDialogP
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4 flex max-h-[90vh] flex-col">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="share-dialog-title"
+        tabIndex={-1}
+        className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4 flex max-h-[90vh] flex-col"
+      >
         <div className="flex items-center justify-between p-4 border-b border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900">Share Project</h3>
+          <h3 id="share-dialog-title" className="text-lg font-semibold text-gray-900">Share Project</h3>
           <button
+            aria-label="Close"
             onClick={onClose}
             className="text-gray-400 hover:text-gray-600 text-xl leading-none"
           >

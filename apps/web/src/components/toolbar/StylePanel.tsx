@@ -222,13 +222,14 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
   const icon = getCommonValue('icon') ?? '';
 
   return (
-    <aside data-testid="style-panel" className="w-56 bg-white border-l border-gray-200 overflow-y-auto p-3 flex flex-col gap-3 z-10">
+    <aside data-testid="style-panel" aria-label="Style" className="w-56 bg-white border-l border-gray-200 overflow-y-auto p-3 flex flex-col gap-3 z-10">
       {header}
       <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Style</h3>
 
       {/* Stroke Color */}
       <Section label="Stroke">
         <ColorPicker
+          label="Stroke colour"
           value={strokeColor}
           onChange={(color) => applyToAll({ strokeColor: color }, 'strokeColor')}
         />
@@ -237,6 +238,7 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
       {/* Background Color */}
       <Section label="Background">
         <ColorPicker
+          label="Background colour"
           value={backgroundColor}
           onChange={(color) => applyToAll({ backgroundColor: color }, 'backgroundColor')}
         />
@@ -244,7 +246,7 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
 
       {/* Fill Style */}
       <Section label="Fill Style">
-        <div className="flex gap-1">
+        <div className="flex flex-wrap gap-1">
           {FILL_STYLES.map((fs) => (
             <button
               key={fs.value}
@@ -254,6 +256,7 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
                   : 'border-gray-200 text-gray-600 hover:bg-gray-50'
               }`}
               onClick={() => applyToAll({ fillStyle: fs.value })}
+              aria-pressed={fillStyle === fs.value}
             >
               {fs.label}
             </button>
@@ -263,7 +266,7 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
 
       {/* Stroke Width */}
       <Section label="Stroke Width">
-        <div className="flex gap-1">
+        <div className="flex flex-wrap gap-1">
           {STROKE_WIDTHS.map((sw) => (
             <button
               key={sw.value}
@@ -273,6 +276,7 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
                   : 'border-gray-200 text-gray-600 hover:bg-gray-50'
               }`}
               onClick={() => applyToAll({ strokeWidth: sw.value })}
+              aria-pressed={strokeWidth === sw.value}
             >
               {sw.label}
             </button>
@@ -282,6 +286,7 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
           <button
             className="w-7 h-7 text-sm rounded border border-gray-200 text-gray-600 hover:bg-gray-50"
             onClick={() => applyToAll({ strokeWidth: Math.max(1, (strokeWidth as number) - 1) })}
+            aria-label="Thinner"
           >
             &minus;
           </button>
@@ -289,6 +294,7 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
           <button
             className="w-7 h-7 text-sm rounded border border-gray-200 text-gray-600 hover:bg-gray-50"
             onClick={() => applyToAll({ strokeWidth: Math.min(20, (strokeWidth as number) + 1) })}
+            aria-label="Thicker"
           >
             +
           </button>
@@ -297,7 +303,7 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
 
       {/* Stroke Style */}
       <Section label="Stroke Style">
-        <div className="flex gap-1">
+        <div className="flex flex-wrap gap-1">
           {STROKE_STYLES.map((ss) => (
             <button
               key={ss.value}
@@ -307,6 +313,7 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
                   : 'border-gray-200 text-gray-600 hover:bg-gray-50'
               }`}
               onClick={() => applyToAll({ strokeStyle: ss.value })}
+              aria-pressed={strokeStyle === ss.value}
             >
               {ss.label}
             </button>
@@ -322,6 +329,7 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
           max="100"
           value={opacity}
           onChange={(e) => applyToAll({ opacity: parseInt(e.target.value, 10) }, 'opacity')}
+          aria-label="Opacity"
           className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer"
         />
       </Section>
@@ -335,6 +343,7 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
           step="0.5"
           value={roughness}
           onChange={(e) => applyToAll({ roughness: parseFloat(e.target.value) }, 'roughness')}
+          aria-label="Roughness"
           className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer"
         />
       </Section>
@@ -660,17 +669,19 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-1">
-      <label className="text-xs text-gray-500">{label}</label>
+    <div className="flex flex-col gap-1" role="group" aria-label={label}>
+      <span className="text-xs text-gray-500">{label}</span>
       {children}
     </div>
   );
 }
 
 function ColorPicker({
+  label,
   value,
   onChange,
 }: {
+  label: string;
   value: string;
   onChange: (color: string) => void;
 }) {
@@ -686,6 +697,8 @@ function ColorPicker({
             style={{ backgroundColor: color }}
             onClick={() => onChange(color)}
             title={color}
+            aria-label={`${label} ${color}`}
+            aria-pressed={value === color}
           />
         ))}
         <button
@@ -702,6 +715,8 @@ function ColorPicker({
           }}
           onClick={() => onChange('transparent')}
           title="Transparent"
+          aria-label={`${label}: transparent`}
+          aria-pressed={value === 'transparent'}
         />
       </div>
       <div className="flex gap-1 items-center">
@@ -710,6 +725,7 @@ function ColorPicker({
           value={value === 'transparent' ? '#ffffff' : value}
           onChange={(e) => onChange(e.target.value)}
           className="mavis-color w-6 h-6 cursor-pointer border-0 p-0"
+          aria-label={`${label}: pick any`}
         />
         <input
           type="text"
@@ -717,6 +733,7 @@ function ColorPicker({
           onChange={(e) => onChange(e.target.value)}
           className="min-w-0 flex-1 text-xs border border-gray-200 rounded px-1 py-0.5"
           placeholder="#hex"
+          aria-label={`${label} (hex)`}
         />
       </div>
     </div>

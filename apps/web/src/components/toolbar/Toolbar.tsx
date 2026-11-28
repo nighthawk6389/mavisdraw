@@ -58,6 +58,7 @@ function ThemeToggle() {
   const label = theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
   return (
     <button
+      tabIndex={-1}
       type="button"
       data-testid="theme-toggle"
       className="w-10 h-10 flex items-center justify-center rounded-lg text-base text-gray-600 hover:bg-gray-100 transition-colors duration-150 group relative"
@@ -69,6 +70,26 @@ function ThemeToggle() {
       {theme === 'dark' ? '\u2600' : '\u263E'}
     </button>
   );
+}
+
+/**
+ * Arrow keys move between the toolbar's buttons (Home/End: first/last), as
+ * in any toolbar; Tab leaves it. Enter or Space picks.
+ */
+function moveFocusWithArrows(event: React.KeyboardEvent<HTMLElement>) {
+  const keys = ['ArrowDown', 'ArrowUp', 'Home', 'End'];
+  if (!keys.includes(event.key)) return;
+  const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button'));
+  const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
+  if (at === -1) return;
+  event.preventDefault();
+  const next =
+    event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? buttons.length - 1
+        : (at + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+  buttons[next].focus();
 }
 
 export default function Toolbar() {
@@ -96,7 +117,14 @@ export default function Toolbar() {
   const setShowLibrary = useUIStore((s) => s.setShowLibrary);
 
   return (
-    <aside data-testid="toolbar" className="w-12 bg-white border-r border-gray-200 flex flex-col items-center py-2 gap-1 z-10">
+    <aside
+      data-testid="toolbar"
+      role="toolbar"
+      aria-label="Tools"
+      aria-orientation="vertical"
+      onKeyDown={moveFocusWithArrows}
+      className="w-12 bg-white border-r border-gray-200 flex flex-col items-center py-2 gap-1 z-10"
+    >
       {tools.map((config) => (
         <ToolButton
           key={config.tool}
@@ -104,6 +132,7 @@ export default function Toolbar() {
           label={config.label}
           shortcut={config.shortcut}
           isActive={activeTool === config.tool}
+          tabIndex={activeTool === config.tool ? 0 : -1}
           onClick={() => setTool(config.tool)}
           onDoubleClick={() => {
             setTool(config.tool);
@@ -115,6 +144,7 @@ export default function Toolbar() {
       {/* Shape library: datastores, queues, cloud services, Kubernetes */}
       {canEdit && (
         <button
+          tabIndex={-1}
           data-testid="library-button"
           className={`w-10 h-10 flex items-center justify-center rounded-lg text-base
             transition-colors duration-150 group relative
@@ -122,6 +152,7 @@ export default function Toolbar() {
           `}
           onClick={() => setShowLibrary(!showLibrary)}
           aria-pressed={showLibrary}
+          aria-label="Shape library"
           title="Shape library"
         >
           {'\u25A6'}
@@ -137,12 +168,15 @@ export default function Toolbar() {
 
       {/* Render mode toggle */}
       <button
+        tabIndex={-1}
         className={`w-10 h-10 flex items-center justify-center rounded-lg text-xs font-medium
           transition-colors duration-150 group relative
           ${renderMode === 'sketchy' ? 'text-orange-600 bg-orange-50' : 'text-blue-600 bg-blue-50'}
         `}
         onClick={() => setRenderMode(renderMode === 'sketchy' ? 'clean' : 'sketchy')}
         title={`Mode: ${renderMode} (click to toggle)`}
+        aria-label="Hand-drawn style"
+        aria-pressed={renderMode === 'sketchy'}
       >
         {renderMode === 'sketchy' ? '\u270D' : '\u2662'}
         <span className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-xs rounded
@@ -153,12 +187,15 @@ export default function Toolbar() {
 
       {/* Grid toggle */}
       <button
+        tabIndex={-1}
         className={`w-10 h-10 flex items-center justify-center rounded-lg text-xs
           transition-colors duration-150 group relative
           ${showGrid ? 'text-gray-700 bg-gray-100' : 'text-gray-400'}
         `}
         onClick={toggleGrid}
         title={`Grid: ${showGrid ? 'on' : 'off'}`}
+        aria-label="Grid"
+        aria-pressed={showGrid}
       >
         #
         <span className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-xs rounded
@@ -169,12 +206,15 @@ export default function Toolbar() {
 
       {/* Diagram tree toggle */}
       <button
+        tabIndex={-1}
         className={`w-10 h-10 flex items-center justify-center rounded-lg text-xs
           transition-colors duration-150 group relative
           ${showDiagramTree ? 'text-purple-700 bg-purple-100' : 'text-gray-400'}
         `}
         onClick={toggleDiagramTree}
         title={`Diagram tree: ${showDiagramTree ? 'on' : 'off'}`}
+        aria-label="Diagram tree"
+        aria-pressed={showDiagramTree}
       >
         {'\u2263'}
         <span className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-xs rounded
@@ -188,12 +228,15 @@ export default function Toolbar() {
 
       {/* Style panel toggle */}
       <button
+        tabIndex={-1}
         className={`w-10 h-10 flex items-center justify-center rounded-lg text-xs
           transition-colors duration-150 group relative
           ${showStylePanel ? 'text-purple-700 bg-purple-50' : 'text-gray-400'}
         `}
         onClick={toggleStylePanel}
         title={`Style panel: ${showStylePanel ? 'on' : 'off'}`}
+        aria-label="Style panel"
+        aria-pressed={showStylePanel}
       >
         S
         <span className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-xs rounded
@@ -204,12 +247,15 @@ export default function Toolbar() {
 
       {/* Layer panel toggle */}
       <button
+        tabIndex={-1}
         className={`w-10 h-10 flex items-center justify-center rounded-lg text-xs
           transition-colors duration-150 group relative
           ${showLayerPanel ? 'text-green-700 bg-green-50' : 'text-gray-400'}
         `}
         onClick={toggleLayerPanel}
         title={`Layer panel: ${showLayerPanel ? 'on' : 'off'}`}
+        aria-label="Layer panel"
+        aria-pressed={showLayerPanel}
       >
         L
         <span className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-xs rounded

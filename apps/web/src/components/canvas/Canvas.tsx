@@ -6,7 +6,7 @@ import { useElementsStore } from '../../stores/elementsStore';
 import { renameEverywhere } from '../../services/modelSync';
 import { useToolStore } from '../../stores/toolStore';
 import { useSelectionStore } from '../../stores/selectionStore';
-import { unionVisualBounds } from './HitTesting';
+import { getVisualBounds, unionVisualBounds } from './HitTesting';
 import { shiftToKeepInView } from './keepInView';
 import { useUIStore } from '../../stores/uiStore';
 import { useLayerStore } from '../../stores/layerStore';
@@ -30,7 +30,7 @@ import { useViewportStore } from '../../stores/viewportStore';
 import { sortByStacking, withoutHistory } from '../../stores/elementsStore';
 import { WheelInterpreter } from './wheel';
 import { edgeProximity, edgeScrollStep } from './gestures/edgeScroll';
-import { registerCanvasController } from './canvasController';
+import { getCanvasController, registerCanvasController } from './canvasController';
 import { elementWorldBounds } from './CanvasRenderer';
 import { ViewportManager } from './ViewportManager';
 import ContextMenu, { type ContextMenuState } from './ContextMenu';
@@ -38,6 +38,9 @@ import ZoomControls from './ZoomControls';
 import Minimap from './Minimap';
 import type { MavisElement, TextElement, PortalElement, RenderMode, Point } from '@mavisdraw/types';
 import { useThemeStore } from '../../stores/themeStore';
+import CanvasAnnouncer from './CanvasAnnouncer';
+import { nextTabStop, tabbableShapes } from './keyboardSelection';
+import { visibleBounds } from './minimapLayout';
 
 interface TextEditState {
   elementId: string;
@@ -1439,6 +1442,34 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     return 'cursor-crosshair';
   };
 
+  // ─── Keyboard: Tab moves between shapes ────────────────────
+
+  const handleCanvasKeyDown = (e: React.KeyboardEvent<HTMLCanvasElement>) => {
+    if (e.key !== 'Tab' || e.ctrlKey || e.metaKey || e.altKey) return;
+    const shapes = tabbableShapes(computeElementList(true));
+    const next = nextTabStop(shapes, useSelectionStore.getState().selectedIds, e.shiftKey);
+    if (!next) {
+      // Past the last shape: leave the canvas (nothing selected behind)
+      useSelectionStore.getState().clearSelection();
+      return;
+    }
+    e.preventDefault();
+    useSelectionStore.getState().select(next);
+    const el = useElementsStore.getState().elements.get(next);
+    const renderer = rendererRef.current;
+    const container = containerRef.current;
+    if (el && renderer && container) {
+      // Bring it on screen if it isn't
+      const { width, height } = container.getBoundingClientRect();
+      const view = visibleBounds(renderer.getViewport().getViewport(), { width, height });
+      const b = getVisualBounds(el);
+      const inside =
+        b.x >= view.x && b.y >= view.y && b.x + b.width <= view.x + view.width && b.y + b.height <= view.y + view.height;
+      if (!inside) getCanvasController()?.centerOn?.({ x: b.x + b.width / 2, y: b.y + b.height / 2 });
+    }
+    rendererRef.current?.invalidateStatic();
+  };
+
   // ─── Text Editor Positioning ───────────────────────────────
 
   const getTextEditorStyle = (): React.CSSProperties | null => {
@@ -1500,7 +1531,19 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
         ref={interactiveCanvasRef}
         className="mavis-canvas-layer absolute inset-0"
         style={{ touchAction: 'none' }}
-        onPointerDown={handlePointerDown}
+        tabIndex={0}
+        role="application"
+        aria-roledescription="diagram canvas"
+        aria-label="Diagram canvas. Tab moves between shapes, Enter edits a label or opens a nested diagram, arrow keys move the selection, Delete removes it."
+        onKeyDown={handleCanvasKeyDown}
+        onPointerDown={(e) => {
+          // Keyboard focus follows the pointer here (unless typing somewhere)
+          const active = document.activeElement as HTMLElement | null;
+          if (!active || active === document.body || active.tagName === 'CANVAS') {
+            e.currentTarget.focus({ preventScroll: true });
+          }
+          handlePointerDown(e);
+        }}
         onMouseDown={(e) => {
           // Keep focus in the editor this press just opened (see editorOpenedByPressRef)
           if (editorOpenedByPressRef.current) e.preventDefault();
@@ -1516,6 +1559,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
           <DiffOverlay />
         </Suspense>
       )}
+      <CanvasAnnouncer />
       <CommentLayer />
       <CursorOverlay />
       <Minimap />

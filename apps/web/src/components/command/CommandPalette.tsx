@@ -12,6 +12,7 @@ import { getCanvasController } from '../canvas/canvasController';
 import * as actions from '../../editor/actions';
 import { shortcut } from '../../utils/platform';
 import { useThemeStore } from '../../stores/themeStore';
+import { useModalDialog } from '../ui/useModalDialog';
 
 interface Result {
   id: string;
@@ -83,6 +84,8 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalDialog(dialogRef, onClose);
   const listRef = useRef<HTMLUListElement>(null);
   const elements = useElementsStore((s) => s.elements);
   const diagrams = useDiagramStore((s) => s.diagrams);
@@ -297,6 +300,8 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
       }}
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"

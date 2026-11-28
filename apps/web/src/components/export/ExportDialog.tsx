@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { useUIStore } from '../../stores/uiStore';
 import { useElementsStore } from '../../stores/elementsStore';
 import { useDiagramStore } from '../../stores/diagramStore';
@@ -19,6 +19,7 @@ import {
 import { serializeScene, toStructurizrDsl } from '@mavisdraw/llm';
 import { useModelStore } from '../../stores/modelStore';
 import type { ExportFormat } from '@mavisdraw/types';
+import { useModalDialog } from '../ui/useModalDialog';
 
 const FORMAT_OPTIONS: { value: ExportFormat; label: string; ext: string }[] = [
   { value: 'mavisdraw', label: 'MavisDraw (.mavisdraw)', ext: '.mavisdraw' },
@@ -46,6 +47,8 @@ function downloadBlob(blob: Blob, filename: string) {
 export default function ExportDialog() {
   const showExportDialog = useUIStore((s) => s.showExportDialog);
   const toggleExportDialog = useUIStore((s) => s.toggleExportDialog);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalDialog(dialogRef, toggleExportDialog, showExportDialog);
   const renderMode = useUIStore((s) => s.renderMode);
 
   const [format, setFormat] = useState<ExportFormat>('mavisdraw');
@@ -221,10 +224,18 @@ export default function ExportDialog() {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-      <div className="bg-white rounded-lg shadow-xl w-[420px] max-h-[90vh] overflow-y-auto">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="export-dialog-title"
+        tabIndex={-1}
+        className="bg-white rounded-lg shadow-xl w-[420px] max-h-[90vh] overflow-y-auto"
+      >
         <div className="flex items-center justify-between px-4 py-3 border-b">
-          <h2 className="text-sm font-semibold text-gray-800">Export</h2>
+          <h2 id="export-dialog-title" className="text-sm font-semibold text-gray-800">Export</h2>
           <button
+            aria-label="Close"
             onClick={toggleExportDialog}
             className="text-gray-400 hover:text-gray-600 text-lg leading-none"
           >

@@ -269,6 +269,7 @@ export default function DiagramTreeSidebar() {
 
   return (
     <aside
+      aria-label="Diagrams"
       className="w-52 bg-white border-r border-gray-200 flex flex-col z-10 select-none"
       data-testid="diagram-tree-sidebar"
     >

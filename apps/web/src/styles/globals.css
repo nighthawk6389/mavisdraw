@@ -21,3 +21,18 @@ html, body, #root {
       10 10,
     crosshair;
 }
+
+/* Keyboard focus is always visible (mouse clicks don't show it) */
+button:focus-visible,
+a:focus-visible,
+select:focus-visible,
+[role='button']:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+/* The canvas fills its area: the ring goes inside it */
+canvas:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: -2px;
+}

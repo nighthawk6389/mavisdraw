@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent, useRef } from 'react';
 import {
   MCP_URL,
   apiCreateToken,
@@ -17,6 +17,7 @@ import {
   scopeIsComplete,
   type ScopeProject,
 } from './TokenScopeFields';
+import { useModalDialog } from '../ui/useModalDialog';
 
 async function copy(text: string, what: string): Promise<void> {
   try {
@@ -61,6 +62,8 @@ const close = () => useUIStore.getState().setShowAgentAccess(false);
 const signInSetup = mcpSetup(MCP_URL);
 
 export default function AgentAccessDialog() {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalDialog(dialogRef, close);
   const [tokens, setTokens] = useState<AccessTokenSummary[] | null>(null);
   const [name, setName] = useState('');
   const [created, setCreated] = useState<{ token: string; name: string } | null>(null);
@@ -145,6 +148,8 @@ export default function AgentAccessDialog() {
       onClick={close}
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label="Connect a coding agent"

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useUIStore } from '../../stores/uiStore';
 import { useDiagramStore } from '../../stores/diagramStore';
 import { useElementsStore } from '../../stores/elementsStore';
@@ -6,6 +6,7 @@ import { toast } from '../../stores/toastStore';
 import { findTemplate, TEMPLATES } from '../../templates/templates';
 import { activeDiagramIsEmpty, insertTemplate } from '../../templates/startup';
 import TemplateCards from './TemplateCards';
+import { useModalDialog } from '../ui/useModalDialog';
 
 const close = () => useUIStore.getState().setShowTemplateDialog(false);
 
@@ -25,6 +26,8 @@ function freeSpot(): { x: number; y: number } {
 
 /** Add a template's map to the diagram on screen (⌘K → Insert a template…). */
 export default function TemplateDialog() {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalDialog(dialogRef, close);
   const [selected, setSelected] = useState(TEMPLATES[0].id);
   const [busy, setBusy] = useState(false);
 
@@ -61,6 +64,8 @@ export default function TemplateDialog() {
       onClick={close}
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label="Insert a template"

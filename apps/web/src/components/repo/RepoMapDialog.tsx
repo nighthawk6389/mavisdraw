@@ -19,6 +19,7 @@ import {
 } from '../../services/github';
 import { toast } from '../../stores/toastStore';
 import PullRequestChecks from './PullRequestChecks';
+import { useModalDialog } from '../ui/useModalDialog';
 
 const timeAgo = (iso: string) => {
   const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -54,6 +55,8 @@ function FolderInput({ onPick, label }: { onPick: (files: FileList) => void; lab
 export default function RepoMapDialog() {
   const open = useRepoStore((s) => s.dialogOpen);
   const setOpen = useRepoStore((s) => s.setDialogOpen);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalDialog(dialogRef, () => setOpen(false), open);
   const source = useRepoStore((s) => s.source);
   const drift = useRepoStore((s) => s.drift);
   const applied = useRepoStore((s) => s.applied);
@@ -180,7 +183,10 @@ export default function RepoMapDialog() {
       onClick={() => setOpen(false)}
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
+        aria-modal="true"
         aria-label="Map ⇄ code"
         data-testid="repo-dialog"
         className="w-full max-w-xl rounded-xl bg-white shadow-xl"

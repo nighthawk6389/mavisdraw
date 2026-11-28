@@ -48,7 +48,10 @@ export default function LayerPanel() {
   const sortedLayers = [...layers].sort((a, b) => b.order - a.order);
 
   return (
-    <aside className="w-56 bg-white border-l border-gray-200 overflow-y-auto flex flex-col z-10">
+    <aside
+      aria-label="Layers"
+      className="w-56 bg-white border-l border-gray-200 overflow-y-auto flex flex-col z-10"
+    >
       <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200">
         <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
           Layers

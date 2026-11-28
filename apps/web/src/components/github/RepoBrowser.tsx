@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useGitHubStore } from '../../stores/githubStore';
 import type { GitHubLink } from '@mavisdraw/types';
+import { useModalDialog } from '../ui/useModalDialog';
 
 interface RepoBrowserProps {
   connectionId: string;
@@ -23,6 +24,8 @@ export default function RepoBrowser({
   onSelect,
   onClose,
 }: RepoBrowserProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalDialog(dialogRef, onClose);
   const repos = useGitHubStore((s) => s.repos);
   const branches = useGitHubStore((s) => s.branches);
   const treeEntries = useGitHubStore((s) => s.treeEntries);
@@ -108,7 +111,14 @@ export default function RepoBrowser({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="flex h-[600px] w-full max-w-2xl flex-col rounded-xl bg-white shadow-2xl">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Browse a GitHub repository"
+        tabIndex={-1}
+        className="flex h-[600px] w-full max-w-2xl flex-col rounded-xl bg-white shadow-2xl"
+      >
         {/* Header */}
         <div className="flex items-center justify-between border-b px-4 py-3">
           <div className="flex items-center gap-2">

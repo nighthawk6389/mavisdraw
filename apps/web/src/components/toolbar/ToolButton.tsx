@@ -7,6 +7,8 @@ interface ToolButtonProps {
   onClick: () => void;
   onDoubleClick?: () => void;
   shortcut?: string;
+  /** Roving focus: only the current tool is in the Tab order (arrows move between tools). */
+  tabIndex?: number;
 }
 
 export default function ToolButton({
@@ -16,6 +18,7 @@ export default function ToolButton({
   onClick,
   onDoubleClick,
   shortcut,
+  tabIndex,
 }: ToolButtonProps) {
   return (
     <button
@@ -32,6 +35,9 @@ export default function ToolButton({
       title={`${label}${shortcut ? ` (${shortcut})` : ''}`}
       aria-label={label}
       aria-pressed={isActive}
+      aria-keyshortcuts={shortcut}
+      tabIndex={tabIndex}
+      data-tool-button
     >
       <span aria-hidden>{icon}</span>
       <span className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-xs rounded
