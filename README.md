@@ -72,7 +72,7 @@ mavisdraw/
 │   └── math/             # Geometry & math utilities
 ├── docker-compose.yml    # Local dev services (Postgres, Redis)
 ├── .github/workflows/    # CI pipeline (lint, test, build)
-└── render.yaml           # Render deployment blueprint
+└── render.yaml           # Render deployment blueprint (one service: app + API)
 ```
 
 ## Testing
@@ -126,33 +126,34 @@ published to GHCR when a `v*` tag is pushed (`release.yml`).
 
 ### Render
 
-The included `render.yaml` Blueprint deploys the full stack automatically.
+The included `render.yaml` Blueprint deploys the full stack: one web service that serves the app,
+its API and the live collaboration socket on the same address, and a Postgres database. One
+address keeps the session cookie first-party (so a reload keeps you signed in) and lets the app
+refuse to be framed by other sites while the embed viewer can be.
 
 **First-time setup:**
 
 1. Go to [dashboard.render.com](https://dashboard.render.com)
 2. Click **New** > **Blueprint**
 3. Connect your GitHub repository
-4. Render reads `render.yaml` and creates all three resources:
-   - **mavisdraw-web** — Static site (frontend)
-   - **mavisdraw-api** — Web service (backend)
+4. Render reads `render.yaml` and creates:
+   - **mavisdraw-api** — web service (the app and its API)
    - **mavisdraw-db** — PostgreSQL database
 
-Environment variables (`CORS_ORIGIN`, `VITE_API_URL`, `DATABASE_URL`, etc.) are wired automatically between services. `COOKIE_SECRET` and `JWT_SECRET` are auto-generated.
+`DATABASE_URL` is wired from the database; `COOKIE_SECRET` and `JWT_SECRET` are generated. The
+app's address is the service's own (`RENDER_EXTERNAL_URL`); set `APP_URL` if you give it your own
+domain. Coming from the earlier blueprint with a separate static site: see
+[docs/render.md](docs/render.md).
 
 **Manual setup (if not using Blueprint):**
 
-Create three Render resources:
-
-1. **PostgreSQL database** — note the connection string
-2. **Web Service** (backend):
-   - Build: `pnpm install && pnpm --filter @mavisdraw/types build && pnpm --filter @mavisdraw/server build`
+1. **PostgreSQL database**: note the connection string
+2. **Web Service**:
+   - Build: `pnpm install && VITE_API_URL= VITE_WS_URL= pnpm turbo run build --filter=@mavisdraw/server --filter=@mavisdraw/web`
+   - Pre-deploy: `node apps/server/dist/db/migrate.js`
    - Start: `node apps/server/dist/index.js`
-   - Set env: `DATABASE_URL`, `CORS_ORIGIN` (frontend URL), `COOKIE_SECRET`, `NODE_ENV=production`
-3. **Static Site** (frontend):
-   - Build: `pnpm install && pnpm run build`
-   - Publish dir: `apps/web/dist`
-   - Set env: `VITE_API_URL` (backend URL), `VITE_WS_URL` (backend URL with `wss://`)
+   - Env: `DATABASE_URL`, `WEB_DIST=apps/web/dist`, `COOKIE_SECRET`, `JWT_SECRET`,
+     `NODE_ENV=production`, `TRUST_PROXY=1`
 
 ## Operations
 

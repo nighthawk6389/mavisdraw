@@ -79,8 +79,7 @@ Still open:
     - **Pending invites outlived their inviter's access:** an invite only works while whoever sent it could still send it.
   - Improved: **MCP `find_component` loads up to 25 scenes per call.** Each project's components are reused for 20 s, so searches in a row are cheap. A cold search still loads them all.
   - Still open:
-    - **The app is frameable on Render:** a static site's header rules apply to every path, so `X-Frame-Options` would block the embed viewer too. The self-hosted image is fixed (nginx).
-    - **The refresh cookie is `SameSite=Lax` across Render's two sites,** so it isn't sent cross-site. The fix is to serve the API from the app's origin on Render too (a rewrite of `/api`), as the self-hosted image does. `SameSite=None` would expose sign-out and refresh to CSRF, and Safari blocks it anyway.
+    - ~~**The app is frameable on Render**~~ and ~~**the refresh cookie isn't sent across Render's two sites**~~: fixed. On Render the API now serves the built app on its own address (`WEB_DIST`, `apps/server/src/webApp.ts`), so the cookie is first-party and the app refuses other sites' frames while `/embed.html` stays frameable. See `docs/render.md` for moving an existing two-service deploy.
     - **Per-process state** (single instance only) is by design for now; see Architecture.
 
 ### Third independent review (2026-11-27, `edcb5e1..HEAD`, focus `730bf7e..HEAD`) — all fixed
@@ -128,7 +127,8 @@ Left as it was: a server-origin write landing during a room's final store could 
 - ~~PR-time drift~~ — done: a GitHub App (registered from a manifest at `/api/github-app/setup`) checks every pull request on a mapped repository: one comment, kept current, with the components it touches and its architecture changes, plus a proposed map update in the editor. Linking a map to a GitHub repo now requires the linker's connection to be able to read it. See `docs/pr-checks.md`. Since then: a check run on the PR's commit (green when the map is up to date, neutral when behind) and a per-map off switch. Still missing: connection removals in proposals (the proposal format has no "disconnect"), checks for maps linked through portals only (not generated from the repo), and Enterprise app setup from the UI (the setup page assumes github.com).
 - ~~Embeds~~ — done: Share → Embed publishes a project read-only (revocable token): an interactive iframe viewer with drill-down (`embed.html`) and a live README SVG (`/api/embed/<token>/svg`, light/dark). See `docs/embeds.md`. Still missing: README images use system fonts (an image can't load the hand-drawn face; a subset could be inlined), embedding a single level only (today the whole project is public once published), view counts, and Notion/Confluence/Backstage plugins.
 - ~~**SVG export from the editor doesn't sanitize**~~: fixed. The Export dialog's SVG now comes from the same escaped renderer as embeds (`svgMarkup.ts`); it also no longer writes text twice in hand-drawn mode.
-- **The app can be framed on Render** (no `X-Frame-Options`/`frame-ancestors` there): the self-hosted image sends them for everything except `/embed.html`. On Render, a static site's header rules apply to every path, so the embed page needs its own rule. The coding-agent consent page refuses to show inside a frame in the meantime.
+- ~~**The app can be framed on Render**~~: fixed (one service serves the app with per-page headers; `docs/render.md`). The coding-agent consent page still refuses to show inside a frame as well.
+- **No Content-Security-Policy beyond `frame-ancestors`** (Render or self-hosted): a script-src policy would limit what an injected script could do. Needs an inventory of what the app loads (Sentry, fonts, data: images) first.
 - ~~MCP server~~ — done: `POST /api/mcp` (Streamable HTTP, stateless) with personal access tokens; tools `list_projects`, `read_architecture`, `find_component` (by name or file path), `propose_update` (reviewed and applied in the editor's Proposals panel). See `docs/mcp.md`. Since then: agents sign in through the browser (OAuth 2.1 with PKCE and dynamic client registration, consent page at `/connect-agent`), and tokens and sign-ins can be read-only and limited to chosen maps. Still missing:
   - rate limits per token rather than per IP, and proposals that target several diagrams at once;
   - **browser-based MCP clients** (e.g. MCP Inspector in a tab) can't sign in: the OAuth endpoints only allow the web app's origin (CORS);
@@ -190,7 +190,7 @@ Items noticed during PR #9 review (arrow improvements) that weren't fixed immedi
 
 - **Server build compiles its tests into `dist/`** (`apps/server/tsconfig.json` includes `src/__tests__`), so the Docker images and Render deploy ship `dist/__tests__` (they import vitest, which isn't installed in production). Harmless today since nothing loads them, but a `tsconfig.build.json` excluding `__tests__` (like `packages/llm`) would keep the runtime output clean.
 
-- ~~**The web image's nginx sends no security headers**~~: fixed: `X-Frame-Options`/`frame-ancestors 'self'` on the app (the embed viewer stays frameable), `nosniff` and a referrer policy (`nginx.conf.template`). A full CSP is still to do, as for the Render static site.
+- ~~**The web image's nginx sends no security headers**~~: fixed: `X-Frame-Options`/`frame-ancestors 'self'` on the app (the embed viewer stays frameable), `nosniff` and a referrer policy (`nginx.conf.template`). A full CSP is still to do (see “No Content-Security-Policy beyond `frame-ancestors`”).
 
 - **`createElement` name is misleading** — It only creates and returns an element object with defaults but does not add it to the store. Renaming to `buildElement` or `createElementTemplate` would clarify the contract.
 

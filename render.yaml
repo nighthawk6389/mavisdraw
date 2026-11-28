@@ -1,5 +1,11 @@
 # Render Blueprint — full-stack deployment
 # https://docs.render.com/infrastructure-as-code
+#
+# One web service serves the app and its API on the same address, as the
+# self-hosted image does behind nginx: the session cookie is first-party (it
+# survives a reload), and the app refuses to be framed by other sites while
+# the embed viewer can be. Moving from the earlier two-service blueprint: see
+# docs/render.md.
 
 databases:
   - name: mavisdraw-db
@@ -8,12 +14,19 @@ databases:
     user: mavisdraw
 
 services:
-  # ── Backend API + WebSocket server ──────────────────────
+  # ── The app, its API and the live collaboration socket ──
+  # Named "-api" from when the app was a separate static site: renaming it
+  # would make a new service, with a new address and none of its settings
   - type: web
     name: mavisdraw-api
     runtime: node
     plan: standard
-    buildCommand: pnpm install && pnpm turbo run build --filter=@mavisdraw/server
+    # The app is built for this same address: its API calls and live socket
+    # are relative (empty VITE_API_URL / VITE_WS_URL)
+    buildCommand: >-
+      pnpm install &&
+      VITE_API_URL= VITE_WS_URL= pnpm turbo run build
+      --filter=@mavisdraw/server --filter=@mavisdraw/web
     # Schema changes are versioned migrations (apps/server/drizzle), applied
     # before the new version takes traffic; a failure stops the deploy
     preDeployCommand: node apps/server/dist/db/migrate.js
@@ -25,11 +38,11 @@ services:
         fromDatabase:
           name: mavisdraw-db
           property: connectionString
-      - key: CORS_ORIGIN
-        fromService:
-          name: mavisdraw-web
-          type: web
-          envVarKey: RENDER_EXTERNAL_URL
+      # Serve the built app too. Its address is Render's for this service
+      # (RENDER_EXTERNAL_URL) unless APP_URL says otherwise: set APP_URL when
+      # you give the service your own domain (links in emails, sign-in)
+      - key: WEB_DIST
+        value: apps/web/dist
       - key: COOKIE_SECRET
         generateValue: true
       - key: JWT_SECRET
@@ -42,47 +55,17 @@ services:
       - key: TRUST_PROXY
         value: "1"
       # Set these in the dashboard to enable GitHub (see docs/github-oauth-setup.md):
-      # GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_REDIRECT_URI,
-      # GITHUB_TOKEN_ENCRYPTION_KEY (64 hex chars: openssl rand -hex 32)
-      # and optionally GITHUB_ENTERPRISE_URL + GITHUB_ENTERPRISE_CLIENT_ID/SECRET
+      # GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_TOKEN_ENCRYPTION_KEY
+      # (64 hex chars: openssl rand -hex 32), and optionally
+      # GITHUB_ENTERPRISE_URL + GITHUB_ENTERPRISE_CLIENT_ID/SECRET. The sign-in
+      # callback is <this service>/oauth/github/callback.html
       # Pull request checks (optional, see docs/pr-checks.md): GITHUB_APP_ID,
       # GITHUB_APP_SLUG, GITHUB_APP_WEBHOOK_SECRET, GITHUB_APP_PRIVATE_KEY
       # (from https://<this service>/api/github-app/setup)
-      # Error reporting (optional): SENTRY_DSN
+      # Error reporting (optional): SENTRY_DSN, and VITE_SENTRY_DSN for the
+      # browser (read when the app is built, so deploy again after setting it)
       # Email (invites, @mentions): MAIL_PROVIDER=resend|postmark, MAIL_FROM,
-      # RESEND_API_KEY or POSTMARK_SERVER_TOKEN; APP_URL = the web app's URL
-      # (defaults to CORS_ORIGIN). Without a provider, invite links are shown to copy.
+      # RESEND_API_KEY or POSTMARK_SERVER_TOKEN. Without a provider, invite
+      # links are shown to copy.
     # Readiness (database reachable), so a deploy only takes traffic it can serve
     healthCheckPath: /api/ready
-
-  # ── Frontend static site ────────────────────────────────
-  - type: web
-    name: mavisdraw-web
-    runtime: static
-    buildCommand: pnpm install && pnpm turbo run build --filter=@mavisdraw/web
-    staticPublishPath: apps/web/dist
-    envVars:
-      - key: NODE_VERSION
-        value: "22"
-      - key: VITE_API_URL
-        fromService:
-          name: mavisdraw-api
-          type: web
-          envVarKey: RENDER_EXTERNAL_URL
-      - key: VITE_WS_URL
-        fromService:
-          name: mavisdraw-api
-          type: web
-          envVarKey: RENDER_EXTERNAL_URL
-      # Error reporting in the browser (optional): VITE_SENTRY_DSN
-    headers:
-      - path: /*
-        name: Cache-Control
-        value: public, max-age=0, must-revalidate
-      - path: /assets/*
-        name: Cache-Control
-        value: public, max-age=31536000, immutable
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
