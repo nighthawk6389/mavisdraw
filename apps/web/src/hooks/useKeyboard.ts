@@ -36,18 +36,25 @@ const NUDGE_KEYS: Record<string, [number, number]> = {
   arrowdown: [0, 1],
 };
 
-/** Move the selection by (dx, dy); repeated nudges merge into one undo step. */
-function nudgeSelection(dx: number, dy: number): void {
+/**
+ * Move the selection by (dx, dy) in one store update (labels follow their
+ * shapes, connectors stay attached); repeated nudges merge into one undo step.
+ */
+export function nudgeSelection(dx: number, dy: number): void {
   const ids = useSelectionStore.getState().selectedIds;
   if (ids.size === 0) return;
   const store = useElementsStore.getState();
-  store.pushHistory('nudge');
+  const updates: { id: string; changes: { x: number; y: number } }[] = [];
   for (const id of ids) {
     const el = store.elements.get(id);
     if (!el || el.isDeleted || el.isLocked) continue;
+    // A label moves with its shape (re-fitted to it), not on its own
     if (el.type === 'text' && el.containerId && ids.has(el.containerId)) continue;
-    useElementsStore.getState().moveElementWithBindings(id, el.x + dx, el.y + dy);
+    updates.push({ id, changes: { x: el.x + dx, y: el.y + dy } });
   }
+  if (updates.length === 0) return;
+  store.pushHistory('nudge');
+  store.updateElementsSilent(updates);
   getCanvasController()?.invalidate();
 }
 
@@ -172,7 +179,10 @@ export function useKeyboard(
       if (!mod && NUDGE_KEYS[key] && selectedIds.size > 0) {
         event.preventDefault();
         const [ux, uy] = NUDGE_KEYS[key];
-        const step = event.shiftKey ? 10 : 1;
+        // 1px (Shift: 10px); with snap to grid on, a grid step (Shift: five)
+        const ui = useUIStore.getState();
+        const onGrid = ui.snapToGrid && ui.gridSize > 0;
+        const step = onGrid ? ui.gridSize * (event.shiftKey ? 5 : 1) : event.shiftKey ? 10 : 1;
         nudgeSelection(ux * step, uy * step);
         return;
       }

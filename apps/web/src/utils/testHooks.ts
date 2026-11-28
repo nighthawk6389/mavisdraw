@@ -22,6 +22,8 @@ export interface MavisDrawTestHooks {
   redrawStatic: () => void;
   /** Live-collaboration connection state. */
   getConnectionStatus: () => string;
+  /** Is the render loop asking for frames (it sleeps when nothing changes)? */
+  isRenderLoopAwake: () => boolean;
 }
 
 interface TestWindow {

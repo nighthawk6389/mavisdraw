@@ -19,6 +19,7 @@ import {
   SELECTION_PADDING_PX,
   getAnchorDots,
   ANCHOR_DOT_OFFSET_PX,
+  computeElbowPoints,
   rotationHandleCenter,
   selectionFrame,
 } from './HitTesting';
@@ -28,7 +29,7 @@ import type { Drawable } from 'roughjs/bin/core';
 import { changedSince, liveSpan, type LivePlan } from './staticLayerPlan';
 import { cylinderPaths, iconById, iconPlacement, queuePaths } from '@mavisdraw/export/library';
 import type { Viewport } from '@mavisdraw/types';
-import { getCubicControlPoints, calculateElbowRoute, getConnectionSide } from '@mavisdraw/math';
+import { getCubicControlPoints } from '@mavisdraw/math';
 
 /** How long the layer bitmaps outlive the last frame that used them. */
 const LAYER_KEEP_MS = 5000;
@@ -145,6 +146,8 @@ export class CanvasRenderer {
    * creates a new element object, so stale entries simply become garbage.
    */
   private roughCache = new WeakMap<MavisElement, Drawable[]>();
+  /** The route an elbow connector's cached drawables were made for. */
+  private roughRouteFor = new WeakMap<MavisElement, [number, number][]>();
   private cacheElement: MavisElement | null = null;
   private cachePart = 0;
 
@@ -245,16 +248,42 @@ export class CanvasRenderer {
     this.darkMode = dark;
     this.needsStaticRedraw = true;
     this.needsFullStaticRedraw = true;
+    this.wake();
   }
 
   invalidateStatic(full = false): void {
     this.needsStaticRedraw = true;
     if (full) this.needsFullStaticRedraw = true;
+    this.wake();
   }
 
   /** Force the overlay layer (selection, handles, previews) to repaint. */
   invalidateInteractive(): void {
     this.needsInteractiveRedraw = true;
+    this.wake();
+  }
+
+  /** The render loop, while it runs; null once stopped. */
+  private loop: (() => void) | null = null;
+  /** Frames in a row with nothing to draw. */
+  private idleFrames = 0;
+  /** Two seconds of nothing to draw and the loop stops asking for frames. */
+  private static readonly IDLE_FRAMES = 120;
+
+  /**
+   * Something may have changed: make sure the loop is running. Cheap to call
+   * often (pointer moves, store changes, every render of the canvas).
+   */
+  wake(): void {
+    this.idleFrames = 0;
+    if (this.loop && this.animationFrameId === null) {
+      this.animationFrameId = requestAnimationFrame(this.loop);
+    }
+  }
+
+  /** Is the render loop asking for frames (it sleeps when nothing changes)? */
+  isAwake(): boolean {
+    return this.animationFrameId !== null;
   }
 
   /**
@@ -278,6 +307,7 @@ export class CanvasRenderer {
         this.onViewportChange?.(vp);
       }
 
+      const viewMoved = this.lastPublishedViewport !== last;
       let staticRedrawn = false;
       if (this.needsStaticRedraw) {
         const t0 = performance.now();
@@ -307,19 +337,30 @@ export class CanvasRenderer {
       const prev = this.lastInteractiveSignature;
       const changed =
         prev.length !== signature.length || signature.some((v, i) => v !== prev[i]);
-      if (this.needsInteractiveRedraw || staticRedrawn || changed) {
+      const drew = this.needsInteractiveRedraw || staticRedrawn || changed;
+      if (drew) {
         this.renderInteractiveLayer(elements, state);
         this.lastInteractiveSignature = signature;
         this.needsInteractiveRedraw = false;
       }
 
+      // Nothing has changed for a while: stop until something wakes the loop
+      this.idleFrames = drew || viewMoved ? 0 : this.idleFrames + 1;
+      if (this.idleFrames >= CanvasRenderer.IDLE_FRAMES) {
+        this.animationFrameId = null;
+        return;
+      }
       this.animationFrameId = requestAnimationFrame(loop);
     };
+    this.loop = loop;
+    this.viewport.onChange = () => this.wake();
     loop();
   }
 
   /** Stop the render loop and cancel any pending animation frame. */
   stopRenderLoop(): void {
+    this.loop = null;
+    this.viewport.onChange = null;
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
@@ -350,6 +391,7 @@ export class CanvasRenderer {
     this.needsStaticRedraw = true;
     this.needsFullStaticRedraw = true;
     this.needsInteractiveRedraw = true;
+    this.wake();
   }
 
   /** Clean up resources and stop the render loop. */
@@ -764,11 +806,20 @@ export class CanvasRenderer {
     ctx.translate(-element.width / 2, -element.height / 2);
     ctx.globalAlpha = element.opacity / 100;
 
-    // Cache rough drawables for elements whose shape depends only on themselves
-    const dependsOnOthers =
-      element.type === 'portal' ||
-      ((element.type === 'arrow' || element.type === 'line') &&
-        (element as LinearElement).routingMode === 'elbow');
+    // Cache rough drawables for elements whose shape depends only on
+    // themselves. An elbow route also depends on the shapes it joins: its
+    // drawables are kept while the (cached) route is the same one
+    const isElbow =
+      (element.type === 'arrow' || element.type === 'line') &&
+      (element as LinearElement).routingMode === 'elbow';
+    if (isElbow && renderMode === 'sketchy') {
+      const route = this.getElbowPointsForElement(element as LinearElement);
+      if (this.roughRouteFor.get(element) !== route) {
+        this.roughCache.delete(element);
+        this.roughRouteFor.set(element, route);
+      }
+    }
+    const dependsOnOthers = element.type === 'portal';
     this.cacheElement = renderMode === 'sketchy' && !dependsOnOthers ? element : null;
     this.cachePart = 0;
 
@@ -1237,44 +1288,11 @@ export class CanvasRenderer {
   }
 
   /**
-   * Compute elbow routing points for a linear element, using anchor-aware
-   * directions when the element is bound to shapes.
-   * Returns points in element-local coordinate space (relative to element.x, element.y).
+   * An elbow connector's route in element-local points (shared with hit
+   * testing, and cached there per connector and the shapes it joins).
    */
   private getElbowPointsForElement(element: LinearElement): [number, number][] {
-    // If manually routed with stored waypoints, use them directly
-    if (element.elbowManualRoute && element.points.length > 2) {
-      return element.points.map((p) => [...p] as [number, number]);
-    }
-
-    const pts = element.points;
-    const start = pts[0] as [number, number];
-    const end = pts[pts.length - 1] as [number, number];
-
-    let startDir = null as ReturnType<typeof getConnectionSide> | null;
-    let endDir = null as ReturnType<typeof getConnectionSide> | null;
-
-    // Compute directions using absolute (world) coordinates
-    if (element.startBinding) {
-      const bound = this.elementsMap.get(element.startBinding.elementId);
-      if (bound) {
-        const absX = element.x + start[0];
-        const absY = element.y + start[1];
-        startDir = getConnectionSide(absX, absY, bound.x, bound.y, bound.width, bound.height);
-      }
-    }
-
-    if (element.endBinding) {
-      const bound = this.elementsMap.get(element.endBinding.elementId);
-      if (bound) {
-        const absX = element.x + end[0];
-        const absY = element.y + end[1];
-        endDir = getConnectionSide(absX, absY, bound.x, bound.y, bound.width, bound.height);
-      }
-    }
-
-    // Route in local coordinates
-    return calculateElbowRoute(start, end, startDir, endDir);
+    return computeElbowPoints(element, this.elementsMap);
   }
 
   private renderFreedraw(
@@ -1588,11 +1606,29 @@ export class CanvasRenderer {
   /**
    * Word-wrap text to fit within maxWidth.
    */
+  /** Wrapped label lines by font, width and text: measuring every frame was most of a pan. */
+  private wrapCache = new Map<string, string[]>();
+
+  /** Fonts changed (a web font finished loading): wrapped widths are stale. */
+  clearTextLayoutCache(): void {
+    this.wrapCache.clear();
+  }
+
   private wrapText(
     ctx: CanvasRenderingContext2D,
     text: string,
     maxWidth: number,
   ): string[] {
+    const cacheKey = `${ctx.font}\u0000${maxWidth}\u0000${text}`;
+    const cached = this.wrapCache.get(cacheKey);
+    if (cached) return cached;
+    const lines = this.measureWrap(ctx, text, maxWidth);
+    if (this.wrapCache.size >= 10_000) this.wrapCache.clear();
+    this.wrapCache.set(cacheKey, lines);
+    return lines;
+  }
+
+  private measureWrap(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
     const paragraphs = text.split('\n');
     const lines: string[] = [];
 
@@ -1659,6 +1695,7 @@ export class CanvasRenderer {
         this.needsStaticRedraw = true;
         // It may be in a cached bitmap: draw everything again
         this.needsFullStaticRedraw = true;
+        this.wake();
       };
     }
 

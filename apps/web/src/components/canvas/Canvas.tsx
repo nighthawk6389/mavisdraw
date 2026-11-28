@@ -749,6 +749,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
       getLastStaticPath: () => renderer.lastStaticPath,
       redrawStatic: () => renderer.invalidateStatic(true),
       getConnectionStatus: () => useCollaborationStore.getState().connectionStatus,
+      isRenderLoopAwake: () => renderer.isAwake(),
     });
 
     // Publish pan/zoom to React UI (zoom readout) and collaborators
@@ -758,7 +759,10 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     };
 
     // Repaint once the bundled hand-drawn font has loaded
-    whenFontsReady().then(() => renderer.invalidateStatic(true));
+    whenFontsReady().then(() => {
+      renderer.clearTextLayoutCache();
+      renderer.invalidateStatic(true);
+    });
 
     renderer.startRenderLoop(
       () => computeElementList(false),
@@ -897,7 +901,18 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
       },
     });
 
+    // The render loop sleeps when nothing changes: input wakes it (previews,
+    // hover, guides are drawn from the interaction manager's state)
+    const wake = () => renderer.wake();
+    const inputEvents = ['pointermove', 'pointerdown', 'pointerup', 'wheel'] as const;
+    for (const type of inputEvents) container.addEventListener(type, wake, { passive: true });
+    window.addEventListener('keydown', wake);
+    window.addEventListener('keyup', wake);
+
     return () => {
+      for (const type of inputEvents) container.removeEventListener(type, wake);
+      window.removeEventListener('keydown', wake);
+      window.removeEventListener('keyup', wake);
       registerCanvasController(null);
       renderer.onViewportChange = null;
       uninstallTestHooks();
@@ -905,6 +920,12 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
       rendererRef.current = null;
     };
   }, []);
+
+  // Whatever re-rendered the canvas (selection, hover, collaborators,
+  // settings) may change what's drawn: make sure the loop looks
+  useEffect(() => {
+    rendererRef.current?.wake();
+  });
 
   // Create interaction manager (separate effect to avoid dependency issues)
   useEffect(() => {

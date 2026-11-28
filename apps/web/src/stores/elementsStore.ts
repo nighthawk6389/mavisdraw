@@ -430,12 +430,16 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
         } as MavisElement);
         changed.push(id);
       }
+      const connectorsWithLabels = new Set<string>();
       for (const id of changed) {
         const el = next.get(id)!;
-        // A label moved on its own stays inside its shape
+        // A label moved on its own stays inside its shape (a connector's
+        // label is re-centred on it instead)
         if (el.type === 'text' && el.containerId) {
           const container = next.get(el.containerId);
-          if (container && !container.isDeleted && !isLinear(container)) {
+          if (container && !container.isDeleted && isLinear(container)) {
+            connectorsWithLabels.add(container.id);
+          } else if (container && !container.isDeleted) {
             next.set(id, {
               ...el,
               ...clampBoundTextToContainer(el.x, el.y, el.width, el.height, container),
@@ -444,6 +448,7 @@ export const useElementsStore = create<ElementsState>((set, get) => ({
         }
       }
       for (const id of changed) syncBoundElements(next, id);
+      for (const id of connectorsWithLabels) syncBoundElements(next, id);
       for (const id of changed) reglueArrowEndpoints(next, id);
       return { elements: next };
     });

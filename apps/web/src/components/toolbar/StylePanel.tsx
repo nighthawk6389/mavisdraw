@@ -88,26 +88,63 @@ const ICON_OPTIONS = Object.entries(ICONS)
 /** Fields that change while shapes move or resize: nothing in the panel shows them. */
 const GEOMETRY = new Set(['x', 'y', 'width', 'height', 'points', 'angle', 'version', 'updatedAt']);
 
+const omitGeometry = (key: string, value: unknown) => (GEOMETRY.has(key) ? undefined : value);
+
+/** Same object, or the same in everything but geometry (fields compared by reference). */
+function sameButGeometry(a: MavisElement, b: MavisElement): boolean {
+  if (a === b) return true;
+  const ak = Object.keys(a);
+  if (ak.length !== Object.keys(b).length) return false;
+  const ar = a as unknown as Record<string, unknown>;
+  const br = b as unknown as Record<string, unknown>;
+  for (const k of ak) if (!GEOMETRY.has(k) && ar[k] !== br[k]) return false;
+  return true;
+}
+
+/** Each element's style string, kept while only its geometry changes (a drag). */
+const styleStrings = new Map<string, { el: MavisElement; key: string }>();
+
+function styleString(el: MavisElement | undefined): string {
+  if (!el) return 'null';
+  const cached = styleStrings.get(el.id);
+  if (cached && sameButGeometry(cached.el, el)) {
+    cached.el = el;
+    return cached.key;
+  }
+  if (styleStrings.size > 20_000) styleStrings.clear();
+  const key = JSON.stringify(el, omitGeometry);
+  styleStrings.set(el.id, { el, key });
+  return key;
+}
+
+let lastParts: string[] = [];
+let lastKey = '';
+
 /**
  * What the panel shows of the selection (and the labels inside it), as one
  * string: everything but geometry. A selector that returns it changes only
- * when the panel has something new to show.
+ * when the panel has something new to show. Dragging a big selection costs
+ * a reference comparison per shape, not a JSON pass over all of them.
  */
 export function selectionStyleKey(
   elements: Map<string, MavisElement>,
   selectedIds: Set<string>,
 ): string {
-  const omitGeometry = (key: string, value: unknown) => (GEOMETRY.has(key) ? undefined : value);
   const parts: string[] = [];
   for (const id of selectedIds) {
     const el = elements.get(id);
     if (!el) continue;
-    parts.push(JSON.stringify(el, omitGeometry));
+    parts.push(styleString(el));
     for (const b of el.boundElements) {
-      if (b.type === 'text') parts.push(JSON.stringify(elements.get(b.id) ?? null, omitGeometry));
+      if (b.type === 'text') parts.push(styleString(elements.get(b.id)));
     }
   }
-  return parts.join('\n');
+  if (parts.length === lastParts.length && parts.every((p, i) => p === lastParts[i])) {
+    return lastKey;
+  }
+  lastParts = parts;
+  lastKey = parts.join('\n');
+  return lastKey;
 }
 
 export default function StylePanel({ header }: { header?: React.ReactNode } = {}) {
@@ -163,9 +200,8 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
     (updates: Partial<MavisElement>, coalesce?: string) => {
       const store = useElementsStore.getState();
       store.pushHistory(coalesce ? `${coalesce}:${selectionKey}` : undefined);
-      for (const el of selectedElements) {
-        store.updateElementSilent(el.id, updates);
-      }
+      // One store update for the whole selection (it used to be one per shape)
+      store.updateElementsSilent(selectedElements.map((el) => ({ id: el.id, changes: updates })));
     },
     [selectedElements, selectionKey],
   );
@@ -195,11 +231,25 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
     (updates: Partial<TextElement>, coalesce?: string) => {
       const store = useElementsStore.getState();
       store.pushHistory(coalesce ? `${coalesce}:${selectionKey}` : undefined);
-      for (const el of textTargets) {
-        store.updateElementSilent(el.id, updates as Partial<MavisElement>);
-      }
+      store.updateElementsSilent(
+        textTargets.map((el) => ({ id: el.id, changes: updates as Partial<MavisElement> })),
+      );
     },
     [textTargets, selectionKey],
+  );
+
+  // Connector-only settings (routing, arrowheads) for the selected lines and arrows
+  const applyToLinear = useCallback(
+    (updates: Partial<LinearElement>) => {
+      const store = useElementsStore.getState();
+      store.pushHistory(`panel:${selectionKey}`);
+      store.updateElementsSilent(
+        selectedElements
+          .filter((el) => el.type === 'arrow' || el.type === 'line')
+          .map((el) => ({ id: el.id, changes: updates as Partial<MavisElement> })),
+      );
+    },
+    [selectedElements, selectionKey],
   );
 
   const hasTextSelected = textTargets.length > 0;
@@ -387,13 +437,7 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
                         ? 'border-blue-500 bg-blue-50 text-blue-700'
                         : 'border-gray-200 text-gray-600 hover:bg-gray-50'
                     }`}
-                    onClick={() => {
-                      for (const el of selectedElements) {
-                        if (el.type === 'arrow' || el.type === 'line') {
-                          updateElement(el.id, { routingMode: rm.value } as Partial<LinearElement>);
-                        }
-                      }
-                    }}
+                    onClick={() => applyToLinear({ routingMode: rm.value })}
                   >
                     {rm.label}
                   </button>
@@ -417,15 +461,7 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
                         ? 'border-blue-500 bg-blue-50 text-blue-700'
                         : 'border-gray-200 text-gray-600 hover:bg-gray-50'
                     }`}
-                    onClick={() => {
-                      for (const el of selectedElements) {
-                        if (el.type === 'arrow' || el.type === 'line') {
-                          updateElement(el.id, {
-                            startArrowhead: ah.value,
-                          } as Partial<LinearElement>);
-                        }
-                      }
-                    }}
+                    onClick={() => applyToLinear({ startArrowhead: ah.value })}
                     title={ah.label}
                   >
                     {ah.icon}
@@ -450,15 +486,7 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
                         ? 'border-blue-500 bg-blue-50 text-blue-700'
                         : 'border-gray-200 text-gray-600 hover:bg-gray-50'
                     }`}
-                    onClick={() => {
-                      for (const el of selectedElements) {
-                        if (el.type === 'arrow' || el.type === 'line') {
-                          updateElement(el.id, {
-                            endArrowhead: ah.value,
-                          } as Partial<LinearElement>);
-                        }
-                      }
-                    }}
+                    onClick={() => applyToLinear({ endArrowhead: ah.value })}
                     title={ah.label}
                   >
                     {ah.icon}
@@ -516,9 +544,8 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
             <div className="text-xs text-gray-500 mb-0.5">Horizontal</div>
             <div className="flex gap-1 mb-2">
               {TEXT_ALIGNS.map((ta) => {
-                const currentAlign =
-                  (selectedElements.find((el) => el.type === 'text') as TextElement | undefined)
-                    ?.textAlign ?? 'left';
+                // Selected text, or the labels inside selected shapes
+                const currentAlign = textTargets[0]?.textAlign ?? 'left';
                 return (
                   <button
                     key={ta.value}
@@ -527,15 +554,7 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
                         ? 'border-blue-500 bg-blue-50 text-blue-700'
                         : 'border-gray-200 text-gray-600 hover:bg-gray-50'
                     }`}
-                    onClick={() => {
-                      for (const el of selectedElements) {
-                        if (el.type === 'text') {
-                          updateElement(el.id, {
-                            textAlign: ta.value,
-                          } as Partial<TextElement>);
-                        }
-                      }
-                    }}
+                    onClick={() => applyToText({ textAlign: ta.value })}
                   >
                     {ta.label}
                   </button>
@@ -545,9 +564,7 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
             <div className="text-xs text-gray-500 mb-0.5">Vertical</div>
             <div className="flex gap-1">
               {VERTICAL_ALIGNS.map((va) => {
-                const currentVertical =
-                  (selectedElements.find((el) => el.type === 'text') as TextElement | undefined)
-                    ?.verticalAlign ?? 'top';
+                const currentVertical = textTargets[0]?.verticalAlign ?? 'top';
                 return (
                   <button
                     key={va.value}
@@ -556,15 +573,7 @@ export default function StylePanel({ header }: { header?: React.ReactNode } = {}
                         ? 'border-blue-500 bg-blue-50 text-blue-700'
                         : 'border-gray-200 text-gray-600 hover:bg-gray-50'
                     }`}
-                    onClick={() => {
-                      for (const el of selectedElements) {
-                        if (el.type === 'text') {
-                          updateElement(el.id, {
-                            verticalAlign: va.value,
-                          } as Partial<TextElement>);
-                        }
-                      }
-                    }}
+                    onClick={() => applyToText({ verticalAlign: va.value })}
                   >
                     {va.label}
                   </button>

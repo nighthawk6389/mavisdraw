@@ -16,6 +16,9 @@ export class ViewportManager {
   private scrollY = 0;
   private zoom = 1;
 
+  /** Called after every change of view (the render loop wakes on it). */
+  onChange: (() => void) | null = null;
+
   private readonly MIN_ZOOM = 0.1;
   private readonly MAX_ZOOM = 10;
 
@@ -37,6 +40,7 @@ export class ViewportManager {
     this.scrollX = v.scrollX;
     this.scrollY = v.scrollY;
     this.zoom = Math.max(this.MIN_ZOOM, Math.min(this.MAX_ZOOM, v.zoom));
+    this.onChange?.();
   }
 
   /**
@@ -73,6 +77,7 @@ export class ViewportManager {
   pan(deltaX: number, deltaY: number): void {
     this.scrollX += deltaX;
     this.scrollY += deltaY;
+    this.onChange?.();
   }
 
   /**
@@ -103,6 +108,7 @@ export class ViewportManager {
     //    scrollX = screenX - canvasPoint.x * newZoom
     this.scrollX = screenX - canvasPoint.x * this.zoom;
     this.scrollY = screenY - canvasPoint.y * this.zoom;
+    this.onChange?.();
   }
 
   /**
@@ -143,6 +149,7 @@ export class ViewportManager {
     this.zoom = newZoom;
     this.scrollX = viewportWidth / 2 - centerX * newZoom;
     this.scrollY = viewportHeight / 2 - centerY * newZoom;
+    this.onChange?.();
   }
 
   /**
@@ -152,5 +159,6 @@ export class ViewportManager {
     this.scrollX = 0;
     this.scrollY = 0;
     this.zoom = 1;
+    this.onChange?.();
   }
 }

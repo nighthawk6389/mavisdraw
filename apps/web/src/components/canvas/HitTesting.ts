@@ -272,6 +272,17 @@ export interface ElbowSegmentHit {
  * If elbowManualRoute is true and points.length > 2, returns stored points.
  * Otherwise computes via calculateElbowRoute with binding-aware directions.
  */
+/** Routes by connector, kept while it and the shapes it joins are unchanged. */
+const elbowRoutes = new WeakMap<
+  LinearElement,
+  { start: MavisElement | undefined; end: MavisElement | undefined; points: [number, number][] }
+>();
+
+/**
+ * An elbow connector's route (element-local points). Cached per connector
+ * object and the shape objects it's bound to: drawing, arrowheads and the
+ * label each asked for it every frame. Treat the result as read-only.
+ */
 export function computeElbowPoints(
   element: LinearElement,
   elementsMap?: Map<string, MavisElement>,
@@ -283,29 +294,37 @@ export function computeElbowPoints(
   const pts = element.points;
   const start = pts[0] as [number, number];
   const end = pts[pts.length - 1] as [number, number];
+  const startShape =
+    elementsMap && element.startBinding ? elementsMap.get(element.startBinding.elementId) : undefined;
+  const endShape =
+    elementsMap && element.endBinding ? elementsMap.get(element.endBinding.elementId) : undefined;
+  const cached = elbowRoutes.get(element);
+  if (cached && cached.start === startShape && cached.end === endShape) return cached.points;
 
-  let startDir = null as ReturnType<typeof getConnectionSide> | null;
-  let endDir = null as ReturnType<typeof getConnectionSide> | null;
+  const startDir = startShape
+    ? getConnectionSide(
+        element.x + start[0],
+        element.y + start[1],
+        startShape.x,
+        startShape.y,
+        startShape.width,
+        startShape.height,
+      )
+    : null;
+  const endDir = endShape
+    ? getConnectionSide(
+        element.x + end[0],
+        element.y + end[1],
+        endShape.x,
+        endShape.y,
+        endShape.width,
+        endShape.height,
+      )
+    : null;
 
-  if (elementsMap && element.startBinding) {
-    const bound = elementsMap.get(element.startBinding.elementId);
-    if (bound) {
-      const absX = element.x + start[0];
-      const absY = element.y + start[1];
-      startDir = getConnectionSide(absX, absY, bound.x, bound.y, bound.width, bound.height);
-    }
-  }
-
-  if (elementsMap && element.endBinding) {
-    const bound = elementsMap.get(element.endBinding.elementId);
-    if (bound) {
-      const absX = element.x + end[0];
-      const absY = element.y + end[1];
-      endDir = getConnectionSide(absX, absY, bound.x, bound.y, bound.width, bound.height);
-    }
-  }
-
-  return calculateElbowRoute(start, end, startDir, endDir);
+  const points = calculateElbowRoute(start, end, startDir, endDir);
+  elbowRoutes.set(element, { start: startShape, end: endShape, points });
+  return points;
 }
 
 /**
