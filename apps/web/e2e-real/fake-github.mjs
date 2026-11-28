@@ -36,7 +36,12 @@ const oidcJwk = {
   alg: 'RS256',
   use: 'sig',
 };
-let oidcNextUser = { sub: 'sso-default', email: 'sso-user@acme.example', name: 'SSO User' };
+let oidcNextUser = {
+  sub: 'sso-default',
+  email: 'sso-user@acme.example',
+  email_verified: true,
+  name: 'SSO User',
+};
 let oidcDeny = false;
 /** code → { redirectUri, nonce, challenge, user } (single use) */
 const oidcCodes = new Map();
@@ -88,7 +93,11 @@ const server = http.createServer(async (req, res) => {
     if (path === '/__test/oidc-user' && req.method === 'POST') {
       const { deny = false, ...user } = await readBody(req);
       oidcDeny = deny;
-      if (user.sub) oidcNextUser = user;
+      // The provider vouches for addresses unless told otherwise; null leaves the claim out
+      if (user.sub) {
+        oidcNextUser = { email_verified: true, ...user };
+        if (user.email_verified === null) delete oidcNextUser.email_verified;
+      }
       return send(res, 200, { ok: true });
     }
     if (path === '/oidc/.well-known/openid-configuration') {

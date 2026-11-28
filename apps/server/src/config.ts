@@ -61,6 +61,12 @@ export interface OidcConfig {
   scopes: string;
   /** Only these email domains may sign in (empty: any the provider vouches for). */
   allowedDomains: string[];
+  /**
+   * Accept addresses the provider doesn't mark `email_verified` (e.g. Entra ID,
+   * which leaves the claim out). Only for providers whose addresses come from
+   * your directory, never ones where people choose their own.
+   */
+  trustEmail: boolean;
   /** Set to the provider's callback when it must differ from <request origin>/api/auth/oidc/callback. */
   redirectUri: string | null;
   /** Everyone signs in with the provider: no passwords, no sign-up form. */
@@ -270,6 +276,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
           .map((d) => d.trim().toLowerCase().replace(/^@/, ''))
           .filter(Boolean),
         redirectUri: env.OIDC_REDIRECT_URI?.trim() || null,
+        trustEmail: env.OIDC_TRUST_EMAIL?.trim().toLowerCase() === 'true',
         ssoOnly: env.SSO_ONLY?.trim().toLowerCase() === 'true',
       };
     }

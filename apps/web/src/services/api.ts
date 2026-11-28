@@ -171,6 +171,14 @@ export async function apiLogin(email: string, password: string): Promise<AuthRes
   });
 }
 
+/** Back from single sign-on: trade the one-time code the API passed in the address. */
+export async function apiExchangeSso(code: string): Promise<AuthResponse> {
+  return apiFetch<AuthResponse>('/api/auth/sso/exchange', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
+}
+
 export async function apiLogout(): Promise<void> {
   await apiFetch('/api/auth/logout', { method: 'POST' });
   accessToken = null;

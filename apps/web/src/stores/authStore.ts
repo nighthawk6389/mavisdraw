@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import {
+  apiExchangeSso,
   apiLogin,
   apiRegister,
   apiLogout,
@@ -38,6 +39,15 @@ interface AuthState {
 }
 
 let initializing: Promise<void> | null = null;
+
+/** The single sign-on code in the address (`#sso=…`), removed from it. */
+export function takeSsoCode(): string | null {
+  if (typeof window === 'undefined') return null;
+  const match = /^#sso=([A-Za-z0-9_-]+)$/.exec(window.location.hash);
+  if (!match) return null;
+  window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  return match[1];
+}
 
 export const useAuthStore = create<AuthState>((set, _get) => {
   // Set up unauthorized callback
@@ -117,6 +127,19 @@ export const useAuthStore = create<AuthState>((set, _get) => {
 
   async function runInitialize(): Promise<void> {
     set({ isLoading: true });
+    // Back from single sign-on: the API passed a one-time code in the
+    // fragment. Take it out of the address first, whatever happens next
+    const sso = takeSsoCode();
+    if (sso) {
+      try {
+        const response = await apiExchangeSso(sso);
+        setAccessToken(response.accessToken);
+        set({ user: response.user, isAuthenticated: true, isLoading: false });
+        return;
+      } catch (err) {
+        console.warn('[auth] Single sign-on code was refused:', err);
+      }
+    }
     try {
       // Try to refresh the token first
       console.log('[auth] Attempting token refresh...');

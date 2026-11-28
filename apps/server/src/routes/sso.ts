@@ -12,6 +12,7 @@ import {
 } from '../services/oidc.js';
 import { reportError } from '../observability.js';
 import { disconnectUser } from '../ws/hocuspocus.js';
+import { createHandoff, redeemHandoff } from '../services/ssoHandoff.js';
 
 const COOKIE = 'mavisdraw_oidc';
 const COOKIE_PATH = '/api/auth/oidc';
@@ -53,6 +54,24 @@ export async function ssoRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  // The web app, back from the provider, signs in with its one-time code
+  app.post('/api/auth/sso/exchange', { preHandler: [authRateLimit] }, async (request, reply) => {
+    const code = (request.body as { code?: unknown } | null)?.code;
+    const userId = typeof code === 'string' ? redeemHandoff(code) : null;
+    if (!userId) {
+      return reply.code(400).send({ error: 'That sign-in expired. Sign in again.' });
+    }
+    const { user, tokens } = await signInUser(userId);
+    reply.setCookie('refreshToken', tokens.refreshToken, {
+      httpOnly: true,
+      secure: config.cookieSecure,
+      sameSite: 'lax',
+      path: '/api/auth',
+      maxAge: 30 * 24 * 60 * 60,
+    });
+    return reply.send({ user, accessToken: tokens.accessToken });
+  });
+
   app.get('/api/auth/oidc/callback', { preHandler: [authRateLimit] }, async (request, reply) => {
     const cfg = config.oidc;
     if (!cfg) return reply.code(404).send({ error: 'Single sign-on isn’t set up on this server' });
@@ -67,16 +86,11 @@ export async function ssoRoutes(app: FastifyInstance): Promise<void> {
       const account = await accountFor(identity);
       // Taken back from whoever registered the address: their open tabs go too
       if (account.tookOver) disconnectUser(app.hocuspocus, account.userId);
-      const { tokens } = await signInUser(account.userId);
       reply.clearCookie(COOKIE, { path: COOKIE_PATH });
-      reply.setCookie('refreshToken', tokens.refreshToken, {
-        httpOnly: true,
-        secure: config.cookieSecure,
-        sameSite: 'lax',
-        path: '/api/auth',
-        maxAge: 30 * 24 * 60 * 60,
-      });
-      return back(reply, login.next);
+      // The app trades this for a session (ssoHandoff.ts): a cookie set here
+      // wouldn't reach it where the app and the API are different sites
+      const path = login.next.split('#')[0];
+      return back(reply, `${path}#sso=${createHandoff(account.userId)}`);
     } catch (err) {
       if (err instanceof SsoError) {
         request.log.warn({ code: err.code, reason: err.message }, 'Single sign-on refused');

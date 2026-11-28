@@ -206,14 +206,23 @@ export function identityFrom(
   issuer: string,
   claims: Record<string, unknown>,
   allowedDomains: string[],
+  /** OIDC_TRUST_EMAIL: the provider only hands out addresses from the directory, said or not. */
+  trustEmail = false,
 ): Identity {
   const email = typeof claims.email === 'string' ? claims.email.trim().toLowerCase() : '';
   if (!email || !email.includes('@')) {
     throw new SsoError('email', 'The provider didn’t share an email address');
   }
-  // Providers that check addresses say so; a provider that says "not verified" is believed
-  if (claims.email_verified === false || claims.email_verified === 'false') {
+  // The address links accounts and receives invites, so the provider has to
+  // vouch for it. One that says "not verified" is always believed; one that
+  // says nothing only counts when the operator trusts its addresses (people
+  // can set their own email at some providers)
+  const said = claims.email_verified;
+  if (said === false || said === 'false') {
     throw new SsoError('email', 'The provider says this email address isn’t verified');
+  }
+  if (said !== true && said !== 'true' && !(trustEmail && said === undefined)) {
+    throw new SsoError('email', 'The provider didn’t say this email address is verified');
   }
   if (!emailAllowed(email, allowedDomains)) {
     throw new SsoError('domain', `${email} isn’t allowed to sign in here`);
@@ -253,7 +262,7 @@ export async function completeLogin(
       if (info.sub === claims.sub) Object.assign(claims, { ...info, sub: claims.sub });
     }
   }
-  return identityFrom(cfg.issuer, claims, cfg.allowedDomains);
+  return identityFrom(cfg.issuer, claims, cfg.allowedDomains, cfg.trustEmail);
 }
 
 /**

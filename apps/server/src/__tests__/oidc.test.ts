@@ -23,6 +23,7 @@ const cfg: OidcConfig = {
   scopes: 'openid email profile',
   allowedDomains: ['acme.com'],
   redirectUri: null,
+  trustEmail: false,
   ssoOnly: false,
 };
 
@@ -72,7 +73,13 @@ describe('single sign-on', () => {
     expect(
       identityFrom(
         ISSUER,
-        { sub: '1', email: 'Ana@Acme.com', given_name: 'Ana', family_name: 'Lopez' },
+        {
+          sub: '1',
+          email: 'Ana@Acme.com',
+          email_verified: true,
+          given_name: 'Ana',
+          family_name: 'Lopez',
+        },
         [],
       ),
     ).toEqual({
@@ -81,13 +88,28 @@ describe('single sign-on', () => {
       email: 'ana@acme.com',
       name: 'Ana Lopez',
     });
-    expect(identityFrom(ISSUER, { sub: '1', email: 'bo@acme.com' }, []).name).toBe('bo');
+    expect(
+      identityFrom(ISSUER, { sub: '1', email: 'bo@acme.com', email_verified: 'true' }, []).name,
+    ).toBe('bo');
     expect(() =>
       identityFrom(ISSUER, { sub: '1', email: 'a@acme.com', email_verified: false }, []),
     ).toThrow(/isn’t verified/);
     expect(() => identityFrom(ISSUER, { sub: '1' }, [])).toThrow(SsoError);
-    expect(() => identityFrom(ISSUER, { sub: '1', email: 'x@gmail.com' }, ['acme.com'])).toThrow(
-      /isn’t allowed/,
+    expect(() =>
+      identityFrom(ISSUER, { sub: '1', email: 'x@gmail.com', email_verified: true }, ['acme.com']),
+    ).toThrow(/isn’t allowed/);
+  });
+
+  it('needs the provider to vouch for the address, unless the operator trusts its addresses', () => {
+    const silent = { sub: '1', email: 'cy@acme.com' };
+    // Some providers let people set their own address: saying nothing isn't vouching
+    expect(() => identityFrom(ISSUER, silent, [])).toThrow(/didn’t say this email address/);
+    expect(() => identityFrom(ISSUER, { ...silent, email_verified: 'yes' }, [])).toThrow(SsoError);
+    // OIDC_TRUST_EMAIL: addresses come from the directory (e.g. Entra ID, which omits the claim)
+    expect(identityFrom(ISSUER, silent, [], true).email).toBe('cy@acme.com');
+    // …but an explicit "not verified" is still believed
+    expect(() => identityFrom(ISSUER, { ...silent, email_verified: false }, [], true)).toThrow(
+      /isn’t verified/,
     );
   });
 
@@ -131,7 +153,13 @@ describe('single sign-on', () => {
           };
           return Response.json({
             access_token: 'at',
-            id_token: await idToken({ sub: 'okta-42', email: 'ana@acme.com', name: 'Ana', nonce }),
+            id_token: await idToken({
+              sub: 'okta-42',
+              email: 'ana@acme.com',
+              email_verified: true,
+              name: 'Ana',
+              nonce,
+            }),
           });
         }
         return new Response('nope', { status: 404 });
@@ -184,6 +212,7 @@ describe('single sign-on settings', () => {
     expect(config.oidc).toMatchObject({
       name: 'Okta',
       allowedDomains: ['acme.com', 'acme.io'],
+      trustEmail: false,
       ssoOnly: false,
     });
   });

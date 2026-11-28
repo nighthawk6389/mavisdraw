@@ -57,6 +57,7 @@ const PUBLIC = new Set([
   // Single sign-on: the provider round trip happens before anyone is signed in
   'GET /api/auth/oidc/start',
   'GET /api/auth/oidc/callback',
+  'POST /api/auth/sso/exchange',
   // Describes an invite before sign-in (the token is the key)
   'GET /api/invites/:token',
   // Published embeds (the embed token is the key)

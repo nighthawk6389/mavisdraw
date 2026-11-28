@@ -65,8 +65,14 @@ One provider is set per server. SAML isn't supported yet.
 The first sign-in links to any account with the same address, so use a provider where people
 can't choose their own address. That covers your own tenant at Okta, Entra ID, Google Workspace or
 Keycloak, where the address comes from your directory. Set `OIDC_ALLOWED_DOMAINS` to your company's
-domains as well. A provider that marks an address as unverified (`email_verified: false`) is
-refused.
+domains as well.
+
+The provider has to vouch for the address: an ID token or userinfo with `email_verified: true`.
+One that says `false` is refused, and so, by default, is one that says nothing. Some providers
+leave the claim out (Entra ID does): if your provider's addresses come from your own directory and
+people can't change them, set `OIDC_TRUST_EMAIL=true` to accept addresses it doesn't mark. Don't
+set it for a provider where people choose their own address, or a multi-tenant app that accepts
+other organisations' users: anyone could then sign in as any address.
 
 Avoid Entra ID's multi-tenant `common` or `organizations` endpoints, and social login providers
 that let anyone register an address. Use your own tenant's issuer instead.
@@ -81,7 +87,8 @@ above. The issuer is `https://<your-org>.okta.com`, or a custom authorization se
 directory only". The redirect URI is a **Web** platform with the URI above. Under Certificates &
 secrets, add a client secret. The issuer is `https://login.microsoftonline.com/<tenant-id>/v2.0`.
 If people's email doesn't come through, add the optional `email` claim to the ID token (Token
-configuration).
+configuration). Entra ID doesn't send `email_verified`, so set `OIDC_TRUST_EMAIL=true` (the
+addresses come from your directory with this single-tenant registration).
 
 **Google Workspace.** Google Cloud console → APIs & Services → Credentials → OAuth client ID, "Web
 application", with the redirect URI above. Set the consent screen to **Internal** so only your

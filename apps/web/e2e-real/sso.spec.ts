@@ -12,7 +12,14 @@ const uniq = () => `${Date.now().toString(36)}${Math.random().toString(36).slice
 /** Who the provider signs in next. */
 async function nextSignIn(
   request: APIRequestContext,
-  user: { sub?: string; email?: string; name?: string; email_verified?: boolean; deny?: boolean },
+  user: {
+    sub?: string;
+    email?: string;
+    name?: string;
+    /** null: the provider says nothing about it */
+    email_verified?: boolean | null;
+    deny?: boolean;
+  },
 ) {
   const res = await request.post(`${IDP}/__test/oidc-user`, { data: user });
   expect(res.ok()).toBe(true);
@@ -30,6 +37,31 @@ test.describe('Single sign-on', () => {
     await expect(page.getByText('Recent projects')).toBeVisible();
     await expect(page.getByText('Ana Acme')).toBeVisible();
     await expect(page.getByTestId('confirm-email-banner')).toHaveCount(0);
+  });
+
+  test('signs in even where the app can’t use the API’s cookie (two sites, as on Render)', async ({
+    page,
+  }) => {
+    // The refresh cookie never reaches the API from the app
+    await page.route(`${API_URL}/api/auth/refresh`, (route) =>
+      route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'No session' }),
+      }),
+    );
+    const email = `rae-${uniq()}@acme.example`;
+    await nextSignIn(page.request, { sub: `okta-${uniq()}`, email, name: 'Rae Render' });
+    await page.goto('/');
+    await page.getByTestId('sso-button').click();
+    await expect(page.getByText('Recent projects')).toBeVisible();
+    await expect(page.getByText('Rae Render')).toBeVisible();
+    // The one-time code leaves the address at once, and works only once
+    expect(new URL(page.url()).hash).toBe('');
+    const reused = await page.request.post(`${API_URL}/api/auth/sso/exchange`, {
+      data: { code: 'A'.repeat(43) },
+    });
+    expect(reused.status()).toBe(400);
   });
 
   test('an existing account with the same address is the one signed into', async ({ browser }) => {
@@ -140,6 +172,13 @@ test.describe('Single sign-on', () => {
     await page.getByTestId('sso-button').click();
     await expect(page.getByTestId('sso-error')).toContainText('isn’t allowed to sign in here');
     await expect(page).toHaveURL(/\/$/); // the error code doesn't linger in the address
+
+    // A provider that doesn't say the address is verified isn't vouching for it
+    const unvouched = `dee-${uniq()}@acme.example`;
+    await nextSignIn(page.request, { sub: `g-${uniq()}`, email: unvouched, email_verified: null });
+    await page.getByTestId('sso-button').click();
+    await expect(page.getByTestId('sso-error')).toContainText('didn’t share a verified email');
+    await expect(page.getByText('Recent projects')).toHaveCount(0);
 
     await nextSignIn(page.request, { deny: true });
     await page.getByTestId('sso-button').click();
