@@ -480,7 +480,7 @@ test.describe('Editing labels', () => {
       await page.evaluate(() => (window as unknown as { __editorBlurs: number }).__editorBlurs),
     ).toBe(0);
     await page.keyboard.type('Billing', { delay: 0 });
-    await page.keyboard.press('Enter');
+    await page.keyboard.press('Escape');
     await expect
       .poll(async () => (await hooks.elements(page)).find((e) => e.type === 'text'))
       .toMatchObject({ text: 'Billing' });

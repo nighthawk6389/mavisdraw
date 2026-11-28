@@ -50,7 +50,7 @@ test.describe('Nested diagrams persist', () => {
     await dragOnCanvas(page, { x: 300, y: 250 }, { x: 460, y: 340 });
     await page.mouse.dblclick(box.x + 380, box.y + 295);
     await page.keyboard.type('Payments DB');
-    await page.keyboard.press('Enter');
+    await page.keyboard.press('Escape');
     await waitForSaved(page);
 
     // The server has the child's contents

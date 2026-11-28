@@ -13,7 +13,7 @@ async function labelledBox(
   await page.mouse.dblclick(box.x + (from.x + to.x) / 2, box.y + (from.y + to.y) / 2);
   await expect(page.locator('[contenteditable="true"]')).toBeFocused();
   await page.keyboard.type(text);
-  await page.keyboard.press('Enter');
+  await page.keyboard.press('Escape');
 }
 
 test('a reviewer sees exactly what changed since a version, on the canvas', async ({ browser }) => {
@@ -35,7 +35,7 @@ test('a reviewer sees exactly what changed since a version, on the canvas', asyn
   await expect(a.locator('[contenteditable="true"]')).toBeFocused();
   await a.keyboard.press(`${mod}+a`);
   await a.keyboard.type('Auth Service');
-  await a.keyboard.press('Enter');
+  await a.keyboard.press('Escape');
   await a.keyboard.press('Escape');
   await a.mouse.click(canvas.x + 440, canvas.y + 160); // its label selects the box
   await a.keyboard.press('Delete');
@@ -71,7 +71,7 @@ test('a reviewer sees exactly what changed since a version, on the canvas', asyn
   await expect(a.locator('[contenteditable="true"]')).toBeFocused();
   await a.keyboard.press(`${mod}+a`);
   await a.keyboard.type('Job Queue');
-  await a.keyboard.press('Enter');
+  await a.keyboard.press('Escape');
   await expect(items.filter({ hasText: 'Job Queue' })).toBeVisible();
 
   // Escape (or Done) ends the comparison

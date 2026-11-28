@@ -187,6 +187,8 @@ const SHAPE_TOOLS = new Set<Tool>([
 /** The eraser's reach around the pointer, and how finely its path is followed (screen px). */
 const ERASER_RADIUS_PX = 6;
 const ERASER_STEP_PX = 4;
+/** Shapes that take a label inside them. */
+const LABELLED_TYPES = new Set(['rectangle', 'ellipse', 'diamond', 'triangle', 'cylinder', 'queue']);
 /** How far outside a shape's outline a connector end still attaches (screen px). */
 const BINDING_PX = 16;
 /** Connection dots: where they answer a press, and how near a shape shows them (screen px). */
@@ -352,7 +354,8 @@ export class InteractionManager {
   private lastClickPoint: Point = { x: 0, y: 0 };
   /** Max distance between the two clicks of a double-click, in screen pixels. */
   private static readonly DOUBLE_CLICK_SLOP_PX = 6;
-  private static readonly DOUBLE_CLICK_THRESHOLD = 300;
+  /** About the operating systems' default (Windows 500ms, macOS a little less). */
+  private static readonly DOUBLE_CLICK_THRESHOLD = 500;
 
   /** Track last waypoint click for double-click-to-remove (Excalidraw/draw.io style). */
   private lastWaypointClick: { arrowId: string; pointIndex: number; time: number } | null = null;
@@ -658,6 +661,21 @@ export class InteractionManager {
 
             const segmentHit = hitTestElbowSegment(canvasPoint, linear, elementsMap);
             if (segmentHit) {
+              // A double-click on it edits its label, as on a straight connector
+              const now = Date.now();
+              if (
+                now - this.lastClickTime < InteractionManager.DOUBLE_CLICK_THRESHOLD &&
+                this.lastClickId === linear.id &&
+                Math.hypot(screenX - this.lastClickPoint.x, screenY - this.lastClickPoint.y) <=
+                  InteractionManager.DOUBLE_CLICK_SLOP_PX
+              ) {
+                this.resetClickTracking();
+                this.editLabelOf(linear, elements);
+                return;
+              }
+              this.lastClickTime = now;
+              this.lastClickId = linear.id;
+              this.lastClickPoint = { x: screenX, y: screenY };
               // The route as drawn; an auto-routed one is only frozen into
               // these points (with its undo step) once the drag really starts,
               // so a click on it changes nothing
@@ -790,12 +808,25 @@ export class InteractionManager {
       this.lastWaypointClick = null;
       // Check for double-click on empty area
       const now = Date.now();
-      if (now - this.lastClickTime < InteractionManager.DOUBLE_CLICK_THRESHOLD) {
-        // Exit any entered groups
-        this.enteredGroupIds.clear();
-      }
+      const emptyDoubleClick =
+        now - this.lastClickTime < InteractionManager.DOUBLE_CLICK_THRESHOLD &&
+        this.lastClickId === null &&
+        Math.hypot(screenX - this.lastClickPoint.x, screenY - this.lastClickPoint.y) <=
+          InteractionManager.DOUBLE_CLICK_SLOP_PX;
       this.lastClickTime = now;
       this.lastClickId = null;
+      this.lastClickPoint = { x: screenX, y: screenY };
+      if (emptyDoubleClick) {
+        if (this.enteredGroupIds.size > 0) {
+          // Leave the groups entered with a double-click
+          this.enteredGroupIds.clear();
+        } else {
+          // Text where you double-click (Excalidraw, tldraw)
+          this.resetClickTracking();
+          this.createTextAt(canvasPoint);
+          return;
+        }
+      }
 
       // Empty space inside the selection frame grabs the whole selection
       // (Excalidraw, tldraw, Figma); a click there without dragging deselects
@@ -821,24 +852,16 @@ export class InteractionManager {
       this.mode = 'selecting';
       this.callbacks.startSelectionBox(canvasPoint);
     } else if (tool === 'text') {
-      // Text tool: check if clicking on existing text element
+      // Text tool: on text, edit it; on a shape or connector, edit its label
+      // (Excalidraw); elsewhere, new text
       const hitElement = hitTestElements(canvasPoint, elements);
       if (hitElement && hitElement.type === 'text') {
         this.callbacks.select(hitElement.id);
         this.callbacks.startTextEditing(hitElement, false);
+      } else if (hitElement && this.editLabelOf(hitElement, elements)) {
+        // editing its label
       } else {
-        // Create new text element at click position
-        const newText = this.callbacks.createElement(
-          'text',
-          this.diagramId,
-          canvasPoint.x,
-          canvasPoint.y,
-          200,
-          30,
-        );
-        this.callbacks.addElement(newText);
-        this.callbacks.select(newText.id);
-        this.callbacks.startTextEditing(newText, true);
+        this.createTextAt(canvasPoint);
       }
       if (!this.callbacks.isToolLocked()) {
         this.callbacks.resetToSelect();
@@ -1694,9 +1717,10 @@ export class InteractionManager {
       return;
     }
 
-    // Double-click on text element: start editing
+    // Double-click on text element: start editing (a label keeps its shape
+    // or connector selected, not itself)
     if (element.type === 'text') {
-      this.callbacks.select(element.id);
+      this.callbacks.select((element as TextElement).containerId ?? element.id);
       this.callbacks.startTextEditing(element, false);
       return;
     }
@@ -1712,29 +1736,41 @@ export class InteractionManager {
       }
     }
 
-    // For shapes without groups (or already entered groups), create bound text
-    const shapeTypes = new Set(['rectangle', 'ellipse', 'diamond', 'triangle', 'cylinder', 'queue']);
-    if (shapeTypes.has(element.type)) {
-      // Check if shape already has bound text
-      const hasBoundText = element.boundElements.some((b) => b.type === 'text');
-      if (hasBoundText) {
-        // Find the bound text element and start editing it
-        const elements = this.callbacks.getElements();
-        for (const bound of element.boundElements) {
-          if (bound.type === 'text') {
-            const textEl = elements.find((e) => e.id === bound.id);
-            if (textEl && !textEl.isDeleted) {
-              this.callbacks.select(textEl.id);
-              this.callbacks.startTextEditing(textEl, false);
-              return;
-            }
-          }
-        }
-      } else {
-        // Create new bound text
-        this.callbacks.startTextEditing(element, true);
+    // For shapes without groups (or already entered groups), edit the label
+    this.editLabelOf(element, this.callbacks.getElements());
+  }
+
+  /** New text at a point, ready to type into. */
+  private createTextAt(canvasPoint: Point): void {
+    const newText = this.callbacks.createElement('text', this.diagramId, canvasPoint.x, canvasPoint.y, 200, 30);
+    this.callbacks.addElement(newText);
+    this.callbacks.select(newText.id);
+    this.callbacks.startTextEditing(newText, true);
+  }
+
+  /**
+   * Edit a shape's or connector's label (creating it if it has none). The
+   * shape stays selected, so Delete or the arrow keys act on it, not on its
+   * label. False if the element doesn't take a label.
+   */
+  private editLabelOf(element: MavisElement, elements: MavisElement[]): boolean {
+    if (element.type === 'arrow' || element.type === 'line') {
+      this.callbacks.select(element.id);
+      this.callbacks.startTextEditing(element, false);
+      return true;
+    }
+    if (!LABELLED_TYPES.has(element.type)) return false;
+    this.callbacks.select(element.id);
+    for (const bound of element.boundElements) {
+      if (bound.type !== 'text') continue;
+      const textEl = elements.find((e) => e.id === bound.id);
+      if (textEl && !textEl.isDeleted) {
+        this.callbacks.startTextEditing(textEl, false);
+        return true;
       }
     }
+    this.callbacks.startTextEditing(element, true);
+    return true;
   }
 
   // ─── Creating ──────────────────────────────────────────────

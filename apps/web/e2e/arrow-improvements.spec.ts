@@ -163,7 +163,7 @@ test.describe('Arrowhead Controls (Phase 2)', () => {
 
     await page.mouse.dblclick(box.x + 250, box.y + 300);
     await page.keyboard.type('REST');
-    await page.keyboard.press('Enter');
+    await page.keyboard.press('Escape');
 
     const els = await page.evaluate(() =>
       (window as unknown as { __MAVISDRAW__: { getActiveElements: () => Array<Record<string, unknown>> } })

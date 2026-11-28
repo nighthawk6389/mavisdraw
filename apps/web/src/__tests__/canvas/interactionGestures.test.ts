@@ -583,3 +583,56 @@ describe('hitting thin lines', () => {
     expect(g.selected()).toEqual([]);
   });
 });
+
+describe('starting to type', () => {
+  const dblclick = (h: ReturnType<typeof harness>, x: number, y: number) => {
+    for (let i = 0; i < 2; i++) {
+      h.mgr.onPointerDown(x, y, { button: 0, shiftKey: false });
+      h.mgr.onPointerUp(x, y);
+    }
+  };
+
+  it('a double-click on empty canvas starts text there', () => {
+    const h = harness([rect('a', 100, 100, 100, 60)]);
+    dblclick(h, 400, 300);
+    expect(h.callbacks.createElement).toHaveBeenCalledWith('text', 'd1', 400, 300, 200, 30);
+    expect(h.callbacks.startTextEditing).toHaveBeenCalledWith(
+      expect.objectContaining({ x: 400, y: 300 }),
+      true,
+    );
+  });
+
+  it('two single clicks in different places don’t', () => {
+    const h = harness([]);
+    h.mgr.onPointerDown(400, 300, { button: 0, shiftKey: false });
+    h.mgr.onPointerUp(400, 300);
+    h.mgr.onPointerDown(450, 300, { button: 0, shiftKey: false });
+    h.mgr.onPointerUp(450, 300);
+    expect(h.all()).toHaveLength(0);
+  });
+
+  it('the Text tool on a shape edits its label, keeping the shape selected', () => {
+    const h = harness([rect('a', 100, 100, 100, 60)], { tool: 'text' });
+    h.mgr.onPointerDown(150, 130, { button: 0, shiftKey: false });
+    h.mgr.onPointerUp(150, 130);
+    expect(h.all()).toHaveLength(1);
+    expect(h.callbacks.startTextEditing).toHaveBeenCalledWith(expect.objectContaining({ id: 'a' }), true);
+    expect(h.selected()).toEqual(['a']);
+  });
+
+  it('a double-click on a shape edits its label with the shape selected, not the label', () => {
+    const shape = { ...rect('a', 100, 100, 100, 60), boundElements: [{ id: 'l', type: 'text' }] };
+    const label = { ...rect('l', 110, 110, 80, 40), type: 'text', containerId: 'a', text: 'API' };
+    const h = harness([shape, label as unknown as MavisElement]);
+    dblclick(h, 150, 130);
+    expect(h.callbacks.startTextEditing).toHaveBeenCalledWith(expect.objectContaining({ id: 'l' }), false);
+    expect(h.selected()).toEqual(['a']);
+  });
+
+  it('a double-click on an elbow connector edits its label', () => {
+    const elbow = { ...arrow('e', [100, 100], [400, 300]), routingMode: 'elbow' } as LinearElement;
+    const h = harness([elbow], { selected: ['e'] });
+    dblclick(h, 250, 200);
+    expect(h.callbacks.startTextEditing).toHaveBeenCalledWith(expect.objectContaining({ id: 'e' }), false);
+  });
+});

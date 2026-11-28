@@ -23,6 +23,8 @@ import { useCommentsStore } from '../../stores/commentsStore';
 import { generateThumbnail } from '../../utils/thumbnailGenerator';
 import { installTestHooks } from '../../utils/testHooks';
 import { cssFont, measureText, whenFontsReady } from '../../utils/fonts';
+import { wrappedTextHeight } from '../../utils/textLayout';
+import { containerHeightForLabel, isLinear } from '../../stores/elementBindings';
 import { insertImageFile } from '../../utils/imageInsert';
 import { registerNewDiagram, ensureDiagramKnown } from '../../services/diagramSync';
 import { usePermissionStore } from '../../stores/permissionStore';
@@ -201,6 +203,9 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
   // Recomputed only when elements, diagram or layers change — not per frame.
 
   const renderListRef = useRef<{ key: unknown[]; result: MavisElement[] }>({ key: [], result: [] });
+  /** The text being edited: hidden on the canvas while its editor shows it. */
+  const editingIdRef = useRef<string | null>(null);
+  editingIdRef.current = textEditState?.elementId ?? null;
   const interactListRef = useRef<{ key: unknown[]; result: MavisElement[] }>({ key: [], result: [] });
 
   const computeElementList = useCallback((excludeLockedLayers: boolean): MavisElement[] => {
@@ -208,11 +213,14 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     const layers = useLayerStore.getState().layers;
     // What the eraser has passed over is drawn faded (only in what's drawn)
     const erasing = excludeLockedLayers ? null : (interactionRef.current?.getErasing() ?? null);
+    // The text being edited isn't drawn: its editor is in its place
+    const editingId = excludeLockedLayers ? null : editingIdRef.current;
     const key = [
       useElementsStore.getState().elements,
       activeDiagramIdRef.current,
       layers,
       erasing?.version ?? 0,
+      editingId,
     ];
     const cached = cacheRef.current;
     if (cached.key.length === key.length && key.every((k, i) => k === cached.key[i])) {
@@ -228,6 +236,7 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
       // Elements on layers this client doesn't know about stay visible
       if (known.has(el.layerId) && hidden.has(el.layerId)) continue;
       if (excludeLockedLayers && locked.has(el.layerId)) continue;
+      if (el.id === editingId) continue;
       els.push(erasing?.ids.has(el.id) ? fadedForEraser(el) : el);
     }
     const result = sortByStacking(els);
@@ -382,7 +391,8 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     committedEditRef.current = textEditState;
     interactionRef.current?.resetClickTracking();
 
-    const text = editor.textContent || '';
+    // innerText keeps the lines the editor shows (textContent drops them)
+    const text = (editor.innerText ?? editor.textContent ?? '').replace(/\r\n?/g, '\n').replace(/\n+$/, '');
 
     const store = useElementsStore.getState();
     // A new label/text is one undo step: creation + typing are merged
@@ -409,6 +419,17 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
           const size = measureText(text, el.fontSize, el.fontFamily, el.lineHeight);
           updates.width = Math.max(size.width + 10, 20);
           updates.height = Math.max(size.height, el.fontSize * el.lineHeight);
+        } else if (container) {
+          // A shape grows (about its centre) to fit its label instead of
+          // letting it spill out (Excalidraw, tldraw)
+          const needed = wrappedTextHeight(text, el.width, el.fontSize, el.fontFamily, el.lineHeight);
+          const height = containerHeightForLabel(container, needed);
+          if (height > container.height) {
+            updateElement(container.id, {
+              height,
+              y: container.y - (height - container.height) / 2,
+            });
+          }
         }
         updateElement(textEditState.elementId, updates as Partial<MavisElement>);
       });
@@ -1117,6 +1138,12 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
   // ─── Focus text editor when editing ────────────────────────
 
+  // The edited text leaves the canvas while its editor shows it, and comes back
+  // after (it may be in a cached bitmap: draw everything)
+  useEffect(() => {
+    rendererRef.current?.invalidateStatic(true);
+  }, [textEditState]);
+
   useEffect(() => {
     if (textEditState && textEditorRef.current) {
       const editor = textEditorRef.current;
@@ -1439,17 +1466,29 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
   const handleTextEditorKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
-      if (e.key === 'Escape') {
+      // An input method is composing (Japanese, Chinese, Korean): its keys,
+      // Enter included, are its own
+      if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+      // Escape or Ctrl/Cmd+Enter finish; Enter adds a line, as in Excalidraw,
+      // tldraw, Figma and Miro (clicking away finishes too)
+      if (e.key === 'Escape' || (e.key === 'Enter' && (e.ctrlKey || e.metaKey))) {
         e.preventDefault();
-        finalizeTextEdit();
-      } else if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
+        e.stopPropagation();
         finalizeTextEdit();
       }
-      // Shift+Enter adds a newline (default behavior for contentEditable)
     },
     [finalizeTextEdit],
   );
+
+  /** Pasting brings in the text only, never another page's formatting. */
+  const handleTextEditorPaste = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const text = e.clipboardData.getData('text/plain').replace(/\r\n?/g, '\n');
+    if (!document.execCommand('insertText', false, text)) {
+      const editor = e.currentTarget;
+      editor.textContent = (editor.textContent ?? '') + text;
+    }
+  }, []);
 
   // ─── Cursor ───────────────────────────────────────────────
 
@@ -1493,7 +1532,15 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
 
   // ─── Text Editor Positioning ───────────────────────────────
 
-  const getTextEditorStyle = (): React.CSSProperties | null => {
+  /**
+   * Where the editor goes and how it looks: in the label's own box, aligned
+   * and wrapped as the canvas will draw it (a shape's label in its box; a
+   * connector's label, and free text, on one line that grows as you type).
+   */
+  const getTextEditorStyles = (): {
+    frame: React.CSSProperties;
+    editor: React.CSSProperties;
+  } | null => {
     if (!textEditState) return null;
 
     const el = editingElement;
@@ -1503,35 +1550,65 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
     const renderer = rendererRef.current;
     if (!renderer) return null;
 
-    const vp = renderer.getViewport().getViewport();
+    const zoom = renderer.getViewport().getViewport().zoom;
     const screenPos = renderer.getViewport().canvasToScreen(textEl.x, textEl.y);
+    const container = textEl.containerId
+      ? useElementsStore.getState().elements.get(textEl.containerId)
+      : undefined;
+    const inShape = !!container && !isLinear(container);
+    const onConnector = !!container && isLinear(container);
+    const vertical = textEl.verticalAlign ?? 'top';
 
     return {
-      position: 'absolute',
-      left: `${screenPos.x}px`,
-      top: `${screenPos.y}px`,
-      width: `${textEl.width * vp.zoom}px`,
-      minHeight: `${textEl.height * vp.zoom}px`,
-      font: cssFont(textEl.fontSize * vp.zoom, textEl.fontFamily),
-      color: textEl.strokeColor,
-      textAlign: textEl.textAlign,
-      outline: 'none',
-      border: '1px solid rgba(74, 144, 217, 0.4)',
-      borderRadius: '2px',
-      background: 'rgba(255, 255, 255, 0.8)',
-      padding: '0',
-      margin: '0',
-      overflow: 'hidden',
-      whiteSpace: 'pre-wrap',
-      wordBreak: 'break-word',
-      lineHeight: `${textEl.lineHeight}`,
-      caretColor: textEl.strokeColor,
-      zIndex: 100,
-      transformOrigin: 'top left',
+      frame: {
+        position: 'absolute',
+        left: `${screenPos.x}px`,
+        top: `${screenPos.y}px`,
+        width: inShape || onConnector ? `${textEl.width * zoom}px` : undefined,
+        height: inShape ? `${textEl.height * zoom}px` : undefined,
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: !inShape
+          ? 'flex-start'
+          : vertical === 'middle'
+            ? 'center'
+            : vertical === 'bottom'
+              ? 'flex-end'
+              : 'flex-start',
+        alignItems: onConnector ? 'center' : 'stretch',
+        pointerEvents: 'none',
+        zIndex: 100,
+      },
+      editor: {
+        pointerEvents: 'auto',
+        // Taller than its box, it overflows evenly about the middle (as the
+        // shape will grow), never squeezed into the box
+        flexShrink: 0,
+        width: inShape ? '100%' : 'auto',
+        minWidth: inShape ? undefined : `${Math.max(4, textEl.fontSize * zoom * 0.6)}px`,
+        minHeight: `${textEl.fontSize * textEl.lineHeight * zoom}px`,
+        font: cssFont(textEl.fontSize * zoom, textEl.fontFamily),
+        color: textEl.strokeColor,
+        textAlign: textEl.textAlign,
+        outline: 'none',
+        // An edge that takes no room: the text wraps at exactly the label's width
+        border: 'none',
+        boxShadow: '0 0 0 1px rgba(74, 144, 217, 0.4)',
+        borderRadius: '2px',
+        background: 'rgba(255, 255, 255, 0.8)',
+        padding: '0',
+        margin: '0',
+        // Wrapped at the label's width like the canvas (long words kept whole)
+        whiteSpace: inShape ? 'pre-wrap' : 'pre',
+        wordBreak: 'normal',
+        overflowWrap: 'normal',
+        lineHeight: `${textEl.lineHeight}`,
+        caretColor: textEl.strokeColor,
+      },
     };
   };
 
-  const textEditorStyle = getTextEditorStyle();
+  const textEditorStyles = getTextEditorStyles();
 
   // ─── Render ───────────────────────────────────────────────
 
@@ -1588,16 +1665,22 @@ export default function Canvas({ interactionManagerRef }: CanvasProps) {
       {contextMenu && (
         <ContextMenu state={contextMenu} onClose={() => setContextMenu(null)} />
       )}
-      {textEditState && textEditorStyle && (
-        <div
-          ref={textEditorRef}
-          className="mavis-canvas-editor"
-          contentEditable
-          suppressContentEditableWarning
-          style={textEditorStyle}
-          onKeyDown={handleTextEditorKeyDown}
-          onBlur={() => finalizeTextEdit('blur')}
-        />
+      {textEditState && textEditorStyles && (
+        <div style={textEditorStyles.frame} data-testid="text-editor-frame">
+          <div
+            ref={textEditorRef}
+            className="mavis-canvas-editor"
+            contentEditable
+            suppressContentEditableWarning
+            role="textbox"
+            aria-multiline="true"
+            aria-label="Text"
+            style={textEditorStyles.editor}
+            onKeyDown={handleTextEditorKeyDown}
+            onPaste={handleTextEditorPaste}
+            onBlur={() => finalizeTextEdit('blur')}
+          />
+        </div>
       )}
     </div>
   );

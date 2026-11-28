@@ -98,7 +98,7 @@ test.describe('The model in the editor', () => {
     await click(page, 'Web App', 2);
     await page.keyboard.press(`${mod}+a`);
     await page.keyboard.type('Storefront', { delay: 0 });
-    await page.keyboard.press('Enter');
+    await page.keyboard.press('Escape');
     await waitForSaved(page);
 
     // …and the top level says Storefront too

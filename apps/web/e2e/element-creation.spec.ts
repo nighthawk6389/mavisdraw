@@ -188,7 +188,7 @@ test.describe('Text Tool', () => {
 
     await page.mouse.click(box.x + 300, box.y + 300);
     await page.keyboard.type('Test');
-    await page.keyboard.press('Enter');
+    await page.keyboard.press('Escape');
 
     await page.waitForTimeout(300);
     expect(errors).toEqual([]);

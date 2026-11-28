@@ -30,6 +30,7 @@ import { changedSince, liveSpan, type LivePlan } from './staticLayerPlan';
 import { cylinderPaths, iconById, iconPlacement, queuePaths } from '@mavisdraw/export/library';
 import type { Viewport } from '@mavisdraw/types';
 import { getCubicControlPoints } from '@mavisdraw/math';
+import { wrapLines } from '../../utils/textLayout';
 
 /** How long the layer bitmaps outlive the last frame that used them. */
 const LAYER_KEEP_MS = 5000;
@@ -1629,29 +1630,7 @@ export class CanvasRenderer {
   }
 
   private measureWrap(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
-    const paragraphs = text.split('\n');
-    const lines: string[] = [];
-
-    for (const paragraph of paragraphs) {
-      const words = paragraph.split(' ');
-      let currentLine = '';
-
-      for (const word of words) {
-        const testLine = currentLine ? `${currentLine} ${word}` : word;
-        const metrics = ctx.measureText(testLine);
-
-        if (metrics.width > maxWidth && currentLine) {
-          lines.push(currentLine);
-          currentLine = word;
-        } else {
-          currentLine = testLine;
-        }
-      }
-
-      lines.push(currentLine);
-    }
-
-    return lines;
+    return wrapLines(text, maxWidth, (line) => ctx.measureText(line).width);
   }
 
   /**

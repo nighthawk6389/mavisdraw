@@ -118,7 +118,7 @@ test.describe('Phase 1 editing', () => {
     // switch to the arrow tool, and nothing may be lost
     await page.mouse.dblclick(box.x + 280, box.y + 240);
     await page.keyboard.type('Auth API', { delay: 0 });
-    await page.keyboard.press('Enter');
+    await page.keyboard.press('Escape');
     await expect
       .poll(async () => (await hooks.elements(page)).find((e) => e.type === 'text')?.text)
       .toBe('Auth API');
@@ -138,7 +138,7 @@ test.describe('Phase 1 editing', () => {
       document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'A', bubbles: true }));
     });
     await page.keyboard.type('uth API', { delay: 0 });
-    await page.keyboard.press('Enter');
+    await page.keyboard.press('Escape');
     await expect
       .poll(async () => (await hooks.elements(page)).find((e) => e.type === 'text')?.text)
       .toBe('Auth API');
@@ -229,7 +229,7 @@ test.describe('Phase 1 editing', () => {
     const box = await canvasBox(page);
     await page.mouse.dblclick(box.x + 280, box.y + 250);
     await page.keyboard.type('Billing');
-    await page.keyboard.press('Enter');
+    await page.keyboard.press('Escape');
     await expect
       .poll(async () => (await hooks.elements(page)).map((e) => e.type).sort())
       .toEqual(['rectangle', 'text']);
@@ -244,7 +244,7 @@ test.describe('Phase 1 editing', () => {
     const box = await canvasBox(page);
     await page.mouse.dblclick(box.x + 250, box.y + 230);
     await page.keyboard.type('Cache');
-    await page.keyboard.press('Enter');
+    await page.keyboard.press('Escape');
     await page.mouse.click(box.x + 205, box.y + 205);
 
     await page.keyboard.press(`${mod}+c`);

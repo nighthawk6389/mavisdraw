@@ -84,12 +84,38 @@ export function boundTextBox(
       height: size.height,
     };
   }
+  // The rectangle that fits inside the shape, less a padding: a label in an
+  // ellipse or a diamond keeps clear of its curve or corners
+  const k = labelBoxScale(container.type);
+  const pad = labelPadding(container.type);
+  const w = container.width * k;
+  const h = container.height * k;
   return {
-    x: container.x + BOUND_TEXT_PADDING,
-    y: container.y + BOUND_TEXT_PADDING,
-    width: Math.max(20, container.width - BOUND_TEXT_PADDING * 2),
-    height: Math.max(20, container.height - BOUND_TEXT_PADDING * 2),
+    x: container.x + (container.width - w) / 2 + pad,
+    y: container.y + (container.height - h) / 2 + pad,
+    width: Math.max(20, w - pad * 2),
+    height: Math.max(20, h - pad * 2),
   };
+}
+
+/** The share of a shape's box (each way) its label can use. */
+function labelBoxScale(type: MavisElement['type']): number {
+  if (type === 'ellipse') return Math.SQRT1_2;
+  if (type === 'diamond') return 0.5;
+  return 1;
+}
+
+const labelPadding = (type: MavisElement['type']) =>
+  labelBoxScale(type) === 1 ? BOUND_TEXT_PADDING : BOUND_TEXT_PADDING / 2;
+
+/**
+ * How tall a shape has to be for a label `labelHeight` tall to fit inside it
+ * (no shorter than it already is): shapes grow to fit their labels rather
+ * than letting them spill out (Excalidraw, tldraw).
+ */
+export function containerHeightForLabel(container: MavisElement, labelHeight: number): number {
+  const needed = (labelHeight + labelPadding(container.type) * 2) / labelBoxScale(container.type);
+  return Math.max(container.height, Math.ceil(needed));
 }
 
 function bump<T extends MavisElement>(el: T, changes: Partial<T>): T {

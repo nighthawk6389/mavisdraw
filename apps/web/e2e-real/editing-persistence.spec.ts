@@ -22,7 +22,7 @@ test('stacking order, locks and labels survive a reload', async ({ page, context
   const box = (await interactiveCanvas(page).boundingBox())!;
   await page.mouse.dblclick(box.x + 215, box.y + 215);
   await page.keyboard.type('Orders DB');
-  await page.keyboard.press('Enter');
+  await page.keyboard.press('Escape');
 
   // Send the top shape to the back and lock it
   await page.mouse.click(box.x + 380, box.y + 330, { button: 'right' });
