@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { convertToModelMessages, type UIMessage } from 'ai';
 import { requireAuth } from '../middleware/auth.js';
 import { isAgentConfigured, streamAgentChat } from '../services/agentService.js';
+import { linkedRepositories } from '../services/agentRepos.js';
+import { checkProjectAccess } from '../services/diagramService.js';
 import { config } from '../config.js';
 
 /** Bounds on what a client can send per turn (cost and abuse control). */
@@ -23,6 +25,8 @@ const chatBodySchema = z.object({
     .min(1)
     .max(MAX_MESSAGES),
   diagramMarkdown: z.string().max(MAX_DIAGRAM_CHARS).default(''),
+  /** The project the diagram is in: its linked repositories are what code can be read from. */
+  projectId: z.string().max(64).optional(),
 });
 
 // Per-user sliding window: AI turns are the expensive endpoint
@@ -77,6 +81,16 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(400).send({ error: 'Malformed chat messages' });
       }
 
+      // Code is read only from the project's linked repositories, and only
+      // for someone who can open the project
+      let repos: Awaited<ReturnType<typeof linkedRepositories>> = [];
+      if (parsed.data.projectId) {
+        if (!(await checkProjectAccess(parsed.data.projectId, userId))) {
+          return reply.code(404).send({ error: 'Project not found' });
+        }
+        repos = await linkedRepositories(parsed.data.projectId);
+      }
+
       // Stop generating (and paying) when the user closes the panel or tab
       const abort = new AbortController();
       request.raw.on('close', () => abort.abort());
@@ -85,6 +99,7 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
         modelMessages,
         userId,
         parsed.data.diagramMarkdown,
+        repos,
         abort.signal,
       );
       const response = result.toUIMessageStreamResponse({

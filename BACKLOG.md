@@ -16,7 +16,7 @@
 - ~~Production seeds `demo@mavisdraw.dev` / `password123`~~ — fixed: the production build no longer seeds, and `db/seed.ts` refuses to run when `NODE_ENV=production`.
 - ~~**No password reset, so an address can't be reclaimed**~~: fixed. "Forgot your password?" emails a one-hour, single-use link. Resetting confirms the address, signs out every session and hands over waiting invites, so the real owner can take back a squatted account. Servers without email make links with `cli/resetLink.js`. Still open: expiring unconfirmed accounts after a few weeks.
 - **Share links never expire** and can't be revoked individually (tokens are now only shown to owners/admins — `routes/sharing.ts`).
-- **AI agent:** the diagram now goes in a delimited data message, client system messages are dropped, and turns are rate-limited/size-capped — but `browse_code`/`read_file` can still read any repo the user's GitHub token can see; restrict them to repos linked in the diagram.
+- ~~**AI agent:** `browse_code`/`read_file` could read any repo the user's GitHub token can see~~ — fixed: they read only the project's linked repositories (its repo link and its portals' code links, worked out by the server; `services/agentRepos.ts`), on github.com or this server's Enterprise host, with the asking person's own connection. The tools also work now: they used to need a GitHub connection id the model had no way to know.
 - ~~OAuth `state` never verified; no env validation and a hard-coded JWT fallback secret; `trustProxy` unset~~ — fixed: `state` is HMAC-signed and bound to user, host and a 10-minute TTL; production refuses to start on missing/weak secrets (`config.ts` `assertValidConfig`); `TRUST_PROXY` is explicit.
 
 ### Independent collaboration review (2026-11) — status

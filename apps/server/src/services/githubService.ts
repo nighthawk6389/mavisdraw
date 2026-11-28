@@ -538,6 +538,25 @@ export async function getDecryptedToken(
   };
 }
 
+/**
+ * The person's own token for a GitHub host (github.com, or this server's one
+ * Enterprise host), or null if they haven't connected an account there.
+ */
+export async function getTokenForHost(
+  userId: string,
+  host: string,
+): Promise<{ accessToken: string; enterpriseUrl: string | null } | null> {
+  const connections = await db.query.githubConnections.findMany({
+    where: eq(githubConnections.userId, userId),
+  });
+  const conn = connections.find(
+    (c) => (c.enterpriseUrl ? originOf(c.enterpriseUrl) : config.github.cloud.url) === host,
+  );
+  return conn
+    ? { accessToken: decrypt(conn.accessToken), enterpriseUrl: conn.enterpriseUrl }
+    : null;
+}
+
 export async function deleteConnection(connectionId: string, userId: string): Promise<void> {
   const result = await db
     .delete(githubConnections)

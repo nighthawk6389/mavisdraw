@@ -6,6 +6,7 @@ import { useElementsStore } from '../../stores/elementsStore';
 import { useDiagramStore } from '../../stores/diagramStore';
 import { getAccessToken } from '../../services/api';
 import { API_BASE } from '../../services/apiBase';
+import { parseRoute } from '../../routing';
 import { serializeScene } from '@mavisdraw/llm';
 import type { MavisDrawScene, MavisElement, Diagram } from '@mavisdraw/types';
 import ChatMessage from './ChatMessage';
@@ -60,9 +61,14 @@ export default function AgentPanel() {
           const token = getAccessToken();
           return token ? { Authorization: `Bearer ${token}` } : {};
         },
-        body: () => ({
-          diagramMarkdown: buildDiagramMarkdown(),
-        }),
+        body: () => {
+          // The project's linked repositories are what the assistant may read
+          const route = parseRoute(window.location.pathname);
+          return {
+            diagramMarkdown: buildDiagramMarkdown(),
+            ...(route.name === 'project' ? { projectId: route.projectId } : {}),
+          };
+        },
       }),
   );
   const { messages, sendMessage, status, error, clearError } = useChat({ transport });

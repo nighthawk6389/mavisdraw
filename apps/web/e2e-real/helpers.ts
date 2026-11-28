@@ -2,6 +2,8 @@ import type { APIRequestContext, Browser, BrowserContext, Page } from '@playwrig
 import { expect } from '@playwright/test';
 
 export const API_URL = `http://localhost:${process.env.E2E_API_PORT ?? '3101'}`;
+/** The fake GitHub Enterprise host (e2e-real/fake-github.mjs). */
+export const GITHUB_URL = `http://localhost:${process.env.E2E_GITHUB_PORT ?? '3102'}`;
 /** The API serving the built app on its own address, as on Render (WEB_DIST). */
 export const SINGLE_SITE_URL = `http://localhost:${process.env.E2E_SINGLE_PORT ?? '3103'}`;
 
@@ -297,4 +299,21 @@ export async function liveBarrier(from: Page, to: Page): Promise<void> {
       { timeout: 10_000 },
     )
     .toBe(true);
+}
+
+/** Connect the user's GitHub account through the real OAuth endpoints (against the fake host). */
+export async function connectGitHub(request: APIRequestContext, user: TestUser): Promise<string> {
+  const auth = { Authorization: `Bearer ${user.accessToken}` };
+  const start = await request.get(
+    `${API_URL}/api/github/authorize?enterpriseUrl=${encodeURIComponent(GITHUB_URL)}`,
+    { headers: auth },
+  );
+  expect(start.status(), await start.text()).toBe(200);
+  const state = new URL(((await start.json()) as { url: string }).url).searchParams.get('state')!;
+  const done = await request.post(`${API_URL}/api/github/callback`, {
+    headers: auth,
+    data: { code: 'e2e-oauth-code', state },
+  });
+  expect(done.status(), await done.text()).toBe(200);
+  return ((await done.json()) as { connection: { id: string } }).connection.id;
 }

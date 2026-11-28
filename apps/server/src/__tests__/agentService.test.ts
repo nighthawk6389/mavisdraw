@@ -1,4 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const github = vi.hoisted(() => ({
+  getTokenForHost: vi.fn(),
+  getFileContent: vi.fn(),
+  getRepoTree: vi.fn(),
+}));
+vi.mock('../services/githubService.js', () => github);
 import {
   buildSystemPrompt,
   buildDiagramContext,
@@ -37,8 +44,7 @@ describe('agentService', () => {
   describe('buildDiagramContext', () => {
     it('wraps the diagram markdown in a delimited block', () => {
       const ctx = buildDiagramContext('# Architecture: Test\n- [rectangle] "API"');
-      expect(ctx.startsWith('<current_diagram>')).toBe(true);
-      expect(ctx.endsWith('</current_diagram>')).toBe(true);
+      expect(ctx).toMatch(/^<current_diagram>\n[\s\S]*\n<\/current_diagram>\n<linked_repositories>/);
       expect(ctx).toContain('[rectangle] "API"');
     });
 
@@ -118,4 +124,61 @@ describe('agentService', () => {
   it('defaults to the current Opus model', () => {
     if (!process.env.AGENT_MODEL) expect(AGENT_MODEL_ID).toBe('claude-opus-5-5');
   });
+
+  describe('reading code', () => {
+    const linked = [{ owner: 'acme', repo: 'payments', ref: 'main', host: 'https://github.com' }];
+    const ctx = { toolCallId: 'tc', messages: [] as never, abortSignal: new AbortController().signal };
+    beforeEach(() => {
+      github.getTokenForHost.mockReset();
+      github.getFileContent.mockReset();
+      github.getRepoTree.mockReset();
+    });
+
+    it('lists the linked repositories next to the diagram, as data', () => {
+      expect(buildDiagramContext('# D', linked)).toContain(
+        '<linked_repositories>\n- acme/payments (at main)\n</linked_repositories>',
+      );
+      expect(buildDiagramContext('# D')).toMatch(/<linked_repositories>\n\(none/);
+    });
+
+    it('won’t read a repository the project isn’t linked to, whatever the account can see', async () => {
+      const tools = buildTools('user-1', '# D', linked);
+      const result = (await tools.read_file.execute!(
+        { repository: 'acme/secret', path: 'README.md' },
+        ctx,
+      )) as { error: string };
+      expect(result.error).toMatch(/acme\/secret isn't linked to this project/);
+      expect(result.error).toContain('Linked: acme/payments.');
+      const browse = (await tools.browse_code.execute!({ repository: 'acme/secret' }, ctx)) as {
+        error: string;
+      };
+      expect(browse.error).toMatch(/isn't linked/);
+      // Nobody's token is even looked up
+      expect(github.getTokenForHost).not.toHaveBeenCalled();
+    });
+
+    it('reads a linked repository with the person’s own connection, at the linked ref', async () => {
+      github.getTokenForHost.mockResolvedValue({ accessToken: 'tok', enterpriseUrl: null });
+      github.getFileContent.mockResolvedValue({ content: 'hello', size: 5 });
+      const tools = buildTools('user-1', '# D', linked);
+      const result = await tools.read_file.execute!(
+        { repository: 'ACME/payments', path: 'README.md' },
+        ctx,
+      );
+      expect(github.getTokenForHost).toHaveBeenCalledWith('user-1', 'https://github.com');
+      expect(github.getFileContent).toHaveBeenCalledWith('tok', 'acme', 'payments', 'README.md', 'main', null);
+      expect(result).toEqual({ path: 'README.md', content: 'hello', size: 5 });
+    });
+
+    it('says what to connect when the person has no account on that host', async () => {
+      github.getTokenForHost.mockResolvedValue(null);
+      const tools = buildTools('user-1', '# D', linked);
+      const result = (await tools.browse_code.execute!({ repository: 'acme/payments' }, ctx)) as {
+        error: string;
+      };
+      expect(result.error).toBe('Connect a GitHub account on github.com to read acme/payments.');
+      expect(github.getRepoTree).not.toHaveBeenCalled();
+    });
+  });
 });
+

@@ -7,6 +7,7 @@ import { GITHUB_APP_WEBHOOK_SECRET, GITHUB_URL, WEB_URL } from '../playwright.re
 import {
   API_URL,
   apiCreateProject,
+  connectGitHub,
   apiGetDiagram,
   getActiveElements,
   isConnected,
@@ -41,22 +42,6 @@ function pullRequestFiles(before: Map<string, string>, after: Map<string, string
 }
 
 const auth = (user: TestUser) => ({ Authorization: `Bearer ${user.accessToken}` });
-
-/** Connect the user's GitHub account through the real OAuth endpoints (against the fake host). */
-async function connectGitHub(request: APIRequestContext, user: TestUser): Promise<string> {
-  const start = await request.get(
-    `${API_URL}/api/github/authorize?enterpriseUrl=${encodeURIComponent(GITHUB_URL)}`,
-    { headers: auth(user) },
-  );
-  expect(start.status(), await start.text()).toBe(200);
-  const state = new URL(((await start.json()) as { url: string }).url).searchParams.get('state')!;
-  const done = await request.post(`${API_URL}/api/github/callback`, {
-    headers: auth(user),
-    data: { code: 'e2e-oauth-code', state },
-  });
-  expect(done.status(), await done.text()).toBe(200);
-  return ((await done.json()) as { connection: { id: string } }).connection.id;
-}
 
 async function deliver(
   request: APIRequestContext,

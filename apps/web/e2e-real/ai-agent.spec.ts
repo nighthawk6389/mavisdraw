@@ -1,5 +1,8 @@
 import { test, expect } from '@playwright/test';
 import {
+  API_URL,
+  GITHUB_URL,
+  connectGitHub,
   registerUser,
   apiCreateProject,
   apiGetDiagram,
@@ -40,4 +43,54 @@ test('AI chat proposes a change that applies as a laid-out, persistent diagram',
   await waitForSaved(page);
   const saved = await apiGetDiagram(context.request, user, project.rootDiagramId);
   expect((saved.diagram?.elements ?? []).filter((e) => e.type === 'arrow')).toHaveLength(2);
+});
+
+test('the assistant reads code only from the project’s linked repositories', async ({
+  page,
+  context,
+}) => {
+  const user = await registerUser(context, 'Code Reader');
+  const project = await apiCreateProject(context.request, user, 'Linked Project');
+  // Two repositories this person's GitHub account can read; the map is linked to one
+  const id = Date.now().toString(36);
+  const linked = `acme/payments-${id}`;
+  const other = `acme/private-${id}`;
+  for (const [repo, text] of [
+    [linked, 'Payments talks to Stripe.'],
+    [other, 'TOP SECRET plans'],
+  ]) {
+    const setUp = await context.request.post(`${GITHUB_URL}/__test/repo`, {
+      data: { repo, trees: { HEAD: ['README.md'] }, contents: { HEAD: { 'README.md': text } } },
+    });
+    expect(setUp.status()).toBe(200);
+  }
+  const connectionId = await connectGitHub(context.request, user);
+  const link = await context.request.put(`${API_URL}/api/projects/${project.id}/repo`, {
+    headers: { Authorization: `Bearer ${user.accessToken}` },
+    data: {
+      kind: 'github',
+      label: linked,
+      owner: linked.split('/')[0],
+      repo: linked.split('/')[1],
+      connectionId,
+      model: { name: 'Payments', components: [], resources: [] },
+    },
+  });
+  expect(link.status(), await link.text()).toBe(200);
+
+  await openProject(page, 'Linked Project');
+  await page.getByRole('button', { name: 'AI Chat' }).click();
+  const ask = async (text: string) => {
+    await page.getByPlaceholder('Ask about your diagram...').fill(text);
+    await page.getByRole('button', { name: 'Send' }).click();
+  };
+
+  // Text in a diagram can't point it at anything else the account reaches
+  await ask(`read ${other}:README.md`);
+  await expect(page.getByText(/Couldn't read it: .* isn't linked to this project/)).toBeVisible();
+  await expect(page.getByText(`Linked: ${linked}.`, { exact: false })).toBeVisible();
+  await expect(page.getByText('TOP SECRET plans')).toHaveCount(0);
+
+  await ask(`read ${linked}:README.md`);
+  await expect(page.getByText('It says: Payments talks to Stripe.')).toBeVisible();
 });

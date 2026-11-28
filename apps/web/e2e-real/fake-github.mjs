@@ -234,9 +234,11 @@ const server = http.createServer(async (req, res) => {
       return send(res, 201, { token, expires_at: new Date(Date.now() + 3600_000).toISOString() });
     }
 
-    // ── Repository calls, as the installation ─────────────────
+    // ── Repository calls, as the installation or a connected person ──
     const auth = req.headers.authorization?.replace(/^Bearer /, '');
-    if (!tokens.has(auth)) return send(res, 401, { message: 'Bad credentials' });
+    if (!tokens.has(auth) && !userTokens.has(auth)) {
+      return send(res, 401, { message: 'Bad credentials' });
+    }
     m = path.match(/^\/repos\/([^/]+)\/([^/]+)\/(.*)$/);
     if (!m) return send(res, 404, { message: 'Not Found' });
     const repo = repos.get(`${decodeURIComponent(m[1])}/${decodeURIComponent(m[2])}`.toLowerCase());
